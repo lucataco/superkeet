@@ -1,0 +1,323 @@
+import Foundation
+import Carbon
+import AppKit
+
+/// Global hotkey manager using CGEvent tap for monitoring keyboard events system-wide.
+/// Supports two independent hotkeys:
+///   1. Toggle Recording — press to start, press again to stop
+///   2. Push to Talk — hold to record, release to stop
+/// Requires Accessibility permission.
+final class HotkeyManager: ObservableObject {
+    static let shared = HotkeyManager()
+
+    @Published var isListening: Bool = false
+    @Published var accessibilityGranted: Bool = false
+
+    // MARK: - Callbacks
+
+    /// Toggle hotkey fired (press to start/stop)
+    var onToggleHotkeyPressed: (() -> Void)?
+    /// Push-to-talk key pressed down (start recording)
+    var onPushToTalkStarted: (() -> Void)?
+    /// Push-to-talk key released (stop recording)
+    var onPushToTalkEnded: (() -> Void)?
+    /// Escape key pressed while recording
+    var onEscapePressed: (() -> Void)?
+
+    fileprivate var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private let settings = AppSettings.shared
+
+    /// Track whether the PTT key is currently held to avoid repeat keyDown events
+    fileprivate var pttKeyDown: Bool = false
+    /// Track previous fn key state for edge detection (fn only fires flagsChanged)
+    fileprivate var fnKeyDown: Bool = false
+
+    private init() {
+        _ = checkAccessibility()
+    }
+
+    // MARK: - Accessibility
+
+    @discardableResult
+    func checkAccessibility() -> Bool {
+        let trusted = AXIsProcessTrustedWithOptions(
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        )
+        DispatchQueue.main.async {
+            self.accessibilityGranted = trusted
+        }
+        return trusted
+    }
+
+    // MARK: - Start / Stop
+
+    func startListening() {
+        guard eventTap == nil else { return }
+        guard checkAccessibility() else {
+            print("[HotkeyManager] Accessibility not granted")
+            return
+        }
+
+        // Listen for keyDown, keyUp, and flagsChanged (for modifier-only keys like fn)
+        let eventMask: CGEventMask =
+            (1 << CGEventType.keyDown.rawValue) |
+            (1 << CGEventType.keyUp.rawValue) |
+            (1 << CGEventType.flagsChanged.rawValue)
+
+        let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: eventMask,
+            callback: hotkeyCallback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        )
+
+        guard let tap = tap else {
+            print("[HotkeyManager] Failed to create event tap. Accessibility permission may be missing.")
+            return
+        }
+
+        self.eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        self.runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        DispatchQueue.main.async {
+            self.isListening = true
+        }
+    }
+
+    func stopListening() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let source = runLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            }
+        }
+        eventTap = nil
+        runLoopSource = nil
+        DispatchQueue.main.async {
+            self.isListening = false
+        }
+    }
+
+    // MARK: - Event Handling
+
+    fileprivate func handleEvent(_ event: CGEvent) -> Bool {
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let flags = event.flags
+        let eventType = event.type
+
+        // --- Escape key (keyCode 53) cancels recording when active ---
+        if eventType == .keyDown && keyCode == 53 && settings.isRecording {
+            onEscapePressed?()
+            return true
+        }
+
+        // --- Handle fn key separately (only fires flagsChanged, not keyDown/keyUp) ---
+        if eventType == .flagsChanged && keyCode == 63 {
+            let fnPressed = flags.contains(.maskSecondaryFn)
+
+            // Check if fn is the Toggle Recording hotkey
+            if settings.toggleHotkeyKeyCode == 63 && settings.toggleHotkeyModifierFlags == 0 {
+                if fnPressed && !fnKeyDown {
+                    fnKeyDown = true
+                    onToggleHotkeyPressed?()
+                    return true
+                } else if !fnPressed {
+                    fnKeyDown = false
+                }
+                return false
+            }
+
+            // Check if fn is the Push to Talk hotkey
+            if settings.pttHotkeyKeyCode == 63 && settings.pttHotkeyModifierFlags == 0 {
+                if fnPressed && !fnKeyDown {
+                    fnKeyDown = true
+                    pttKeyDown = true
+                    onPushToTalkStarted?()
+                    return true
+                } else if !fnPressed && fnKeyDown {
+                    fnKeyDown = false
+                    pttKeyDown = false
+                    onPushToTalkEnded?()
+                    return true
+                }
+                return false
+            }
+
+            return false
+        }
+
+        // --- Toggle Recording hotkey (keyDown only) ---
+        if eventType == .keyDown && Int(keyCode) == settings.toggleHotkeyKeyCode {
+            if matchesModifiers(flags, required: settings.toggleHotkeyModifierFlags) {
+                onToggleHotkeyPressed?()
+                return true
+            }
+        }
+
+        // --- Push to Talk hotkey (keyDown = start, keyUp = stop) ---
+        if Int(keyCode) == settings.pttHotkeyKeyCode && settings.pttHotkeyKeyCode != 63 {
+            if eventType == .keyDown && !pttKeyDown {
+                if matchesModifiers(flags, required: settings.pttHotkeyModifierFlags) {
+                    pttKeyDown = true
+                    onPushToTalkStarted?()
+                    return true
+                }
+            } else if eventType == .keyUp && pttKeyDown {
+                pttKeyDown = false
+                onPushToTalkEnded?()
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /// Check whether the event's modifier flags match the required flags.
+    /// Only checks the significant modifier bits (Cmd, Option, Control, Shift).
+    private func matchesModifiers(_ eventFlags: CGEventFlags, required: Int) -> Bool {
+        if required == 0 {
+            // No modifiers required — match if no significant modifiers are pressed
+            let significant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+            return eventFlags.intersection(significant).isEmpty
+        }
+        let requiredFlags = CGEventFlags(rawValue: UInt64(required))
+        return eventFlags.contains(requiredFlags)
+    }
+}
+
+// MARK: - Key Code Display Names
+
+/// Converts a key code and modifier flags into a human-readable string (e.g., "⌥ Space", "⌘⇧R")
+func displayNameForHotkey(keyCode: Int, modifierFlags: Int) -> String {
+    var parts: [String] = []
+
+    let flags = CGEventFlags(rawValue: UInt64(modifierFlags))
+    if flags.contains(.maskControl) { parts.append("⌃") }
+    if flags.contains(.maskAlternate) { parts.append("⌥") }
+    if flags.contains(.maskShift) { parts.append("⇧") }
+    if flags.contains(.maskCommand) { parts.append("⌘") }
+
+    let keyName = keyCodeName(keyCode)
+    parts.append(keyName)
+
+    return parts.joined(separator: " ")
+}
+
+/// Maps common key codes to display names
+private func keyCodeName(_ keyCode: Int) -> String {
+    switch keyCode {
+    // Letters (QWERTY layout)
+    case 0: return "A"
+    case 1: return "S"
+    case 2: return "D"
+    case 3: return "F"
+    case 4: return "H"
+    case 5: return "G"
+    case 6: return "Z"
+    case 7: return "X"
+    case 8: return "C"
+    case 9: return "V"
+    case 11: return "B"
+    case 12: return "Q"
+    case 13: return "W"
+    case 14: return "E"
+    case 15: return "R"
+    case 16: return "Y"
+    case 17: return "T"
+    case 18: return "1"
+    case 19: return "2"
+    case 20: return "3"
+    case 21: return "4"
+    case 22: return "6"
+    case 23: return "5"
+    case 24: return "="
+    case 25: return "9"
+    case 26: return "7"
+    case 27: return "-"
+    case 28: return "8"
+    case 29: return "0"
+    case 30: return "]"
+    case 31: return "O"
+    case 32: return "U"
+    case 33: return "["
+    case 34: return "I"
+    case 35: return "P"
+    case 37: return "L"
+    case 38: return "J"
+    case 39: return "'"
+    case 40: return "K"
+    case 41: return ";"
+    case 42: return "\\"
+    case 43: return ","
+    case 44: return "/"
+    case 45: return "N"
+    case 46: return "M"
+    case 47: return "."
+    // Special keys
+    case 36: return "Return"
+    case 48: return "Tab"
+    case 49: return "Space"
+    case 51: return "Delete"
+    case 53: return "Escape"
+    case 63: return "fn"
+    case 76: return "Enter"
+    case 96: return "F5"
+    case 97: return "F6"
+    case 98: return "F7"
+    case 99: return "F3"
+    case 100: return "F8"
+    case 101: return "F9"
+    case 103: return "F11"
+    case 105: return "F13"
+    case 107: return "F14"
+    case 109: return "F10"
+    case 111: return "F12"
+    case 113: return "F15"
+    case 118: return "F4"
+    case 119: return "F2"
+    case 120: return "F1"
+    case 121: return "PageDown"
+    case 122: return "F1"
+    case 123: return "Left"
+    case 124: return "Right"
+    case 125: return "Down"
+    case 126: return "Up"
+    default: return "Key\(keyCode)"
+    }
+}
+
+// MARK: - Global C callback for CGEvent tap
+
+private func hotkeyCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    // Handle tap being disabled by the system
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if let userInfo = userInfo {
+            let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+            if let tap = manager.eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    guard let userInfo = userInfo else {
+        return Unmanaged.passUnretained(event)
+    }
+
+    let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+    _ = manager.handleEvent(event)
+
+    // Always pass the event through (listenOnly tap)
+    return Unmanaged.passUnretained(event)
+}
