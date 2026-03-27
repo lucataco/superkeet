@@ -16,6 +16,8 @@
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Superkeet needs microphone access to transcribe your voice to text.</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

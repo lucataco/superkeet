@@ -1,6 +1,9 @@
 import SwiftUI
 import AppKit
 import Sparkle
+import os.log
+
+private let appLog = Logger(subsystem: "com.superkeet.app", category: "AppDelegate")
 
 /// Superkeet - Voice-to-text Mac app powered by Parakeet
 /// Runs as a menu bar app (no dock icon) with global hotkey support
@@ -27,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
     private var onboardingWindow: NSWindow?
+    private var didFinishOnboarding: Bool = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide the dock icon (LSUIElement in Info.plist handles this for release builds,
@@ -46,7 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !settings.hasCompletedOnboarding {
             showOnboardingWindow()
         } else {
+            // Prompt for Accessibility once (shows macOS system dialog if not yet granted)
+            hotkeyManager.checkAccessibility()
             hotkeyManager.startListening()
+            if !hotkeyManager.isListening {
+                hotkeyManager.startRetryTimer()
+            }
             startDaemonWithErrorHandling()
         }
     }
@@ -54,21 +63,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupHotkeys() {
         hotkeyManager.onToggleHotkeyPressed = { [weak self] in
             DispatchQueue.main.async {
+                appLog.info("Toggle recording callback fired")
                 self?.menuBarManager.toggleRecording()
             }
         }
         hotkeyManager.onPushToTalkStarted = { [weak self] in
             DispatchQueue.main.async {
+                appLog.info("PTT start callback fired — starting recording")
                 self?.menuBarManager.startRecordingOnly()
             }
         }
         hotkeyManager.onPushToTalkEnded = { [weak self] in
             DispatchQueue.main.async {
+                appLog.info("PTT end callback fired — stopping recording")
                 self?.menuBarManager.stopRecordingOnly()
             }
         }
         hotkeyManager.onEscapePressed = { [weak self] in
             DispatchQueue.main.async {
+                appLog.info("Escape callback fired — cancelling recording")
                 self?.menuBarManager.stopRecordingOnly()
             }
         }
@@ -76,11 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showOnboardingWindow() {
         let onboardingView = OnboardingView { [weak self] in
-            self?.onboardingWindow?.close()
-            self?.onboardingWindow = nil
-            NSApp.setActivationPolicy(.accessory)
-            self?.hotkeyManager.startListening()
-            self?.startDaemonWithErrorHandling()
+            self?.completeOnboarding()
         }
 
         let window = NSWindow(
@@ -95,6 +104,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.onboardingWindow = window
+
+        // If the user closes the window via the X button without clicking
+        // "Start Using Superkeet", still activate hotkeys and daemon so the
+        // app is functional (onboarding can be re-run from the menu).
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onboardingWindowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
+    @objc private func onboardingWindowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === onboardingWindow else { return }
+        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
+        // If onboarding was already completed via the button, completeOnboarding()
+        // already ran and this is a no-op thanks to the hasCompletedOnboarding guard below.
+        completeOnboarding()
+    }
+
+    private func completeOnboarding() {
+        guard !didFinishOnboarding else { return }
+        didFinishOnboarding = true
+        settings.hasCompletedOnboarding = true
+        onboardingWindow?.close()
+        onboardingWindow = nil
+        NSApp.setActivationPolicy(.accessory)
+        // Prompt for Accessibility once (shows macOS system dialog if not yet granted)
+        hotkeyManager.checkAccessibility()
+        hotkeyManager.startListening()
+        if !hotkeyManager.isListening {
+            hotkeyManager.startRetryTimer()
+        }
+        startDaemonWithErrorHandling()
     }
 
     private func startDaemonWithErrorHandling() {

@@ -20,6 +20,7 @@ mkdir -p "${BUNDLE_DIR}/Contents/Frameworks"
 cp "${BUILD_DIR}/${APP_NAME}" "${BUNDLE_DIR}/Contents/MacOS/"
 cp "${SCRIPT_DIR}/Resources/Info.plist" "${BUNDLE_DIR}/Contents/"
 cp "${SCRIPT_DIR}/Resources/Superkeet.entitlements" "${BUNDLE_DIR}/Contents/Resources/"
+cp "${SCRIPT_DIR}/Resources/AppIcon.icns" "${BUNDLE_DIR}/Contents/Resources/"
 
 # Embed Sparkle.framework into the bundle
 cp -a "${BUILD_DIR}/Sparkle.framework" "${BUNDLE_DIR}/Contents/Frameworks/"

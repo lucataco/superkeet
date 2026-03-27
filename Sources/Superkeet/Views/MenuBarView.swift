@@ -3,12 +3,13 @@ import AppKit
 import Sparkle
 
 /// Manages the NSMenu displayed from the menu bar status item
-final class MenuBarManager: NSObject, ObservableObject {
+final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     static let shared = MenuBarManager()
 
     private var statusItem: NSStatusItem?
     private let parakeetService = ParakeetService.shared
     private let settings = AppSettings.shared
+    private let hotkeyManager = HotkeyManager.shared
     private var settingsWindow: NSWindow?
     private var historyWindow: NSWindow?
     private var onboardingWindow: NSWindow?
@@ -19,32 +20,47 @@ final class MenuBarManager: NSObject, ObservableObject {
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Superkeet")
             button.image?.size = NSSize(width: 18, height: 18)
-            button.action = #selector(menuBarClicked)
-            button.target = self
         }
 
-        updateMenu()
-    }
-
-    @objc private func menuBarClicked() {
-        updateMenu()
-        statusItem?.button?.performClick(nil)
-    }
-
-    private func updateMenu() {
         let menu = NSMenu()
+        menu.delegate = self
+        statusItem?.menu = menu
+    }
+
+    /// Rebuilds all menu items. Called by NSMenuDelegate before each display.
+    private func rebuildMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
 
         // Status header
-        let statusText = settings.isRecording ? "Recording..." : (settings.isDaemonRunning ? "Ready" : "Daemon not running")
+        let statusText: String
+        if settings.isRecording {
+            statusText = "Recording..."
+        } else if !hotkeyManager.isListening {
+            statusText = "Hotkeys not active — grant Accessibility"
+        } else if !settings.isDaemonRunning {
+            statusText = "Daemon not running"
+        } else {
+            statusText = "Ready"
+        }
         let statusItem = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
         statusItem.isEnabled = false
+        let statusColor: NSColor = hotkeyManager.isListening ? .secondaryLabelColor : .systemOrange
         if let font = NSFont.systemFont(ofSize: 11, weight: .medium) as NSFont? {
             statusItem.attributedTitle = NSAttributedString(
                 string: statusText,
-                attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
+                attributes: [.font: font, .foregroundColor: statusColor]
             )
         }
         menu.addItem(statusItem)
+
+        // Show accessibility help item when hotkeys are not active
+        if !hotkeyManager.isListening {
+            let helpItem = NSMenuItem(title: "Open Accessibility Settings...", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+            helpItem.target = self
+            helpItem.image = NSImage(systemSymbolName: "lock.open", accessibilityDescription: "Accessibility")
+            menu.addItem(helpItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         // Start/Stop Recording
@@ -92,8 +108,12 @@ final class MenuBarManager: NSObject, ObservableObject {
         let quitItem = NSMenuItem(title: "Quit Superkeet", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
+    }
 
-        self.statusItem?.menu = menu
+    // MARK: - NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuildMenu(menu)
     }
 
     // MARK: - Actions
@@ -211,6 +231,14 @@ final class MenuBarManager: NSObject, ObservableObject {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.onboardingWindow = window
+    }
+
+    @objc private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+        // Re-prompt via AXIsProcessTrustedWithOptions
+        hotkeyManager.checkAccessibility()
     }
 
     @objc private func quitApp() {

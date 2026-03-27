@@ -1,6 +1,9 @@
 import Foundation
 import Carbon
 import AppKit
+import os.log
+
+private let hotkeyLog = Logger(subsystem: "com.superkeet.app", category: "HotkeyManager")
 
 /// Global hotkey manager using CGEvent tap for monitoring keyboard events system-wide.
 /// Supports two independent hotkeys:
@@ -27,6 +30,7 @@ final class HotkeyManager: ObservableObject {
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private let settings = AppSettings.shared
+    private var retryTimer: Timer?
 
     /// Track whether the PTT key is currently held to avoid repeat keyDown events
     fileprivate var pttKeyDown: Bool = false
@@ -48,18 +52,22 @@ final class HotkeyManager: ObservableObject {
         let trusted = AXIsProcessTrustedWithOptions(
             [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         )
-        DispatchQueue.main.async {
-            self.accessibilityGranted = trusted
-        }
+        self.accessibilityGranted = trusted
         return trusted
     }
 
     // MARK: - Start / Stop
 
     func startListening() {
-        guard eventTap == nil else { return }
-        guard checkAccessibility() else {
-            print("[HotkeyManager] Accessibility not granted")
+        guard eventTap == nil else {
+            hotkeyLog.info("Already listening, skipping startListening()")
+            return
+        }
+
+        let accessible = checkAccessibilitySilently()
+        hotkeyLog.info("Accessibility check: \(accessible ? "granted" : "NOT granted")")
+        guard accessible else {
+            hotkeyLog.warning("Cannot create event tap without Accessibility permission")
             return
         }
 
@@ -79,7 +87,7 @@ final class HotkeyManager: ObservableObject {
         )
 
         guard let tap = tap else {
-            print("[HotkeyManager] Failed to create event tap. Accessibility permission may be missing.")
+            hotkeyLog.error("Failed to create event tap. CGEvent.tapCreate returned nil.")
             return
         }
 
@@ -89,12 +97,13 @@ final class HotkeyManager: ObservableObject {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
-        DispatchQueue.main.async {
-            self.isListening = true
-        }
+        hotkeyLog.info("Event tap created and listening. Toggle=\(self.settings.toggleHotkeyDisplayName), PTT=\(self.settings.pttHotkeyDisplayName)")
+
+        self.isListening = true
     }
 
     func stopListening() {
+        stopRetryTimer()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             if let source = runLoopSource {
@@ -105,9 +114,37 @@ final class HotkeyManager: ObservableObject {
         }
         eventTap = nil
         runLoopSource = nil
-        DispatchQueue.main.async {
-            self.isListening = false
+        self.isListening = false
+    }
+
+    // MARK: - Retry
+
+    /// Start a periodic retry that attempts to create the event tap once
+    /// Accessibility permission is granted. Stops automatically on success.
+    func startRetryTimer() {
+        guard retryTimer == nil else { return }
+        hotkeyLog.info("Starting accessibility retry timer (every 3s)")
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if self.isListening {
+                self.stopRetryTimer()
+                return
+            }
+            let trusted = AXIsProcessTrusted()
+            if trusted {
+                hotkeyLog.info("Accessibility now granted — retrying event tap creation")
+                self.accessibilityGranted = true
+                self.startListening()
+                if self.isListening {
+                    self.stopRetryTimer()
+                }
+            }
         }
+    }
+
+    private func stopRetryTimer() {
+        retryTimer?.invalidate()
+        retryTimer = nil
     }
 
     // MARK: - Event Handling
@@ -119,6 +156,7 @@ final class HotkeyManager: ObservableObject {
 
         // --- Escape key (keyCode 53) cancels recording when active ---
         if eventType == .keyDown && keyCode == 53 && settings.isRecording {
+            hotkeyLog.info("Escape pressed while recording — cancelling")
             onEscapePressed?()
             return true
         }
@@ -131,6 +169,7 @@ final class HotkeyManager: ObservableObject {
             if settings.toggleHotkeyKeyCode == 63 && settings.toggleHotkeyModifierFlags == 0 {
                 if fnPressed && !fnKeyDown {
                     fnKeyDown = true
+                    hotkeyLog.info("fn toggle hotkey pressed")
                     onToggleHotkeyPressed?()
                     return true
                 } else if !fnPressed {
@@ -144,11 +183,13 @@ final class HotkeyManager: ObservableObject {
                 if fnPressed && !fnKeyDown {
                     fnKeyDown = true
                     pttKeyDown = true
+                    hotkeyLog.info("fn PTT key pressed — starting recording")
                     onPushToTalkStarted?()
                     return true
                 } else if !fnPressed && fnKeyDown {
                     fnKeyDown = false
                     pttKeyDown = false
+                    hotkeyLog.info("fn PTT key released — stopping recording")
                     onPushToTalkEnded?()
                     return true
                 }
@@ -161,6 +202,7 @@ final class HotkeyManager: ObservableObject {
         // --- Toggle Recording hotkey (keyDown only) ---
         if eventType == .keyDown && Int(keyCode) == settings.toggleHotkeyKeyCode {
             if matchesModifiers(flags, required: settings.toggleHotkeyModifierFlags) {
+                hotkeyLog.info("Toggle hotkey pressed (keyCode=\(keyCode))")
                 onToggleHotkeyPressed?()
                 return true
             }
@@ -171,11 +213,13 @@ final class HotkeyManager: ObservableObject {
             if eventType == .keyDown && !pttKeyDown {
                 if matchesModifiers(flags, required: settings.pttHotkeyModifierFlags) {
                     pttKeyDown = true
+                    hotkeyLog.info("PTT key pressed (keyCode=\(keyCode)) — starting recording")
                     onPushToTalkStarted?()
                     return true
                 }
             } else if eventType == .keyUp && pttKeyDown {
                 pttKeyDown = false
+                hotkeyLog.info("PTT key released (keyCode=\(keyCode)) — stopping recording")
                 onPushToTalkEnded?()
                 return true
             }

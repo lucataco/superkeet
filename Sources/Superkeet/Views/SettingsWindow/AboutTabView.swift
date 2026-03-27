@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// About tab showing app version and credits
 struct AboutTabView: View {
@@ -13,15 +14,14 @@ struct AboutTabView: View {
             Spacer()
 
             // App icon
-            Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.blue, .purple],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            if let appIcon = NSImage(named: "AppIcon") ?? NSApp.applicationIconImage {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 96, height: 96)
+                    .cornerRadius(20)
+                    .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+            }
 
             // App name and version
             VStack(spacing: 4) {
@@ -78,6 +78,17 @@ struct AboutTabView: View {
             }
 
             Spacer()
+
+            // Attribution
+            HStack(spacing: 4) {
+                Text("Made with love from")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Link("Catacolabs", destination: URL(string: "https://catacolabs.com")!)
+                    .font(.caption)
+                    .foregroundColor(.accentColor)
+            }
+            .padding(.bottom, 4)
         }
         .frame(maxWidth: .infinity)
         .padding(24)
