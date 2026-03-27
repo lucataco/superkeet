@@ -6,6 +6,7 @@ struct RecordingOverlayView: View {
     @ObservedObject var audioMonitor = AudioLevelMonitor.shared
     @ObservedObject var settings = AppSettings.shared
     @State private var elapsedTime: TimeInterval = 0
+    @State private var startTime: Date?
     @State private var timer: Timer?
 
     var body: some View {
@@ -30,9 +31,11 @@ struct RecordingOverlayView: View {
             }
         }
         .onAppear {
+            let start = Date()
+            startTime = start
             elapsedTime = 0
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                elapsedTime += 0.1
+                elapsedTime = Date().timeIntervalSince(start)
             }
         }
         .onDisappear {
@@ -42,7 +45,7 @@ struct RecordingOverlayView: View {
     }
 
     private func stopRecording() {
-        ParakeetService.shared.stopRecording()
+        MenuBarManager.shared.stopRecordingOnly()
     }
 
     private func toggleMode() {

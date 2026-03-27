@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Sparkle
 
 /// Superkeet - Voice-to-text Mac app powered by Parakeet
 /// Runs as a menu bar app (no dock icon) with global hotkey support
@@ -18,12 +19,14 @@ struct SuperkeetApp: App {
 
 /// AppDelegate handles the lifecycle, menu bar setup, daemon management, and hotkey registration
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let menuBarManager = MenuBarManager()
+    private let menuBarManager = MenuBarManager.shared
     private let parakeetService = ParakeetService.shared
     private let hotkeyManager = HotkeyManager.shared
     private let settings = AppSettings.shared
+    private let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
+    private var onboardingWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide the dock icon (LSUIElement in Info.plist handles this for release builds,
@@ -37,6 +40,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager.setup()
 
         // Setup hotkeys
+        setupHotkeys()
+
+        // Show onboarding or start daemon
+        if !settings.hasCompletedOnboarding {
+            showOnboardingWindow()
+        } else {
+            hotkeyManager.startListening()
+            startDaemonWithErrorHandling()
+        }
+    }
+
+    private func setupHotkeys() {
         hotkeyManager.onToggleHotkeyPressed = { [weak self] in
             DispatchQueue.main.async {
                 self?.menuBarManager.toggleRecording()
@@ -57,9 +72,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.menuBarManager.stopRecordingOnly()
             }
         }
-        hotkeyManager.startListening()
+    }
 
-        // Start the parakeet daemon in the background
+    private func showOnboardingWindow() {
+        let onboardingView = OnboardingView { [weak self] in
+            self?.onboardingWindow?.close()
+            self?.onboardingWindow = nil
+            NSApp.setActivationPolicy(.accessory)
+            self?.hotkeyManager.startListening()
+            self?.startDaemonWithErrorHandling()
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 480),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSHostingView(rootView: onboardingView)
+        window.title = "Superkeet Setup"
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.onboardingWindow = window
+    }
+
+    private func startDaemonWithErrorHandling() {
         Task {
             do {
                 print("[Superkeet] Starting Parakeet daemon...")
@@ -81,8 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let response = alert.runModal()
                     switch response {
                     case .alertFirstButtonReturn:
-                        // Open settings - will be handled by user clicking Settings in menu
-                        break
+                        MenuBarManager.shared.openSettings()
                     case .alertSecondButtonReturn:
                         NSApp.terminate(nil)
                     default:
@@ -91,6 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    func checkForUpdates() {
+        updaterController.checkForUpdates(nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

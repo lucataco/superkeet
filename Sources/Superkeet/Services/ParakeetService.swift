@@ -32,6 +32,7 @@ final class ParakeetService: ObservableObject {
     private var recordingStartTime: Date?
     private var activeAppAtRecordingStart: (name: String, bundleId: String)?
     private var lastDeliveredTranscription: String?
+    private var idleShutdownTask: DispatchWorkItem?
 
     private init() {}
 
@@ -43,17 +44,39 @@ final class ParakeetService: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["cargo", "build", "--release"]
-        process.currentDirectoryURL = URL(fileURLWithPath: settings.parakeetCliPath)
+        process.currentDirectoryURL = URL(fileURLWithPath: settings.parakeetProjectDirectory)
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        // Drain pipes asynchronously to avoid deadlock when output exceeds the 64KB buffer.
+        // Use a serial dispatch queue for thread-safe accumulation (avoids NSLock in async context).
+        let collectQueue = DispatchQueue(label: "com.superkeet.build-output")
+        var outputData = Data()
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            collectQueue.sync { outputData.append(data) }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            collectQueue.sync { outputData.append(data) }
+        }
 
         try process.run()
         process.waitUntilExit()
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
+        // Stop reading handlers and collect final output
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        let output: String = collectQueue.sync {
+            String(data: outputData, encoding: .utf8) ?? ""
+        }
 
         if process.terminationStatus != 0 {
             await MainActor.run {
@@ -122,6 +145,10 @@ final class ParakeetService: ObservableObject {
 
         if !settings.audioInputDevice.isEmpty {
             args.append(contentsOf: ["--device", settings.audioInputDevice])
+        }
+
+        if !settings.modelDirectory.isEmpty {
+            args.append(contentsOf: ["--model-dir", settings.modelDirectory])
         }
 
         process.arguments = args
@@ -206,18 +233,13 @@ final class ParakeetService: ObservableObject {
         // Try graceful shutdown via socket
         sendSocketCommand("shutdown")
 
-        // Give it a brief moment, then force kill synchronously
-        Thread.sleep(forTimeInterval: 0.5)
-
         if let process = daemonProcess, process.isRunning {
             process.terminate()
-            // Wait up to 2 seconds for the process to exit
-            let deadline = Date().addingTimeInterval(2.0)
-            while process.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.1)
-            }
-            // If still alive, SIGKILL
-            if process.isRunning {
+            // Wait up to 2 seconds on a background thread instead of blocking main with Thread.sleep
+            let waitItem = DispatchWorkItem { process.waitUntilExit() }
+            DispatchQueue.global(qos: .userInitiated).async(execute: waitItem)
+            let finished = waitItem.wait(timeout: .now() + 2.0)
+            if finished == .timedOut && process.isRunning {
                 kill(process.processIdentifier, SIGKILL)
             }
         }
@@ -226,6 +248,11 @@ final class ParakeetService: ObservableObject {
         daemonState = .stopped
         settings.isDaemonRunning = false
         settings.isRecording = false
+    }
+
+    func restartDaemon() async throws {
+        stopDaemon()
+        try await startDaemon()
     }
 
     // MARK: - Stale Process Cleanup
@@ -250,10 +277,10 @@ final class ParakeetService: ObservableObject {
             }
         }
 
-        // 2. Broad cleanup: kill any parakeet-cli serve processes
+        // 2. Broad cleanup: kill any parakeet-cli serve processes owned by this user
         let pkill = Process()
         pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        pkill.arguments = ["-f", "parakeet-cli serve"]
+        pkill.arguments = ["-U", String(getuid()), "-f", "parakeet-cli serve"]
         try? pkill.run()
         pkill.waitUntilExit()
 
@@ -268,6 +295,10 @@ final class ParakeetService: ObservableObject {
     // MARK: - Recording Control
 
     func startRecording() {
+        // Cancel any pending idle shutdown since the user is active
+        idleShutdownTask?.cancel()
+        idleShutdownTask = nil
+
         // Capture the frontmost app before we do anything
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             activeAppAtRecordingStart = (
@@ -276,6 +307,7 @@ final class ParakeetService: ObservableObject {
             )
         }
         recordingStartTime = Date()
+        lastDeliveredTranscription = nil
 
         sendSocketCommand("start") { [weak self] response in
             DispatchQueue.main.async {
@@ -292,6 +324,7 @@ final class ParakeetService: ObservableObject {
             DispatchQueue.main.async {
                 self?.daemonState = .idle
                 self?.settings.isRecording = false
+                self?.resetIdleTimer()
             }
         }
     }
@@ -313,7 +346,31 @@ final class ParakeetService: ObservableObject {
         lastDiagnosticsSummary = diagnosticSummary(readiness: readiness)
     }
 
+    // MARK: - Idle Shutdown
+
+    /// Schedule a daemon shutdown after the configured idle timeout.
+    /// Called after each recording stops. Cancelled when a new recording starts.
+    private func resetIdleTimer() {
+        idleShutdownTask?.cancel()
+        idleShutdownTask = nil
+
+        let timeoutMinutes = settings.idleTimeoutMinutes
+        guard timeoutMinutes > 0 else { return }
+
+        let task = DispatchWorkItem { [weak self] in
+            guard let self = self, self.daemonState == .idle else { return }
+            print("[ParakeetService] Idle timeout reached (\(timeoutMinutes) min), stopping daemon to reclaim resources")
+            self.stopDaemon()
+        }
+        idleShutdownTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(timeoutMinutes * 60), execute: task)
+    }
+
     // MARK: - Socket Communication
+
+    private struct SocketCommand: Encodable {
+        let command: String
+    }
 
     private func sendSocketCommand(_ command: String, completion: ((String) -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -323,9 +380,14 @@ final class ParakeetService: ObservableObject {
             let fd = socket(AF_UNIX, SOCK_STREAM, 0)
             guard fd >= 0 else {
                 print("[ParakeetService] Failed to create socket")
+                completion?("")
                 return
             }
             defer { close(fd) }
+
+            // Set a 5-second receive timeout to prevent blocking a GCD thread forever
+            var timeout = timeval(tv_sec: 5, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
             var addr = sockaddr_un()
             addr.sun_family = sa_family_t(AF_UNIX)
@@ -356,11 +418,18 @@ final class ParakeetService: ObservableObject {
                     self.daemonState = .stopped
                     self.settings.isDaemonRunning = false
                 }
+                completion?("")
                 return
             }
 
             // Send the command as JSON
-            let json = "{\"command\":\"\(command)\"}\n"
+            guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command)),
+                  var json = String(data: jsonData, encoding: .utf8) else {
+                print("[ParakeetService] Failed to encode socket command")
+                completion?("")
+                return
+            }
+            json.append("\n")
             json.withCString { cstr in
                 _ = send(fd, cstr, strlen(cstr), 0)
             }
@@ -372,6 +441,9 @@ final class ParakeetService: ObservableObject {
                 let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
                 print("[ParakeetService] Response: \(response)")
                 completion?(response)
+            } else {
+                print("[ParakeetService] recv returned \(bytesRead) (timeout or error)")
+                completion?("")
             }
         }
     }
@@ -395,13 +467,20 @@ final class ParakeetService: ObservableObject {
     }
 
     private func processTranscription(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        // Apply filler word removal if enabled
+        if settings.fillerWordRemovalEnabled {
+            trimmed = FillerWordCleaner.clean(trimmed)
+            guard !trimmed.isEmpty else { return }
+        }
+
         if lastDeliveredTranscription == trimmed {
             return
         }
 
-        lastTranscription = text
+        lastTranscription = trimmed
         lastDeliveredTranscription = trimmed
 
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
@@ -443,10 +522,10 @@ final class ParakeetService: ObservableObject {
         try? FileManager.default.removeItem(atPath: settings.socketPath)
         try? FileManager.default.removeItem(atPath: settings.pidFilePath)
 
-        // Safety net: kill any remaining parakeet-cli serve processes
+        // Safety net: kill any remaining parakeet-cli serve processes owned by this user
         let pkill = Process()
         pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        pkill.arguments = ["-f", "parakeet-cli serve"]
+        pkill.arguments = ["-U", String(getuid()), "-f", "parakeet-cli serve"]
         try? pkill.run()
         pkill.waitUntilExit()
     }

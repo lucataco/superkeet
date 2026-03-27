@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// Manages the floating recording overlay window.
 /// Supports dynamic resizing when toggling between compact and expanded modes.
@@ -8,6 +9,7 @@ final class RecordingOverlayWindowController {
 
     private var window: NSWindow?
     private var hostingView: NSHostingView<RecordingOverlayView>?
+    private var recordingCancellable: AnyCancellable?
 
     // Window sizes for each mode
     static let compactSize = NSSize(width: 260, height: 50)
@@ -49,9 +51,23 @@ final class RecordingOverlayWindowController {
 
         window.orderFrontRegardless()
         self.window = window
+
+        // Auto-hide if recording stops unexpectedly (e.g., daemon crash)
+        recordingCancellable = AppSettings.shared.$isRecording
+            .receive(on: DispatchQueue.main)
+            .dropFirst()
+            .filter { !$0 }
+            .sink { [weak self] _ in
+                self?.hide()
+                // Also stop the audio monitor and reset the menu bar icon
+                AudioLevelMonitor.shared.stopMonitoring()
+                MenuBarManager.shared.updateMenuBarIcon(recording: false)
+            }
     }
 
     func hide() {
+        recordingCancellable?.cancel()
+        recordingCancellable = nil
         window?.close()
         window = nil
         hostingView = nil
@@ -76,7 +92,10 @@ final class RecordingOverlayWindowController {
     // MARK: - Positioning
 
     private func positionWindow(_ window: NSWindow, size: NSSize) {
-        if let screen = NSScreen.main {
+        // Use the screen containing the mouse cursor, not NSScreen.main (which may be the wrong monitor)
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main
+        if let screen = screen {
             let screenFrame = screen.visibleFrame
             let x = screenFrame.midX - size.width / 2
             let y = screenFrame.minY + 80

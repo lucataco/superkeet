@@ -15,6 +15,9 @@ DerivedData/
 *.xccheckout
 *.moved-aside
 
+# App bundle (built by install.sh)
+*.app
+
 # macOS
 .DS_Store
 .AppleDouble

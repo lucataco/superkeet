@@ -58,6 +58,22 @@ struct OutputTabView: View {
 
                 Divider()
 
+                // Filler Word Removal
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $settings.fillerWordRemovalEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Remove Filler Words", systemImage: "textformat.alt")
+                                .font(.headline)
+                            Text("Strip filler words like \"uh\", \"um\", \"er\", and \"hmm\" from transcriptions")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                }
+
+                Divider()
+
                 // Clipboard
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle(isOn: $settings.clipboardCopyEnabled) {

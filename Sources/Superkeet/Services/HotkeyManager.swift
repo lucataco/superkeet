@@ -75,7 +75,7 @@ final class HotkeyManager: ObservableObject {
             options: .listenOnly,
             eventsOfInterest: eventMask,
             callback: hotkeyCallback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
+            userInfo: Unmanaged.passRetained(self).toOpaque()
         )
 
         guard let tap = tap else {
@@ -100,6 +100,8 @@ final class HotkeyManager: ObservableObject {
             if let source = runLoopSource {
                 CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
             }
+            // Balance the passRetained(self) from startListening()
+            Unmanaged.passUnretained(self).release()
         }
         eventTap = nil
         runLoopSource = nil
@@ -184,14 +186,19 @@ final class HotkeyManager: ObservableObject {
 
     /// Check whether the event's modifier flags match the required flags.
     /// Only checks the significant modifier bits (Cmd, Option, Control, Shift).
-    private func matchesModifiers(_ eventFlags: CGEventFlags, required: Int) -> Bool {
+    func matchesModifiers(_ eventFlags: CGEventFlags, required: Int) -> Bool {
+        Self.modifiersMatch(eventFlags, required: required)
+    }
+
+    /// Pure logic for modifier matching, exposed for testability.
+    static func modifiersMatch(_ eventFlags: CGEventFlags, required: Int) -> Bool {
+        let significant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
         if required == 0 {
             // No modifiers required — match if no significant modifiers are pressed
-            let significant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
             return eventFlags.intersection(significant).isEmpty
         }
         let requiredFlags = CGEventFlags(rawValue: UInt64(required))
-        return eventFlags.contains(requiredFlags)
+        return eventFlags.intersection(significant) == requiredFlags.intersection(significant)
     }
 }
 
@@ -214,7 +221,7 @@ func displayNameForHotkey(keyCode: Int, modifierFlags: Int) -> String {
 }
 
 /// Maps common key codes to display names
-private func keyCodeName(_ keyCode: Int) -> String {
+func keyCodeName(_ keyCode: Int) -> String {
     switch keyCode {
     // Letters (QWERTY layout)
     case 0: return "A"
@@ -284,8 +291,8 @@ private func keyCodeName(_ keyCode: Int) -> String {
     case 111: return "F12"
     case 113: return "F15"
     case 118: return "F4"
-    case 119: return "F2"
-    case 120: return "F1"
+    case 119: return "End"
+    case 120: return "F2"
     case 121: return "PageDown"
     case 122: return "F1"
     case 123: return "Left"

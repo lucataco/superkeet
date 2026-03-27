@@ -1,13 +1,17 @@
 import SwiftUI
 import AppKit
+import Sparkle
 
 /// Manages the NSMenu displayed from the menu bar status item
 final class MenuBarManager: NSObject, ObservableObject {
+    static let shared = MenuBarManager()
+
     private var statusItem: NSStatusItem?
     private let parakeetService = ParakeetService.shared
     private let settings = AppSettings.shared
     private var settingsWindow: NSWindow?
     private var historyWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -71,6 +75,17 @@ final class MenuBarManager: NSObject, ObservableObject {
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")
         menu.addItem(settingsItem)
 
+        // Check for Updates
+        let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+
+        // Run Setup
+        let setupItem = NSMenuItem(title: "Run Setup Again...", action: #selector(runSetupAgain), keyEquivalent: "")
+        setupItem.target = self
+        setupItem.image = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: "Setup")
+        menu.addItem(setupItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // Quit
@@ -84,6 +99,23 @@ final class MenuBarManager: NSObject, ObservableObject {
     // MARK: - Actions
 
     @objc private func startRecording() {
+        // If daemon was stopped (e.g., idle timeout), restart it first
+        if !settings.isDaemonRunning {
+            updateMenuBarIcon(recording: false)
+            Task {
+                do {
+                    try await parakeetService.startDaemon()
+                    await MainActor.run { self.performStartRecording() }
+                } catch {
+                    print("[MenuBar] Failed to restart daemon for recording: \(error)")
+                }
+            }
+            return
+        }
+        performStartRecording()
+    }
+
+    private func performStartRecording() {
         parakeetService.startRecording()
         updateMenuBarIcon(recording: true)
 
@@ -123,7 +155,7 @@ final class MenuBarManager: NSObject, ObservableObject {
         self.historyWindow = window
     }
 
-    @objc private func openSettings() {
+    @objc func openSettings() {
         if let existingWindow = settingsWindow, existingWindow.isVisible {
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -144,6 +176,41 @@ final class MenuBarManager: NSObject, ObservableObject {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.settingsWindow = window
+    }
+
+    @objc private func checkForUpdates() {
+        // Access the updater from the AppDelegate's SPUStandardUpdaterController
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.checkForUpdates()
+        }
+    }
+
+    @objc private func runSetupAgain() {
+        if let existingWindow = onboardingWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let onboardingView = OnboardingView {
+            // On completion, just close the window (daemon is already running)
+            self.onboardingWindow?.close()
+            self.onboardingWindow = nil
+            NSApp.setActivationPolicy(.accessory)
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 480),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSHostingView(rootView: onboardingView)
+        window.title = "Superkeet Setup"
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.onboardingWindow = window
     }
 
     @objc private func quitApp() {

@@ -3,6 +3,7 @@ import Foundation
 /// Persists transcription history to a JSON file on disk
 final class HistoryStore: ObservableObject {
     static let shared = HistoryStore()
+    private static let maxRecords = 1000
 
     @Published var records: [TranscriptionRecord] = []
 
@@ -28,6 +29,9 @@ final class HistoryStore: ObservableObject {
     func addRecord(_ record: TranscriptionRecord) {
         guard AppSettings.shared.saveHistoryEnabled else { return }
         records.insert(record, at: 0)
+        if records.count > Self.maxRecords {
+            records = Array(records.prefix(Self.maxRecords))
+        }
         saveRecords()
     }
 
@@ -85,6 +89,11 @@ final class HistoryStore: ObservableObject {
         do {
             let data = try Data(contentsOf: fileURL)
             records = try decoder.decode([TranscriptionRecord].self, from: data)
+            // Prune if history exceeds the cap (e.g., limit was lowered)
+            if records.count > Self.maxRecords {
+                records = Array(records.prefix(Self.maxRecords))
+                saveRecords()
+            }
         } catch {
             print("[HistoryStore] Failed to load history: \(error)")
         }

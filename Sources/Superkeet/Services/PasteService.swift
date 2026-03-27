@@ -18,15 +18,23 @@ final class PasteService {
             saveHistoryEnabled: settings.saveHistoryEnabled
         )
 
-        if decision.shouldCopyToClipboard {
-            copyToClipboard(text)
-        }
-
         if decision.shouldAutoPaste {
-            // Small delay to ensure clipboard is ready and focus returns
+            // Save current clipboard, set transcription, paste, then restore original clipboard
+            let savedClipboard = snapshotClipboard()
+            copyToClipboard(text)
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.simulatePaste()
+                // Restore original clipboard after paste completes
+                // (unless user also wants clipboard copy, in which case keep the transcription)
+                if !decision.shouldCopyToClipboard {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        self.restoreClipboard(savedClipboard)
+                    }
+                }
             }
+        } else if decision.shouldCopyToClipboard {
+            copyToClipboard(text)
         }
     }
 
@@ -35,6 +43,29 @@ final class PasteService {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    // MARK: - Clipboard Snapshot & Restore
+
+    /// Save all current clipboard contents so they can be restored after a paste operation.
+    private func snapshotClipboard() -> [(NSPasteboard.PasteboardType, Data)] {
+        let pb = NSPasteboard.general
+        var items: [(NSPasteboard.PasteboardType, Data)] = []
+        for type in pb.types ?? [] {
+            if let data = pb.data(forType: type) {
+                items.append((type, data))
+            }
+        }
+        return items
+    }
+
+    /// Restore previously saved clipboard contents.
+    private func restoreClipboard(_ items: [(NSPasteboard.PasteboardType, Data)]) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        for (type, data) in items {
+            pb.setData(data, forType: type)
+        }
     }
 
     /// Simulate Cmd+V keystroke to paste from clipboard

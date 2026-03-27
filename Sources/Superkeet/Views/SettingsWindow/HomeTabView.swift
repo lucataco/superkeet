@@ -2,6 +2,7 @@ import SwiftUI
 import Carbon
 import AVFoundation
 import AppKit
+import ServiceManagement
 
 /// Setup tab focused on first-run clarity and the single primary shortcut.
 struct HomeTabView: View {
@@ -86,6 +87,17 @@ struct HomeTabView: View {
                     ) {
                         hotkeyManager.checkAccessibility()
                     }
+
+                    SetupRow(
+                        title: "Launch at Login",
+                        detail: settings.launchAtLoginEnabled
+                            ? "Superkeet will start automatically when you log in."
+                            : "Optional. Start Superkeet automatically when you log in. Requires the installed .app bundle.",
+                        isComplete: settings.launchAtLoginEnabled,
+                        buttonTitle: settings.launchAtLoginEnabled ? "Disable" : "Enable"
+                    ) {
+                        toggleLaunchAtLogin()
+                    }
                 }
 
                 Divider()
@@ -158,6 +170,19 @@ struct HomeTabView: View {
                             refreshReadiness()
                         }
                         .buttonStyle(.bordered)
+
+                        Button("Restart Daemon") {
+                            Task {
+                                do {
+                                    try await parakeetService.restartDaemon()
+                                } catch {
+                                    print("[HomeTab] Failed to restart daemon: \(error)")
+                                }
+                                refreshReadiness()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!settings.isDaemonRunning)
                     }
 
                     if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
@@ -241,6 +266,20 @@ struct HomeTabView: View {
     private func refreshReadiness() {
         readiness = AppReadiness.current()
         parakeetService.lastDiagnosticsSummary = parakeetService.lastDiagnosticsSummary ?? diagnosticsSummary
+    }
+
+    private func toggleLaunchAtLogin() {
+        let newValue = !settings.launchAtLoginEnabled
+        do {
+            if newValue {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            settings.launchAtLoginEnabled = newValue
+        } catch {
+            print("[HomeTab] Failed to update login item: \(error)")
+        }
     }
 
     private func openMicrophoneSettings() {

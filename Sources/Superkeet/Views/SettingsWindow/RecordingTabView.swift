@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Recording settings: audio device, VAD threshold, silence timeout
+/// Recording settings: audio device, model directory
 struct RecordingTabView: View {
     @ObservedObject var settings = AppSettings.shared
     @State private var availableDevices: [String] = []
@@ -33,58 +33,7 @@ struct RecordingTabView: View {
                         .disabled(isLoadingDevices)
                     }
 
-                    Text("Select the microphone to use for recording. Leave as System Default to use your Mac's default input device.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Divider()
-
-                // VAD Sensitivity
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Voice Detection Sensitivity", systemImage: "waveform.badge.magnifyingglass")
-                        .font(.headline)
-
-                    HStack {
-                        Text("Less Sensitive")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Slider(value: $settings.vadThreshold, in: 0.1...0.9, step: 0.05)
-                        Text("More Sensitive")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Text("Current: \(String(format: "%.2f", settings.vadThreshold)) — Higher values require clearer speech to start recording. Lower values are more sensitive to quiet speech.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Divider()
-
-                // Silence Timeout
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Silence Timeout", systemImage: "clock.badge.xmark")
-                        .font(.headline)
-
-                    HStack {
-                        Text("0.5s")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Slider(
-                            value: Binding(
-                                get: { Double(settings.silenceTimeoutMs) },
-                                set: { settings.silenceTimeoutMs = Int($0) }
-                            ),
-                            in: 500...5000,
-                            step: 100
-                        )
-                        Text("5.0s")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Text("Current: \(String(format: "%.1f", Double(settings.silenceTimeoutMs) / 1000.0))s — How long to wait after you stop speaking before ending the recording. Shorter values respond faster; longer values allow for longer pauses.")
+                    Text("Select the microphone to use for recording. Leave as System Default to use your Mac's default input device. Changes take effect after restarting the daemon.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -110,7 +59,28 @@ struct RecordingTabView: View {
                         }
                     }
 
-                    Text("Leave empty to use the default model directory (~~/Library/Application Support/parakeet/models/)")
+                    Text("Leave empty to use the default model directory (~~/Library/Application Support/parakeet/models/). Changes take effect after restarting the daemon.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Divider()
+
+                // Idle Daemon Timeout
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Idle Daemon Timeout", systemImage: "moon.zzz")
+                        .font(.headline)
+
+                    Picker("Stop daemon after inactivity:", selection: $settings.idleTimeoutMinutes) {
+                        Text("Disabled").tag(0)
+                        Text("5 minutes").tag(5)
+                        Text("15 minutes").tag(15)
+                        Text("30 minutes").tag(30)
+                        Text("60 minutes").tag(60)
+                    }
+                    .pickerStyle(.menu)
+
+                    Text("Automatically stop the speech engine after a period of inactivity to reclaim memory. The engine restarts automatically when you start recording.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
