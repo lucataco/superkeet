@@ -5,17 +5,17 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .home
 
     enum SettingsTab: String, CaseIterable, Identifiable {
-        case home = "Home"
-        case recording = "Recording"
-        case output = "Output"
+        case home = "Setup"
+        case output = "Output & Privacy"
+        case recording = "Advanced"
         case about = "About"
 
         var id: String { rawValue }
 
         var icon: String {
             switch self {
-            case .home: return "house.fill"
-            case .recording: return "mic.fill"
+            case .home: return "checklist"
+            case .recording: return "slider.horizontal.3"
             case .output: return "text.cursor"
             case .about: return "info.circle.fill"
             }

@@ -71,7 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await MainActor.run {
                     let alert = NSAlert()
                     alert.messageText = "Failed to start Parakeet"
-                    alert.informativeText = "Could not start the Parakeet speech engine. Make sure Rust/Cargo is installed and the parakeet-cli source is available at:\n\(settings.parakeetCliPath)\n\nError: \(error.localizedDescription)"
+                    let diagnosticMessage = parakeetService.lastUserFacingError ?? error.localizedDescription
+                    alert.informativeText = "Could not start the Parakeet speech engine.\n\n\(diagnosticMessage)"
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "Open Settings")
                     alert.addButton(withTitle: "Quit")

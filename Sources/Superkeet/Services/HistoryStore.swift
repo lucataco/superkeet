@@ -26,6 +26,7 @@ final class HistoryStore: ObservableObject {
     // MARK: - CRUD
 
     func addRecord(_ record: TranscriptionRecord) {
+        guard AppSettings.shared.saveHistoryEnabled else { return }
         records.insert(record, at: 0)
         saveRecords()
     }

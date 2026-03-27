@@ -39,6 +39,10 @@ final class HotkeyManager: ObservableObject {
 
     // MARK: - Accessibility
 
+    func checkAccessibilitySilently() -> Bool {
+        AXIsProcessTrusted()
+    }
+
     @discardableResult
     func checkAccessibility() -> Bool {
         let trusted = AXIsProcessTrustedWithOptions(

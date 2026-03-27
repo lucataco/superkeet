@@ -6,6 +6,9 @@ let package = Package(
     platforms: [
         .macOS(.v14)
     ],
+    products: [
+        .executable(name: "Superkeet", targets: ["Superkeet"])
+    ],
     targets: [
         .executableTarget(
             name: "Superkeet",
@@ -13,6 +16,11 @@ let package = Package(
             resources: [
                 .copy("../../Resources/Info.plist")
             ]
+        ),
+        .testTarget(
+            name: "SuperkeetTests",
+            dependencies: ["Superkeet"],
+            path: "Tests/SuperkeetTests"
         )
     ]
 )

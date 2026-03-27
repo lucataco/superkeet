@@ -1,167 +1,225 @@
 # Superkeet
 
-A macOS menu bar app for voice-to-text, powered by [Parakeet](https://github.com/lucataco/parakeet-cli) — a fully local, offline speech recognition engine using NVIDIA's Parakeet TDT 0.6B model.
+Superkeet is a macOS menu bar app for local voice-to-text, powered by [parakeet-cli](https://github.com/lucataco/parakeet-cli). It keeps the app-side experience simple: live in the menu bar, start recording with a shortcut, transcribe locally, and copy or paste the result.
 
-Think [Superwhisper](https://superwhisper.com), but open-source and completely private. All audio is processed on-device using ONNX Runtime with CoreML acceleration. Nothing ever leaves your Mac.
+All transcription runs on-device through NVIDIA's Parakeet TDT 0.6B model via ONNX Runtime. No cloud APIs are involved.
+
+## Current focus
+
+This repo is still in active development. The app now favors a simpler setup-first flow over a dashboard-style UI:
+
+- Setup checks for engine, microphone, runtime directory, and input devices
+- Two shortcuts are supported: toggle recording and push-to-talk
+- Clipboard-first output is the default
+- Auto-paste is still available, but treated as an advanced option
+- Startup diagnostics are surfaced in the app when the Parakeet daemon fails
 
 ## Features
 
-- **Menu bar app** — lives in your macOS menu bar, no dock icon
-- **Global hotkey** — press `fn` (or `Option+Space`) to toggle recording from anywhere
-- **Live recording overlay** — floating pill-shaped window with animated equalizer bars and elapsed timer
-- **Auto-paste** — transcribed text is automatically pasted into whatever app you were using
-- **Rich history** — searchable list of past transcriptions with app context, duration, and word count
-- **Settings dashboard** — stats (avg WPM, words this week, apps used, time saved), hotkey config, recording tuning, output preferences
-- **100% offline** — powered by Parakeet TDT 0.6B v2 (ONNX) + Silero VAD v5, runs entirely on your Mac
+- Menu bar app with no Dock icon
+- Global shortcuts for toggle recording and push-to-talk
+- Floating recording overlay with mini/classic/hidden modes
+- Searchable local history
+- Output controls for clipboard, auto-paste, and local history retention
+- Setup diagnostics for microphone access, engine presence, runtime directory, and daemon state
+- 100% local transcription via `parakeet-cli`
 
 ## Requirements
 
-- **macOS 14.0+** (Sonoma or later)
-- **Rust / Cargo** — for building the Parakeet CLI engine ([install Rust](https://rustup.rs))
-- **Xcode Command Line Tools** — `xcode-select --install`
-- **parakeet-cli source** — cloned at `/Users/lucataco/Code/CLIs/parakeet-cli` (configurable in Settings)
+- macOS 14.0+
+- Apple Silicon Mac
+- Full Xcode recommended for `swift run`
+- Rust / Cargo for building `parakeet-cli` if the binary is missing
+- `parakeet-cli` source cloned locally, default path:
+  - `/Users/lucataco/Code/CLIs/parakeet-cli`
 
 ### Permissions
 
-On first launch, macOS will prompt for:
-
 | Permission | Why |
 |---|---|
-| **Microphone** | Audio capture for transcription and equalizer visualization |
-| **Accessibility** | Global hotkey listener and auto-paste (simulated Cmd+V) |
+| Microphone | Required to record audio |
+| Accessibility | Required for global shortcut listening and auto-paste |
 
 ## Getting started
 
 ```bash
-# Clone the repo
 git clone <repo-url> superkeet
 cd superkeet
-
-# Build and run (debug)
 swift run
+```
 
-# Or build a release binary
+If you use `swift run`, make sure the active developer directory points to full Xcode:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+Useful verification commands:
+
+```bash
+xcodebuild -version
+swift --version
+swift build
+```
+
+To build a release binary:
+
+```bash
 swift build -c release
 .build/release/Superkeet
 ```
 
-On first launch, Superkeet will automatically build the Parakeet CLI from source (`cargo build --release`) and download the required model weights (~2.3 GB) from HuggingFace. This only happens once.
+### First launch behavior
+
+On startup, Superkeet attempts to start the Parakeet daemon in the background. If the binary at the configured `parakeet-cli` path is missing, the app will try to build it with:
+
+```bash
+cargo build --release
+```
+
+The app now waits for the daemon to finish model loading instead of failing immediately after a fixed half-second delay. If startup still fails, the Setup tab shows the latest diagnostics and daemon stderr excerpt.
 
 ## Usage
 
 ### Menu bar
 
-Click the waveform icon in the menu bar to access:
+Click the menu bar icon to:
 
-| Item | Description |
-|---|---|
-| **Start / Stop Recording** | Toggle voice recording |
-| **History** | View past transcriptions |
-| **Settings...** | Open the settings window |
-| **Quit Superkeet** | Shut down the daemon and exit |
+- Start or stop recording
+- Open History
+- Open Settings
+- Quit the app
 
 The icon turns red while recording.
 
-### Hotkey
+### Shortcuts
 
-Press `fn` to toggle recording on/off from any app. The hotkey is configurable in Settings > Home.
+Superkeet supports two configurable shortcuts:
 
-When recording starts:
-1. A floating overlay appears at the bottom of the screen with an animated equalizer
-2. Speak naturally — Parakeet uses voice activity detection (VAD) to handle pauses
-3. Press `fn` again (or click Stop) to end
-4. The transcribed text is automatically pasted into whatever app was focused before recording
+- Toggle Recording: press once to start, press again to stop
+- Push to Talk: hold to record, release to stop
+
+Shortcut configuration lives in `Settings > Setup`.
 
 ### Settings
 
-The settings window has four tabs with a vertical sidebar:
+The settings window currently has four tabs:
 
-**Home** — Dashboard with weekly stats (average WPM, words transcribed, apps used, time saved) and hotkey configuration.
+- Setup
+  - readiness checks
+  - shortcut configuration
+  - daemon diagnostics
+- Output & Privacy
+  - overlay style
+  - clipboard and auto-paste behavior
+  - local history retention
+- Advanced
+  - audio device selection
+  - VAD sensitivity
+  - silence timeout
+  - model directory override
+- About
+  - version and credits
 
-**Recording** — Audio input device selector, VAD sensitivity slider, silence timeout slider, and model directory path.
+### Output behavior
 
-**Output** — Toggle auto-paste (simulated Cmd+V) and clipboard copy independently.
+Current defaults:
 
-**About** — Version info, credits, and privacy details.
+- Copy to Clipboard: on
+- Paste Automatically: off
+- Save History: on
+
+This keeps the default flow safer and simpler. Auto-paste is available, but it depends on Accessibility access and can paste into the wrong place if focus changes.
+
+## Runtime paths
+
+| What | Where |
+|---|---|
+| App settings | `UserDefaults` |
+| History | `~/Library/Application Support/Superkeet/history.json` |
+| Runtime directory | `~/Library/Application Support/Superkeet/Runtime/` |
+| Daemon socket | `~/Library/Application Support/Superkeet/Runtime/parakeet.sock` |
+| Daemon PID file | `~/Library/Application Support/Superkeet/Runtime/parakeet.pid` |
+| Model files | `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v2/` |
 
 ## Architecture
 
-```
-SuperkeetApp (SwiftUI)
-    │
-    ├── MenuBarManager        NSStatusItem menu
-    ├── HotkeyManager         CGEvent tap for global hotkeys
-    ├── AudioLevelMonitor     AVAudioEngine mic tap → equalizer UI
-    ├── RecordingOverlay      Floating NSPanel with equalizer + timer
-    ├── PasteService          Clipboard + simulated Cmd+V
-    ├── HistoryStore          JSON file persistence + stats
-    │
-    └── ParakeetService       Manages subprocess lifecycle
-            │
-            └── parakeet serve    (Unix socket at /tmp/parakeet.sock)
-                    │
-                    ├── Microphone capture (cpal)
-                    ├── Silero VAD v5
-                    ├── FastConformer Encoder (ONNX, CoreML)
-                    └── TDT Greedy Decoder (ONNX)
+```text
+SuperkeetApp (SwiftUI + AppKit)
+    ├── MenuBarManager
+    ├── HotkeyManager
+    ├── AudioLevelMonitor
+    ├── RecordingOverlayWindowController
+    ├── PasteService
+    ├── HistoryStore
+    └── ParakeetService
+            └── parakeet-cli serve
+                    ├── loads Parakeet model
+                    ├── loads Silero VAD
+                    ├── binds Unix socket
+                    └── accepts start/stop/status/shutdown commands
 ```
 
-Superkeet communicates with the Parakeet daemon over a Unix socket using JSON commands (`start`, `stop`, `toggle`, `status`, `shutdown`). The daemon handles all audio capture and transcription. The app handles UI, hotkeys, and output.
+Superkeet communicates with the daemon over a Unix socket using JSON commands such as `start`, `stop`, `status`, and `shutdown`.
 
 ## Project structure
 
-```
+```text
 superkeet/
 ├── Package.swift
 ├── Resources/
 │   ├── Info.plist
 │   └── Superkeet.entitlements
-└── Sources/Superkeet/
-    ├── SuperkeetApp.swift                  # Entry point + AppDelegate
-    ├── Models/
-    │   ├── AppSettings.swift               # UserDefaults-backed settings
-    │   └── TranscriptionRecord.swift       # History data model
-    ├── Services/
-    │   ├── ParakeetService.swift           # Daemon lifecycle + socket IPC
-    │   ├── HotkeyManager.swift            # Global hotkey (CGEvent tap)
-    │   ├── AudioLevelMonitor.swift        # Mic levels for equalizer
-    │   ├── PasteService.swift             # Clipboard + auto-paste
-    │   └── HistoryStore.swift             # JSON persistence + weekly stats
-    └── Views/
-        ├── MenuBarView.swift               # NSStatusItem + NSMenu
-        ├── RecordingOverlayView.swift      # Floating pill UI
-        ├── RecordingOverlayWindow.swift    # NSPanel controller
-        ├── EqualizerView.swift            # Animated audio bars
-        ├── HistoryView.swift              # Searchable history list
-        └── SettingsWindow/
-            ├── SettingsView.swift          # Sidebar navigation
-            ├── HomeTabView.swift           # Stats + hotkey config
-            ├── RecordingTabView.swift      # Device, VAD, silence
-            ├── OutputTabView.swift         # Auto-paste, clipboard
-            └── AboutTabView.swift          # Version + credits
+├── Sources/Superkeet/
+│   ├── SuperkeetApp.swift
+│   ├── Models/
+│   ├── Services/
+│   └── Views/
+└── Tests/
+    └── SuperkeetTests/
 ```
 
-## Data storage
+## Troubleshooting
 
-| What | Where |
-|---|---|
-| Settings | `UserDefaults` (standard macOS preferences) |
-| History | `~/Library/Application Support/Superkeet/history.json` |
-| Models | `~/Library/Application Support/parakeet/models/` |
-| Daemon socket | `/tmp/parakeet.sock` |
-| Daemon PID | `/tmp/parakeet.pid` |
+### `swift run` fails before the app launches
 
-## Tech stack
+Check that you are using full Xcode instead of Command Line Tools:
 
-| Component | Technology |
-|---|---|
-| App framework | SwiftUI + AppKit |
-| Speech engine | Parakeet TDT 0.6B v2 (Rust + ONNX Runtime) |
-| Voice detection | Silero VAD v5 |
-| Inference | ONNX Runtime with CoreML EP (Apple Silicon) |
-| Audio capture | cpal (Rust) + AVAudioEngine (Swift, for UI) |
-| IPC | Unix domain socket |
-| Build system | Swift Package Manager |
+```bash
+xcode-select -p
+xcodebuild -version
+```
+
+If needed:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+### App says `Failed to start Parakeet`
+
+Open `Settings > Setup` and check:
+
+- Speech engine path
+- Runtime directory status
+- Input device availability
+- Latest daemon diagnostics
+
+Common causes:
+
+- `parakeet-cli` binary missing
+- model files missing
+- microphone permission denied
+- no available audio input device
+- slow model load on first startup
+
+### `parakeet-cli devices` shows no inputs
+
+Check:
+
+- System Settings > Privacy & Security > Microphone
+- System Settings > Sound > Input
+- any external audio device routing
 
 ## License
 

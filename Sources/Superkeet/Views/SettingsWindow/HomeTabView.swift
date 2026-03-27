@@ -1,11 +1,16 @@
 import SwiftUI
 import Carbon
+import AVFoundation
+import AppKit
 
-/// Home tab showing stats and hotkey information
+/// Setup tab focused on first-run clarity and the single primary shortcut.
 struct HomeTabView: View {
-    @ObservedObject var historyStore = HistoryStore.shared
     @ObservedObject var settings = AppSettings.shared
+    @ObservedObject var parakeetService = ParakeetService.shared
+    @ObservedObject var hotkeyManager = HotkeyManager.shared
+
     @State private var editingHotkey: EditingHotkey? = nil
+    @State private var readiness = AppReadiness.current()
 
     enum EditingHotkey {
         case toggle
@@ -15,58 +20,84 @@ struct HomeTabView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                // Header
-                Text("Dashboard")
-                    .font(.title)
-                    .fontWeight(.bold)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Setup")
+                        .font(.title)
+                        .fontWeight(.bold)
+                    Text("Keep first run simple: confirm the app is ready, pick your shortcuts, and run a quick diagnostic before recording.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
 
-                // Stats Grid
-                LazyVGrid(columns: [
-                    GridItem(.flexible()),
-                    GridItem(.flexible())
-                ], spacing: 16) {
-                    StatCard(
-                        title: "Avg Speed",
-                        value: String(format: "%.0f", historyStore.averageWordsPerMinute),
-                        unit: "WPM",
-                        icon: "speedometer",
-                        color: .blue
-                    )
-                    StatCard(
-                        title: "Words This Week",
-                        value: formatNumber(historyStore.wordsTranscribedThisWeek),
-                        unit: "words",
-                        icon: "text.word.spacing",
-                        color: .green
-                    )
-                    StatCard(
-                        title: "Apps Used",
-                        value: "\(historyStore.uniqueAppsUsedThisWeek)",
-                        unit: "apps",
-                        icon: "app.badge",
-                        color: .purple
-                    )
-                    StatCard(
-                        title: "Time Saved",
-                        value: formatTimeSaved(historyStore.timeSavedThisWeekMinutes),
-                        unit: timeSavedUnit(historyStore.timeSavedThisWeekMinutes),
-                        icon: "clock.arrow.circlepath",
-                        color: .orange
-                    )
+                StatusCard(
+                    title: readiness.statusText,
+                    detail: statusDetail,
+                    color: readiness.isReadyForDaemon ? .green : .orange
+                )
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Checklist")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+
+                    SetupRow(
+                        title: "Microphone access",
+                        detail: microphoneDetail,
+                        isComplete: !readiness.issues.contains(.microphone),
+                        buttonTitle: "Open Settings"
+                    ) {
+                        openMicrophoneSettings()
+                    }
+
+                    SetupRow(
+                        title: "Speech engine",
+                        detail: readiness.diagnostics.engineBinaryExists
+                            ? "Parakeet engine found at \(settings.parakeetBinaryPath)"
+                            : "Parakeet engine not found at \(settings.parakeetBinaryPath)",
+                        isComplete: !readiness.issues.contains(.engine),
+                        buttonTitle: "Refresh"
+                    ) {
+                        refreshReadiness()
+                    }
+
+                    SetupRow(
+                        title: "Input device",
+                        detail: inputDeviceDetail,
+                        isComplete: !readiness.issues.contains(.inputDevice),
+                        buttonTitle: "Refresh"
+                    ) {
+                        refreshReadiness()
+                    }
+
+                    SetupRow(
+                        title: "Runtime directory",
+                        detail: runtimeDirectoryDetail,
+                        isComplete: !readiness.issues.contains(.runtimeDirectory),
+                        buttonTitle: "Refresh"
+                    ) {
+                        refreshReadiness()
+                    }
+
+                    SetupRow(
+                        title: "Accessibility access",
+                        detail: "Optional. Needed for global shortcuts and automatic paste.",
+                        isComplete: !readiness.issues.contains(.accessibility),
+                        buttonTitle: "Open Settings"
+                    ) {
+                        hotkeyManager.checkAccessibility()
+                    }
                 }
 
                 Divider()
 
-                // Hotkeys Section
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Hotkeys")
+                    Text("Shortcuts")
                         .font(.title3)
                         .fontWeight(.semibold)
 
-                    // Toggle Recording
                     HotkeyRow(
                         title: "Toggle Recording",
-                        description: "Starts and stops recordings",
+                        description: "Press once to start, press again to stop",
                         displayName: settings.toggleHotkeyDisplayName,
                         isEditing: editingHotkey == .toggle,
                         onClickBadge: {
@@ -86,10 +117,9 @@ struct HomeTabView: View {
                         )
                     }
 
-                    // Push to Talk
                     HotkeyRow(
                         title: "Push to Talk",
-                        description: "Hold to record, release when done",
+                        description: "Hold to record, release to stop",
                         displayName: settings.pttHotkeyDisplayName,
                         isEditing: editingHotkey == .pushToTalk,
                         onClickBadge: {
@@ -110,66 +140,185 @@ struct HomeTabView: View {
                     }
                 }
 
-                Spacer()
+                Divider()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Diagnostics")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+
+                    HStack(spacing: 12) {
+                        Button("Refresh Status") {
+                            refreshReadiness()
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Run Diagnostics") {
+                            parakeetService.refreshDiagnostics()
+                            refreshReadiness()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
+                        Text(issue)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+
+                    if let startupStatus = parakeetService.startupStatusDetail {
+                        Text("Daemon status: \(startupStatus)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    if let diagnostics = parakeetService.lastDiagnosticsSummary {
+                        Text(diagnostics)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.primary.opacity(0.04))
+                            .cornerRadius(10)
+                    }
+                }
             }
             .padding(24)
         }
-    }
-
-    private func formatNumber(_ n: Int) -> String {
-        if n >= 1000 {
-            return String(format: "%.1fk", Double(n) / 1000.0)
+        .onAppear {
+            refreshReadiness()
         }
-        return "\(n)"
     }
 
-    private func formatTimeSaved(_ minutes: Double) -> String {
-        if minutes >= 60 {
-            return String(format: "%.1f", minutes / 60.0)
+    private var statusDetail: String {
+        if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
+            return issue
         }
-        return String(format: "%.0f", minutes)
+        if readiness.isReadyForBasicRecording {
+            return readiness.issues.contains(.accessibility)
+                ? "Recording is ready. Global automation will stay limited until Accessibility access is granted."
+                : "Recording and basic output are ready."
+        }
+        if readiness.isReadyForDaemon {
+            return "The daemon can start, but recording will fail until microphone access and an input device are available."
+        }
+        return "Finish the missing setup items below before relying on Superkeet."
     }
 
-    private func timeSavedUnit(_ minutes: Double) -> String {
-        minutes >= 60 ? "hours" : "min"
+    private var microphoneDetail: String {
+        switch readiness.diagnostics.microphoneStatus {
+        case .authorized:
+            return "Microphone access is granted."
+        case .denied:
+            return "Microphone access is denied. Superkeet cannot record until you re-enable it in System Settings."
+        case .restricted:
+            return "Microphone access is restricted by the system."
+        case .notDetermined:
+            return "Microphone access has not been requested yet."
+        @unknown default:
+            return "Microphone permission status is unknown."
+        }
+    }
+
+    private var inputDeviceDetail: String {
+        if readiness.diagnostics.availableInputDeviceNames.isEmpty {
+            return "No input devices detected. Check macOS Sound settings and connected microphones."
+        }
+        if !settings.audioInputDevice.isEmpty && !readiness.diagnostics.configuredInputDeviceFound {
+            return "Selected device '\(settings.audioInputDevice)' is unavailable. Available: \(readiness.diagnostics.availableInputDeviceNames.joined(separator: ", "))"
+        }
+        return "Available: \(readiness.diagnostics.availableInputDeviceNames.joined(separator: ", "))"
+    }
+
+    private var runtimeDirectoryDetail: String {
+        let path = readiness.diagnostics.runtimeDirectory.path
+        return readiness.diagnostics.runtimeDirectoryWritable
+            ? "Writable runtime directory at \(path)"
+            : "Superkeet cannot write to \(path)"
+    }
+
+    private func refreshReadiness() {
+        readiness = AppReadiness.current()
+        parakeetService.lastDiagnosticsSummary = parakeetService.lastDiagnosticsSummary ?? diagnosticsSummary
+    }
+
+    private func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private var diagnosticsSummary: String {
+        let devices = readiness.diagnostics.availableInputDeviceNames.isEmpty
+            ? "none"
+            : readiness.diagnostics.availableInputDeviceNames.joined(separator: ", ")
+        return """
+        Diagnostics:
+        - Microphone: \(microphoneDetail)
+        - Input devices: \(devices)
+        - Engine path: \(settings.parakeetBinaryPath)
+        - Runtime directory: \(readiness.diagnostics.runtimeDirectory.path)
+        """
     }
 }
 
-// MARK: - Stat Card
-
-struct StatCard: View {
+private struct StatusCard: View {
     let title: String
-    let value: String
-    let unit: String
-    let icon: String
+    let detail: String
     let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .foregroundColor(color)
-                Spacer()
-            }
-            Text(value)
-                .font(.system(size: 28, weight: .bold, design: .rounded))
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.headline)
                 .foregroundColor(.primary)
-            Text(unit)
+            Text(detail)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(title)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary.opacity(0.7))
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.06))
-        .cornerRadius(12)
+        .background(color.opacity(0.08))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(color.opacity(0.1), lineWidth: 1)
+                .stroke(color.opacity(0.2), lineWidth: 1)
         )
+        .cornerRadius(12)
+    }
+}
+
+private struct SetupRow: View {
+    let title: String
+    let detail: String
+    let isComplete: Bool
+    let buttonTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
+                .foregroundColor(isComplete ? .green : .secondary)
+                .font(.system(size: 18))
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Button(buttonTitle, action: action)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.04))
+        .cornerRadius(10)
     }
 }
 
@@ -205,8 +354,6 @@ struct HotkeyRow: View {
     }
 }
 
-// MARK: - Hotkey Badge
-
 struct HotkeyBadge: View {
     let displayName: String
     var isEditing: Bool = false
@@ -234,8 +381,6 @@ struct HotkeyBadge: View {
 
 // MARK: - Interactive Hotkey Recorder
 
-/// Captures the next key combination the user presses and returns the keyCode, modifiers, and display name.
-/// Uses NSEvent.addLocalMonitorForEvents to intercept key events within the app window.
 struct InteractiveHotkeyRecorder: View {
     let onRecord: (Int, Int, String) -> Void
     let onCancel: () -> Void
@@ -265,7 +410,6 @@ struct InteractiveHotkeyRecorder: View {
             }
 
             HStack {
-                // Preset buttons
                 Button("⌥ Space") {
                     applyHotkey(keyCode: 49, modifiers: Int(CGEventFlags.maskAlternate.rawValue), name: "⌥ Space")
                 }
@@ -299,24 +443,20 @@ struct InteractiveHotkeyRecorder: View {
     }
 
     private func startListening() {
-        // Monitor keyDown events
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let keyCode = Int(event.keyCode)
             let modifiers = modifierFlagsToInt(event.modifierFlags)
             let name = displayNameForHotkey(keyCode: keyCode, modifierFlags: modifiers)
             applyHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
-            return nil  // Consume the event
+            return nil
         }
 
-        // Monitor flagsChanged for modifier-only hotkeys (fn, etc.)
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             let keyCode = Int(event.keyCode)
-            // Only capture fn key (63) as a standalone hotkey via flagsChanged
             if keyCode == 63 {
                 applyHotkey(keyCode: 63, modifiers: 0, name: "fn")
                 return nil
             }
-            // For other modifiers, let them through (they'll be captured with the next keyDown)
             return event
         }
     }
@@ -324,7 +464,6 @@ struct InteractiveHotkeyRecorder: View {
     private func applyHotkey(keyCode: Int, modifiers: Int, name: String) {
         capturedName = name
         cleanup()
-        // Small delay so the user sees the confirmation
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             onRecord(keyCode, modifiers, name)
         }
@@ -341,7 +480,6 @@ struct InteractiveHotkeyRecorder: View {
         }
     }
 
-    /// Extract the significant modifier flags as an Int matching CGEventFlags raw values
     private func modifierFlagsToInt(_ flags: NSEvent.ModifierFlags) -> Int {
         var result: UInt64 = 0
         if flags.contains(.command) { result |= CGEventFlags.maskCommand.rawValue }

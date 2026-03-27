@@ -3,13 +3,19 @@ import SwiftUI
 /// Output settings: visualization style, auto-paste, clipboard behavior
 struct OutputTabView: View {
     @ObservedObject var settings = AppSettings.shared
+    @ObservedObject var historyStore = HistoryStore.shared
+    @State private var confirmClearHistory = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("Output")
+                Text("Output & Privacy")
                     .font(.title)
                     .fontWeight(.bold)
+
+                Text("Keep the default flow simple: transcribe, copy to clipboard, and let automatic paste stay optional.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
 
                 // Recording Visualization
                 VStack(alignment: .leading, spacing: 12) {
@@ -52,47 +58,79 @@ struct OutputTabView: View {
 
                 Divider()
 
-                // Auto-paste
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: $settings.autoPasteEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label("Auto-paste", systemImage: "doc.on.clipboard")
-                                .font(.headline)
-                            Text("Automatically paste transcribed text into the active application when recording stops")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .toggleStyle(.switch)
-
-                    if settings.autoPasteEnabled {
-                        HStack(spacing: 8) {
-                            Image(systemName: "info.circle")
-                                .foregroundColor(.blue)
-                            Text("Superkeet will simulate Cmd+V after transcription. This requires Accessibility permission.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(8)
-                        .background(Color.blue.opacity(0.05))
-                        .cornerRadius(8)
-                    }
-                }
-
-                Divider()
-
                 // Clipboard
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle(isOn: $settings.clipboardCopyEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
                             Label("Copy to Clipboard", systemImage: "clipboard")
                                 .font(.headline)
-                            Text("Always copy transcribed text to the system clipboard")
+                            Text("Copy each transcription so you can paste it where you want")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
                     .toggleStyle(.switch)
+                }
+
+                Divider()
+
+                // Auto-paste
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $settings.autoPasteEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Paste Automatically", systemImage: "doc.on.clipboard")
+                                .font(.headline)
+                            Text("Paste into the previous app automatically after transcription")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("Best for power users. This depends on Accessibility access and can paste into the wrong place if focus changes.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(8)
+                    .background(Color.orange.opacity(0.06))
+                    .cornerRadius(8)
+                }
+
+                Divider()
+
+                // Privacy
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Privacy", systemImage: "lock.shield")
+                        .font(.headline)
+
+                    Toggle(isOn: $settings.saveHistoryEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Save History")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Keep past transcriptions in the local history list")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Stored Items")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("\(historyStore.records.count) transcription\(historyStore.records.count == 1 ? "" : "s") currently saved on this Mac")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button("Clear History") {
+                            confirmClearHistory = true
+                        }
+                        .disabled(historyStore.records.isEmpty)
+                    }
                 }
 
                 Divider()
@@ -107,6 +145,12 @@ struct OutputTabView: View {
                             "After recording stops:",
                             detail: "Transcription is processed by Parakeet"
                         )
+                        if settings.saveHistoryEnabled {
+                            behaviorRow(
+                                "Then:",
+                                detail: "Text is saved in local history"
+                            )
+                        }
                         if settings.clipboardCopyEnabled {
                             behaviorRow(
                                 "Then:",
@@ -122,7 +166,7 @@ struct OutputTabView: View {
                         if !settings.clipboardCopyEnabled && !settings.autoPasteEnabled {
                             behaviorRow(
                                 "Note:",
-                                detail: "Text will only appear in History. Enable at least one output method above."
+                                detail: settings.saveHistoryEnabled ? "Text will only appear in History. Enable clipboard copy if you want an easier default flow." : "Text will not be retained anywhere. Enable history or clipboard copy before recording."
                             )
                             .foregroundColor(.orange)
                         }
@@ -135,6 +179,14 @@ struct OutputTabView: View {
                 Spacer()
             }
             .padding(24)
+        }
+        .alert("Clear saved history?", isPresented: $confirmClearHistory) {
+            Button("Clear", role: .destructive) {
+                historyStore.clearHistory()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes all saved transcriptions from this Mac.")
         }
     }
 

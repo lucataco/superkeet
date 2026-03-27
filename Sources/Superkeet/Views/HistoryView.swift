@@ -63,10 +63,10 @@ struct HistoryView: View {
                     Image(systemName: searchText.isEmpty ? "waveform" : "magnifyingglass")
                         .font(.system(size: 40))
                         .foregroundColor(.secondary.opacity(0.5))
-                    Text(searchText.isEmpty ? "No transcriptions yet" : "No results found")
+                Text(searchText.isEmpty ? "No transcriptions yet" : "No results found")
                         .font(.headline)
                         .foregroundColor(.secondary)
-                    Text(searchText.isEmpty ? "Press \(AppSettings.shared.toggleHotkeyDisplayName) to start recording" : "Try a different search term")
+                    Text(searchText.isEmpty ? "Use \(AppSettings.shared.toggleHotkeyDisplayName) or the menu bar to start recording" : "Try a different search term")
                         .font(.caption)
                         .foregroundColor(.secondary.opacity(0.7))
                 }

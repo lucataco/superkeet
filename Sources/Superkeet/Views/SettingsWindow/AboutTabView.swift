@@ -2,6 +2,12 @@ import SwiftUI
 
 /// About tab showing app version and credits
 struct AboutTabView: View {
+    private var appVersion: String {
+        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? shortVersion
+        return "\(shortVersion) (\(buildVersion))"
+    }
+
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
@@ -22,7 +28,7 @@ struct AboutTabView: View {
                 Text("Superkeet")
                     .font(.title)
                     .fontWeight(.bold)
-                Text("Version 1.0.0")
+                Text("Version \(appVersion)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }

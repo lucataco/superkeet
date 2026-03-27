@@ -9,13 +9,20 @@ final class PasteService {
 
     private init() {}
 
-    /// Copy text to clipboard and optionally simulate Cmd+V paste
-    func pasteText(_ text: String) {
-        // Always copy to clipboard
-        copyToClipboard(text)
+    /// Routes text to the configured output destinations.
+    func deliverText(_ text: String) {
+        let settings = AppSettings.shared
+        let decision = OutputRouting.decision(
+            clipboardCopyEnabled: settings.clipboardCopyEnabled,
+            autoPasteEnabled: settings.autoPasteEnabled,
+            saveHistoryEnabled: settings.saveHistoryEnabled
+        )
 
-        // Auto-paste if enabled
-        if AppSettings.shared.autoPasteEnabled {
+        if decision.shouldCopyToClipboard {
+            copyToClipboard(text)
+        }
+
+        if decision.shouldAutoPaste {
             // Small delay to ensure clipboard is ready and focus returns
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.simulatePaste()

@@ -4,11 +4,16 @@ import AppKit
 /// Manages the parakeet serve daemon subprocess and communicates via Unix socket
 final class ParakeetService: ObservableObject {
     static let shared = ParakeetService()
+    private static let startupPollIntervalNanoseconds: UInt64 = 100_000_000
+    private static let startupTimeoutNanoseconds: UInt64 = 20_000_000_000
 
     @Published var isBuilding: Bool = false
     @Published var buildError: String?
     @Published var daemonState: DaemonState = .stopped
     @Published var lastTranscription: String = ""
+    @Published var lastUserFacingError: String?
+    @Published var lastDiagnosticsSummary: String?
+    @Published var startupStatusDetail: String?
 
     enum DaemonState: String {
         case stopped
@@ -23,8 +28,10 @@ final class ParakeetService: ObservableObject {
     private var stderrPipe: Pipe?
     private let settings = AppSettings.shared
     private var outputBuffer: String = ""
+    private var stderrBuffer: String = ""
     private var recordingStartTime: Date?
     private var activeAppAtRecordingStart: (name: String, bundleId: String)?
+    private var lastDeliveredTranscription: String?
 
     private init() {}
 
@@ -68,12 +75,33 @@ final class ParakeetService: ObservableObject {
 
     func startDaemon() async throws {
         guard daemonProcess == nil else { return }
+        await MainActor.run {
+            self.lastUserFacingError = nil
+            self.lastDiagnosticsSummary = nil
+            self.startupStatusDetail = "Starting daemon"
+            self.settings.runtimeIssue = nil
+        }
 
         // Kill any orphaned daemon from a previous run
         killStaleProcesses()
 
+        try ensureRuntimeDirectory()
+
+        let readiness = AppReadiness.current(settings: settings)
+        if readiness.hasDaemonBlockingIssue {
+            let detail = readiness.issues.contains(.engine)
+                ? "Superkeet could not find the Parakeet engine at \(settings.parakeetBinaryPath). Build or bundle the engine first."
+                : "Superkeet could not prepare its runtime directory at \(readiness.diagnostics.runtimeDirectory.path)."
+            await publishStartupFailure(detail, diagnostics: diagnosticSummary(readiness: readiness))
+            throw NSError(domain: "ParakeetService", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: detail
+            ])
+        }
+
         let binaryPath = settings.parakeetBinaryPath
         if !FileManager.default.fileExists(atPath: binaryPath) {
+            let message = "Superkeet could not find the Parakeet engine at \(binaryPath). Build or bundle the engine first."
+            await publishStartupFailure(message, diagnostics: diagnosticSummary(readiness: readiness))
             try await buildParakeetCLI()
         }
 
@@ -104,25 +132,37 @@ final class ParakeetService: ObservableObject {
         process.standardError = stderr
         self.stdoutPipe = stdout
         self.stderrPipe = stderr
+        self.stderrBuffer = ""
 
         // Read stdout for transcriptions
         stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 self?.handleDaemonOutput(text)
             }
         }
 
         // Read stderr for status messages
-        stderr.fileHandleForReading.readabilityHandler = { handle in
+        stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            Task { @MainActor [weak self] in
+                self?.appendStderr(text)
+            }
             print("[parakeet stderr] \(text)", terminator: "")
         }
 
         process.terminationHandler = { [weak self] proc in
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
+                if self?.daemonState == .starting {
+                    let detail = "Parakeet exited during startup with code \(proc.terminationStatus)."
+                    let diagnostics = self?.recentStderrExcerpt()
+                    self?.lastUserFacingError = diagnostics == nil ? detail : "\(detail)\n\n\(diagnostics!)"
+                    self?.lastDiagnosticsSummary = diagnostics
+                    self?.startupStatusDetail = "Startup failed"
+                    self?.settings.runtimeIssue = self?.lastUserFacingError
+                }
                 self?.daemonState = .stopped
                 self?.daemonProcess = nil
                 self?.settings.isDaemonRunning = false
@@ -130,15 +170,35 @@ final class ParakeetService: ObservableObject {
             }
         }
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            let detail = "Superkeet could not launch Parakeet at \(binaryPath). \(error.localizedDescription)"
+            await publishStartupFailure(detail, diagnostics: diagnosticSummary(readiness: readiness))
+            throw error
+        }
         self.daemonProcess = process
 
-        // Wait a moment for the socket to be ready
-        try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+        try await waitForDaemonReadiness(process: process)
+
+        guard FileManager.default.fileExists(atPath: settings.socketPath) else {
+            process.terminate()
+            let message = "Parakeet launched but never created its socket at \(settings.socketPath)."
+            await publishStartupFailure(message, diagnostics: recentStderrExcerpt())
+            await MainActor.run {
+                self.daemonState = .stopped
+                self.settings.isDaemonRunning = false
+            }
+            throw NSError(domain: "ParakeetService", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: lastUserFacingError ?? message
+            ])
+        }
 
         await MainActor.run {
             self.daemonState = .idle
             self.settings.isDaemonRunning = true
+            self.startupStatusDetail = "Ready"
+            self.settings.runtimeIssue = nil
         }
     }
 
@@ -248,6 +308,11 @@ final class ParakeetService: ObservableObject {
         sendSocketCommand("status", completion: completion)
     }
 
+    func refreshDiagnostics() {
+        let readiness = AppReadiness.current(settings: settings)
+        lastDiagnosticsSummary = diagnosticSummary(readiness: readiness)
+    }
+
     // MARK: - Socket Communication
 
     private func sendSocketCommand(_ command: String, completion: ((String) -> Void)? = nil) {
@@ -285,6 +350,12 @@ final class ParakeetService: ObservableObject {
 
             guard connectResult == 0 else {
                 print("[ParakeetService] Failed to connect to socket at \(socketPath): \(errno)")
+                DispatchQueue.main.async {
+                    self.lastUserFacingError = "Superkeet could not reach the speech engine. Try relaunching the app."
+                    self.settings.runtimeIssue = self.lastUserFacingError
+                    self.daemonState = .stopped
+                    self.settings.isDaemonRunning = false
+                }
                 return
             }
 
@@ -324,23 +395,37 @@ final class ParakeetService: ObservableObject {
     }
 
     private func processTranscription(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if lastDeliveredTranscription == trimmed {
+            return
+        }
+
         lastTranscription = text
+        lastDeliveredTranscription = trimmed
 
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         let appInfo = activeAppAtRecordingStart ?? (name: "Unknown", bundleId: "")
 
         let record = TranscriptionRecord(
-            text: text,
+            text: trimmed,
             durationSeconds: duration,
             activeAppName: appInfo.name,
             activeAppBundleId: appInfo.bundleId
         )
 
-        HistoryStore.shared.addRecord(record)
+        let outputDecision = OutputRouting.decision(
+            clipboardCopyEnabled: settings.clipboardCopyEnabled,
+            autoPasteEnabled: settings.autoPasteEnabled,
+            saveHistoryEnabled: settings.saveHistoryEnabled
+        )
 
-        // Auto-paste if enabled
-        if settings.autoPasteEnabled {
-            PasteService.shared.pasteText(text)
+        if outputDecision.shouldSaveHistory {
+            HistoryStore.shared.addRecord(record)
+        }
+
+        if outputDecision.shouldCopyToClipboard || outputDecision.shouldAutoPaste {
+            PasteService.shared.deliverText(trimmed)
         }
 
         // Reset
@@ -364,5 +449,142 @@ final class ParakeetService: ObservableObject {
         pkill.arguments = ["-f", "parakeet-cli serve"]
         try? pkill.run()
         pkill.waitUntilExit()
+    }
+
+    private func ensureRuntimeDirectory() throws {
+        let directory = AppReadiness.runtimeFilesDirectory()
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let probeURL = directory.appendingPathComponent(".runtime-probe")
+            try "ok".data(using: .utf8)?.write(to: probeURL)
+            try? fileManager.removeItem(at: probeURL)
+        } catch {
+            let detail = "Superkeet could not prepare its runtime directory at \(directory.path). \(error.localizedDescription)"
+            Task { @MainActor in
+                await self.publishStartupFailure(detail, diagnostics: nil)
+            }
+            throw NSError(domain: "ParakeetService", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: detail
+            ])
+        }
+    }
+
+    private func waitForDaemonReadiness(process: Process) async throws {
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(Self.startupTimeoutNanoseconds))
+
+        while ContinuousClock.now < deadline {
+            if FileManager.default.fileExists(atPath: settings.socketPath) {
+                if try await probeSocketReadiness() {
+                    return
+                }
+            }
+
+            if !process.isRunning {
+                let detail = "Parakeet exited during startup with code \(process.terminationStatus)."
+                await publishStartupFailure(detail, diagnostics: recentStderrExcerpt())
+                throw NSError(domain: "ParakeetService", code: 5, userInfo: [
+                    NSLocalizedDescriptionKey: lastUserFacingError ?? detail
+                ])
+            }
+
+            await MainActor.run {
+                self.startupStatusDetail = self.derivedStartupStatus()
+            }
+
+            try await Task.sleep(nanoseconds: Self.startupPollIntervalNanoseconds)
+        }
+
+        let detail = "Parakeet did not become ready within \(Self.startupTimeoutNanoseconds / 1_000_000_000) seconds."
+        await publishStartupFailure(detail, diagnostics: recentStderrExcerpt())
+        throw NSError(domain: "ParakeetService", code: 6, userInfo: [
+            NSLocalizedDescriptionKey: lastUserFacingError ?? detail
+        ])
+    }
+
+    private func probeSocketReadiness() async throws -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask { [weak self] in
+                await withCheckedContinuation { continuation in
+                    self?.sendSocketCommand("status") { response in
+                        continuation.resume(returning: response.contains("\"status\":\"ok\""))
+                    }
+                }
+            }
+
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                return false
+            }
+
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+    }
+
+    @MainActor
+    private func publishStartupFailure(_ detail: String, diagnostics: String?) async {
+        let message = diagnostics == nil ? detail : "\(detail)\n\n\(diagnostics!)"
+        lastUserFacingError = message
+        lastDiagnosticsSummary = diagnostics
+        startupStatusDetail = "Startup failed"
+        settings.runtimeIssue = message
+    }
+
+    private func appendStderr(_ text: String) {
+        stderrBuffer += text
+        let lines = stderrBuffer.components(separatedBy: .newlines)
+        if lines.count > 25 {
+            stderrBuffer = lines.suffix(25).joined(separator: "\n")
+        }
+        startupStatusDetail = derivedStartupStatus()
+    }
+
+    private func recentStderrExcerpt() -> String? {
+        let trimmed = stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return "Parakeet stderr:\n\(trimmed)"
+    }
+
+    private func derivedStartupStatus() -> String {
+        let stderr = stderrBuffer.lowercased()
+        if stderr.contains("ready. waiting for commands") {
+            return "Ready"
+        }
+        if stderr.contains("listening on socket") {
+            return "Waiting for daemon response"
+        }
+        if stderr.contains("loading parakeet model") {
+            return "Loading model"
+        }
+        if stderr.contains("silero") {
+            return "Loading VAD"
+        }
+        return "Starting daemon"
+    }
+
+    private func diagnosticSummary(readiness: AppReadinessReport) -> String {
+        let diagnostics = readiness.diagnostics
+        let microphoneStatus: String
+        switch diagnostics.microphoneStatus {
+        case .authorized: microphoneStatus = "authorized"
+        case .denied: microphoneStatus = "denied"
+        case .restricted: microphoneStatus = "restricted"
+        case .notDetermined: microphoneStatus = "not determined"
+        @unknown default: microphoneStatus = "unknown"
+        }
+
+        let deviceSummary = diagnostics.availableInputDeviceNames.isEmpty
+            ? "none"
+            : diagnostics.availableInputDeviceNames.joined(separator: ", ")
+
+        return """
+        Diagnostics:
+        - Microphone: \(microphoneStatus)
+        - Engine binary: \(diagnostics.engineBinaryExists ? "found" : "missing")
+        - Runtime directory: \(diagnostics.runtimeDirectoryWritable ? "writable" : "not writable") at \(diagnostics.runtimeDirectory.path)
+        - Available input devices: \(deviceSummary)
+        """
     }
 }
