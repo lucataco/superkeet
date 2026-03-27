@@ -22,11 +22,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let parakeetService = ParakeetService.shared
     private let hotkeyManager = HotkeyManager.shared
     private let settings = AppSettings.shared
+    private var sigintSource: DispatchSourceSignal?
+    private var sigtermSource: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide the dock icon (LSUIElement in Info.plist handles this for release builds,
         // but for swift run we need this)
         NSApp.setActivationPolicy(.accessory)
+
+        // Install signal handlers so cleanup runs even on Ctrl-C / kill
+        installSignalHandlers()
 
         // Setup menu bar
         menuBarManager.setup()
@@ -91,5 +96,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         parakeetService.cleanup()
         hotkeyManager.stopListening()
         AudioLevelMonitor.shared.stopMonitoring()
+    }
+
+    // MARK: - Signal Handlers
+
+    /// Install SIGINT and SIGTERM handlers so the parakeet daemon gets cleaned up
+    /// even when the app is killed via Ctrl-C (swift run) or `kill`.
+    private func installSignalHandlers() {
+        // Ignore the default signal behavior so our dispatch sources can handle them
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+
+        let sigintSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        sigintSrc.setEventHandler { [weak self] in
+            print("\n[Superkeet] Received SIGINT, cleaning up...")
+            self?.parakeetService.cleanup()
+            self?.hotkeyManager.stopListening()
+            AudioLevelMonitor.shared.stopMonitoring()
+            exit(0)
+        }
+        sigintSrc.resume()
+        self.sigintSource = sigintSrc
+
+        let sigtermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        sigtermSrc.setEventHandler { [weak self] in
+            print("[Superkeet] Received SIGTERM, cleaning up...")
+            self?.parakeetService.cleanup()
+            self?.hotkeyManager.stopListening()
+            AudioLevelMonitor.shared.stopMonitoring()
+            exit(0)
+        }
+        sigtermSrc.resume()
+        self.sigtermSource = sigtermSrc
     }
 }

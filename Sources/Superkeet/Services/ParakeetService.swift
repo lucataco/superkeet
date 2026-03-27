@@ -69,6 +69,9 @@ final class ParakeetService: ObservableObject {
     func startDaemon() async throws {
         guard daemonProcess == nil else { return }
 
+        // Kill any orphaned daemon from a previous run
+        killStaleProcesses()
+
         let binaryPath = settings.parakeetBinaryPath
         if !FileManager.default.fileExists(atPath: binaryPath) {
             try await buildParakeetCLI()
@@ -140,17 +143,66 @@ final class ParakeetService: ObservableObject {
     }
 
     func stopDaemon() {
+        // Try graceful shutdown via socket
         sendSocketCommand("shutdown")
-        // Give it a moment then force kill if needed
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            if self?.daemonProcess?.isRunning == true {
-                self?.daemonProcess?.terminate()
+
+        // Give it a brief moment, then force kill synchronously
+        Thread.sleep(forTimeInterval: 0.5)
+
+        if let process = daemonProcess, process.isRunning {
+            process.terminate()
+            // Wait up to 2 seconds for the process to exit
+            let deadline = Date().addingTimeInterval(2.0)
+            while process.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
             }
-            self?.daemonProcess = nil
-            self?.daemonState = .stopped
-            self?.settings.isDaemonRunning = false
-            self?.settings.isRecording = false
+            // If still alive, SIGKILL
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
         }
+
+        daemonProcess = nil
+        daemonState = .stopped
+        settings.isDaemonRunning = false
+        settings.isRecording = false
+    }
+
+    // MARK: - Stale Process Cleanup
+
+    /// Kill any orphaned parakeet-cli serve processes from previous runs.
+    /// Checks the PID file first, then does a broad pkill as a safety net.
+    private func killStaleProcesses() {
+        let pidPath = settings.pidFilePath
+        let socketPath = settings.socketPath
+
+        // 1. Try to kill via PID file
+        if let pidString = try? String(contentsOfFile: pidPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           let pid = Int32(pidString), pid > 0 {
+            print("[ParakeetService] Found stale PID file (pid: \(pid)), killing...")
+            kill(pid, SIGTERM)
+            // Wait briefly for graceful exit
+            Thread.sleep(forTimeInterval: 0.5)
+            // Force kill if still alive
+            if kill(pid, 0) == 0 {  // kill with signal 0 checks if process exists
+                kill(pid, SIGKILL)
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+        }
+
+        // 2. Broad cleanup: kill any parakeet-cli serve processes
+        let pkill = Process()
+        pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        pkill.arguments = ["-f", "parakeet-cli serve"]
+        try? pkill.run()
+        pkill.waitUntilExit()
+
+        // 3. Remove stale files
+        try? FileManager.default.removeItem(atPath: socketPath)
+        try? FileManager.default.removeItem(atPath: pidPath)
+
+        // Brief pause to let the OS release the socket
+        Thread.sleep(forTimeInterval: 0.2)
     }
 
     // MARK: - Recording Control
@@ -298,10 +350,19 @@ final class ParakeetService: ObservableObject {
 
     // MARK: - Cleanup
 
+    /// Synchronous cleanup — safe to call from signal handlers and applicationWillTerminate.
+    /// Kills the daemon process and removes socket/PID files.
     func cleanup() {
         stopDaemon()
         // Clean up socket and pid files
         try? FileManager.default.removeItem(atPath: settings.socketPath)
         try? FileManager.default.removeItem(atPath: settings.pidFilePath)
+
+        // Safety net: kill any remaining parakeet-cli serve processes
+        let pkill = Process()
+        pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        pkill.arguments = ["-f", "parakeet-cli serve"]
+        try? pkill.run()
+        pkill.waitUntilExit()
     }
 }
