@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import AppKit
+import Combine
 
 /// Multi-step onboarding wizard shown on first launch.
 /// Walks through permissions, engine verification, and hotkey setup.
@@ -9,6 +10,15 @@ struct OnboardingView: View {
     @ObservedObject var hotkeyManager = HotkeyManager.shared
     @State private var currentStep: Int = 0
     @State private var readiness = AppReadiness.current()
+
+    // Accessibility polling
+    @State private var accessibilityPollingTimer: Timer?
+    @State private var accessibilityGranted: Bool = false
+    @State private var didTriggerAccessibilityPrompt: Bool = false
+
+    // Microphone state
+    @State private var microphoneGranted: Bool = false
+    @State private var microphoneRequested: Bool = false
 
     /// Called when the user completes onboarding
     var onComplete: () -> Void
@@ -21,9 +31,9 @@ struct OnboardingView: View {
             Group {
                 switch currentStep {
                 case 0: welcomeStep
-                case 1: permissionsStep
-                case 2: engineStep
-                case 3: shortcutsStep
+                case 1: microphoneStep
+                case 2: accessibilityStep
+                case 3: readyStep
                 default: welcomeStep
                 }
             }
@@ -54,7 +64,6 @@ struct OnboardingView: View {
                 if currentStep < totalSteps - 1 {
                     Button("Continue") {
                         withAnimation { currentStep += 1 }
-                        refreshReadiness()
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
@@ -67,13 +76,31 @@ struct OnboardingView: View {
             }
             .padding(20)
         }
+        .onAppear {
+            // Seed initial state
+            microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
+        }
+        .onChange(of: currentStep) {
+            if currentStep == 2 {
+                startAccessibilityPolling()
+            } else {
+                stopAccessibilityPolling()
+            }
+        }
+        .onDisappear {
+            stopAccessibilityPolling()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshReadiness()
-            hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
+            // Refresh everything when user switches back to the app
+            readiness = AppReadiness.current()
+            microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
+            hotkeyManager.accessibilityGranted = accessibilityGranted
         }
     }
 
-    // MARK: - Step 1: Welcome
+    // MARK: - Step 0: Welcome
 
     private var welcomeStep: some View {
         VStack(spacing: 24) {
@@ -125,194 +152,302 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Step 2: Permissions
+    // MARK: - Step 1: Microphone
 
-    private var permissionsStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Permissions")
-                    .font(.title)
-                    .fontWeight(.bold)
-                Text("Superkeet needs a couple of permissions to work. Grant them now or later in System Settings.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
+    private var microphoneStep: some View {
+        VStack(spacing: 0) {
+            Spacer()
 
-            VStack(spacing: 16) {
-                permissionRow(
-                    title: "Microphone Access",
-                    detail: microphoneStatusText,
-                    isGranted: readiness.diagnostics.microphoneStatus == .authorized,
-                    buttonTitle: "Grant Access"
-                ) {
-                    AVCaptureDevice.requestAccess(for: .audio) { _ in
-                        DispatchQueue.main.async { refreshReadiness() }
-                    }
+            VStack(spacing: 24) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(microphoneGranted ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
+                        .frame(width: 80, height: 80)
+                    Image(systemName: microphoneGranted ? "checkmark.circle.fill" : "mic.circle.fill")
+                        .font(.system(size: 44))
+                        .foregroundColor(microphoneGranted ? .green : .blue)
                 }
 
-                permissionRow(
-                    title: "Accessibility",
-                    detail: "Needed for global hotkeys and auto-paste. You can skip this for now.",
-                    isGranted: hotkeyManager.accessibilityGranted,
-                    buttonTitle: "Open Settings"
-                ) {
-                    hotkeyManager.checkAccessibility()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { refreshReadiness() }
+                VStack(spacing: 8) {
+                    Text("Microphone Access")
+                        .font(.title)
+                        .fontWeight(.bold)
+
+                    Text("Superkeet needs your microphone to hear\nand transcribe your voice.")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                if microphoneGranted {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Microphone access granted")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.green)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.green.opacity(0.08))
+                    .cornerRadius(10)
+                } else if microphoneRequested && AVCaptureDevice.authorizationStatus(for: .audio) == .denied {
+                    // Permission was denied — guide user to System Settings
+                    VStack(spacing: 12) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Microphone access was denied")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.primary)
+                        }
+
+                        Text("You can enable it in System Settings:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Button {
+                            openMicrophoneSettings()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "gear")
+                                Text("Open Microphone Settings")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(16)
+                    .background(Color.orange.opacity(0.06))
+                    .cornerRadius(10)
+                } else {
+                    Button {
+                        requestMicrophoneAccess()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "mic.fill")
+                            Text("Grant Microphone Access")
+                        }
+                        .frame(minWidth: 200)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
             }
 
             Spacer()
 
-            Button("Refresh Status") {
-                refreshReadiness()
-            }
-            .buttonStyle(.bordered)
+            // Subtle note at bottom
+            Text("Audio never leaves your Mac. All processing happens locally.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 8)
         }
         .padding(24)
     }
 
-    private var microphoneStatusText: String {
-        switch readiness.diagnostics.microphoneStatus {
-        case .authorized: return "Microphone access granted."
-        case .denied: return "Denied. Open System Settings > Privacy > Microphone to re-enable."
-        case .restricted: return "Restricted by the system."
-        case .notDetermined: return "Not yet requested. Click Grant Access."
-        @unknown default: return "Unknown status."
-        }
-    }
+    // MARK: - Step 2: Accessibility
 
-    private func permissionRow(
-        title: String,
-        detail: String,
-        isGranted: Bool,
-        buttonTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: isGranted ? "checkmark.circle.fill" : "circle")
-                .foregroundColor(isGranted ? .green : .secondary)
-                .font(.system(size: 20))
-                .padding(.top, 2)
+    private var accessibilityStep: some View {
+        VStack(spacing: 0) {
+            Spacer()
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            VStack(spacing: 24) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(accessibilityGranted ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
+                        .frame(width: 80, height: 80)
+                    Image(systemName: accessibilityGranted ? "checkmark.circle.fill" : "lock.shield.fill")
+                        .font(.system(size: 44))
+                        .foregroundColor(accessibilityGranted ? .green : .blue)
+                }
+
+                VStack(spacing: 8) {
+                    Text(accessibilityGranted ? "Accessibility Enabled" : "Authorize Superkeet")
+                        .font(.title)
+                        .fontWeight(.bold)
+
+                    Text(accessibilityGranted
+                        ? "Superkeet can now use global keyboard shortcuts\nand automatically paste transcribed text."
+                        : "Superkeet needs Accessibility permission to listen\nfor keyboard shortcuts and auto-paste text.")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                if accessibilityGranted {
+                    // Granted state
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Accessibility access granted")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.green)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.green.opacity(0.08))
+                    .cornerRadius(10)
+                } else {
+                    // Instructions + Open Settings button
+                    VStack(spacing: 16) {
+                        // Numbered instructions
+                        VStack(alignment: .leading, spacing: 10) {
+                            instructionRow(number: "1", text: "Click \"Open System Settings\" below")
+                            instructionRow(number: "2", text: "Find **Superkeet** in the list")
+                            instructionRow(number: "3", text: "Toggle the switch to enable it")
+                        }
+                        .padding(.horizontal, 8)
+
+                        Button {
+                            openAccessibilitySettings()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "gear")
+                                Text("Open System Settings")
+                            }
+                            .frame(minWidth: 200)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+
+                        // Polling indicator
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Waiting for permission...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
 
             Spacer()
 
-            if !isGranted {
-                Button(buttonTitle, action: action)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+            // Skip option
+            if !accessibilityGranted {
+                VStack(spacing: 4) {
+                    Text("You can skip this step, but global hotkeys and auto-paste won't work.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("You can grant access later from the menu bar icon.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.bottom, 8)
             }
         }
-        .padding(14)
-        .background(Color.primary.opacity(0.04))
-        .cornerRadius(10)
+        .padding(24)
+        .onAppear {
+            triggerAccessibilityPromptIfNeeded()
+        }
     }
 
-    // MARK: - Step 3: Engine
+    private func instructionRow(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number)
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .frame(width: 22, height: 22)
+                .background(Color.accentColor)
+                .clipShape(Circle())
 
-    private var engineStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Speech Engine")
-                    .font(.title)
-                    .fontWeight(.bold)
-                Text("Superkeet uses a bundled Parakeet engine for local speech recognition. Make sure the embedded binary is present.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
+            Text(LocalizedStringKey(text))
+                .font(.system(size: 13))
+                .foregroundColor(.primary)
+        }
+    }
 
-            VStack(spacing: 16) {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: readiness.diagnostics.engineBinaryExists ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundColor(readiness.diagnostics.engineBinaryExists ? .green : .red)
-                        .font(.system(size: 20))
-                        .padding(.top, 2)
+    // MARK: - Step 3: Ready
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(readiness.diagnostics.engineBinaryExists ? "Engine Found" : "Engine Not Found")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("Looking at: \(settings.parakeetBinaryPath)")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .textSelection(.enabled)
+    private var readyStep: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("You're All Set!")
+                        .font(.title)
+                        .fontWeight(.bold)
+                    Text("Here are your default keyboard shortcuts. You can change them anytime in Settings.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
 
-                        if !readiness.diagnostics.engineBinaryExists {
-                            Text("The embedded engine is missing. Reinstall Superkeet with ./install.sh to restore the signed app bundle.")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.orange)
-                                .padding(.top, 4)
+                VStack(spacing: 12) {
+                    shortcutRow(
+                        title: "Toggle Recording",
+                        description: "Press once to start, press again to stop",
+                        displayName: settings.toggleHotkeyDisplayName
+                    )
+
+                    shortcutRow(
+                        title: "Push to Talk",
+                        description: "Hold to record, release to stop",
+                        displayName: settings.pttHotkeyDisplayName
+                    )
+
+                    shortcutRow(
+                        title: "Cancel Recording",
+                        description: "Press Escape while recording to cancel",
+                        displayName: "Esc"
+                    )
+                }
+
+                // Engine warning (only shown if engine binary is missing)
+                if !readiness.diagnostics.engineBinaryExists {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.system(size: 16))
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Speech engine not found")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Reinstall Superkeet to restore the engine binary. Voice transcription won't work until this is resolved.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
                         }
                     }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.08))
+                    .cornerRadius(10)
+                }
 
-                    Spacer()
+                // Permission summary
+                VStack(spacing: 8) {
+                    permissionSummaryRow(
+                        icon: "mic.fill",
+                        title: "Microphone",
+                        granted: microphoneGranted
+                    )
+                    permissionSummaryRow(
+                        icon: "lock.shield.fill",
+                        title: "Accessibility",
+                        granted: accessibilityGranted
+                    )
+                    permissionSummaryRow(
+                        icon: "waveform",
+                        title: "Speech Engine",
+                        granted: readiness.diagnostics.engineBinaryExists
+                    )
                 }
                 .padding(14)
-                .background(Color.primary.opacity(0.04))
+                .background(Color.primary.opacity(0.03))
                 .cornerRadius(10)
             }
 
-            Button("Refresh") {
-                refreshReadiness()
-            }
-            .buttonStyle(.bordered)
-
             Spacer()
+
+            Text("Click \"Start Using Superkeet\" to launch the speech engine and begin.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 8)
         }
         .padding(24)
-    }
-
-    // MARK: - Step 4: Shortcuts
-
-    private var shortcutsStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Keyboard Shortcuts")
-                    .font(.title)
-                    .fontWeight(.bold)
-                Text("These are the default shortcuts. You can change them anytime in Settings.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-
-            VStack(spacing: 16) {
-                shortcutRow(
-                    title: "Toggle Recording",
-                    description: "Press once to start, press again to stop",
-                    displayName: settings.toggleHotkeyDisplayName
-                )
-
-                shortcutRow(
-                    title: "Push to Talk",
-                    description: "Hold to record, release to stop",
-                    displayName: settings.pttHotkeyDisplayName
-                )
-
-                shortcutRow(
-                    title: "Cancel Recording",
-                    description: "Press Escape while recording to cancel",
-                    displayName: "Esc"
-                )
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("You're all set!")
-                    .font(.headline)
-                Text("Click \"Start Using Superkeet\" to launch the speech engine and begin using voice-to-text.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.top, 8)
-
-            Spacer()
+        .onAppear {
+            readiness = AppReadiness.current()
         }
-        .padding(24)
     }
 
     private func shortcutRow(title: String, description: String, displayName: String) -> some View {
@@ -337,9 +472,74 @@ struct OnboardingView: View {
         .cornerRadius(10)
     }
 
-    // MARK: - Helpers
+    private func permissionSummaryRow(icon: String, title: String, granted: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundColor(.secondary)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 13))
+            Spacer()
+            Image(systemName: granted ? "checkmark.circle.fill" : "xmark.circle")
+                .foregroundColor(granted ? .green : .orange)
+                .font(.system(size: 14))
+        }
+    }
 
-    private func refreshReadiness() {
-        readiness = AppReadiness.current()
+    // MARK: - Actions
+
+    private func requestMicrophoneAccess() {
+        microphoneRequested = true
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            DispatchQueue.main.async {
+                microphoneGranted = granted
+                readiness = AppReadiness.current()
+            }
+        }
+    }
+
+    private func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func triggerAccessibilityPromptIfNeeded() {
+        guard !didTriggerAccessibilityPrompt && !accessibilityGranted else { return }
+        didTriggerAccessibilityPrompt = true
+
+        // This call adds "Superkeet" to the Accessibility list in System Settings
+        // and shows the macOS system prompt asking the user to open System Settings.
+        hotkeyManager.checkAccessibility()
+
+        // After a short delay, open System Settings directly to the Accessibility pane
+        // so the user just needs to find Superkeet and toggle the switch.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            openAccessibilitySettings()
+        }
+    }
+
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - Accessibility Polling
+
+    private func startAccessibilityPolling() {
+        stopAccessibilityPolling()
+        accessibilityPollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            let granted = hotkeyManager.checkAccessibilitySilently()
+            if granted != accessibilityGranted {
+                accessibilityGranted = granted
+                hotkeyManager.accessibilityGranted = granted
+            }
+        }
+    }
+
+    private func stopAccessibilityPolling() {
+        accessibilityPollingTimer?.invalidate()
+        accessibilityPollingTimer = nil
     }
 }
