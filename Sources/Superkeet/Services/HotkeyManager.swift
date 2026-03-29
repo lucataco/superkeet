@@ -38,7 +38,10 @@ final class HotkeyManager: ObservableObject {
     fileprivate var fnKeyDown: Bool = false
 
     private init() {
-        _ = checkAccessibility()
+        // Only check silently at init – don't show the macOS system dialog.
+        // The prompting dialog will appear during onboarding (Permissions step)
+        // or after onboarding completes via completeOnboarding().
+        self.accessibilityGranted = checkAccessibilitySilently()
     }
 
     // MARK: - Accessibility
