@@ -12,6 +12,7 @@ struct HomeTabView: View {
 
     @State private var editingHotkey: EditingHotkey? = nil
     @State private var readiness = AppReadiness.current()
+    @State private var loginItemError: String?
 
     enum EditingHotkey {
         case toggle
@@ -90,9 +91,10 @@ struct HomeTabView: View {
 
                     SetupRow(
                         title: "Launch at Login",
-                        detail: settings.launchAtLoginEnabled
-                            ? "Superkeet will start automatically when you log in."
-                            : "Optional. Start Superkeet automatically when you log in. Requires the installed .app bundle.",
+                        detail: loginItemError
+                            ?? (settings.launchAtLoginEnabled
+                                ? "Superkeet will start automatically when you log in."
+                                : "Optional. Start Superkeet automatically when you log in. Requires the installed .app bundle."),
                         isComplete: settings.launchAtLoginEnabled,
                         buttonTitle: settings.launchAtLoginEnabled ? "Disable" : "Enable"
                     ) {
@@ -171,18 +173,21 @@ struct HomeTabView: View {
                         }
                         .buttonStyle(.bordered)
 
-                        Button("Restart Daemon") {
+                        Button(settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon") {
                             Task {
                                 do {
-                                    try await parakeetService.restartDaemon()
+                                    if settings.isDaemonRunning {
+                                        try await parakeetService.restartDaemon()
+                                    } else {
+                                        try await parakeetService.startDaemon()
+                                    }
                                 } catch {
-                                    print("[HomeTab] Failed to restart daemon: \(error)")
+                                    print("[HomeTab] Failed to start/restart daemon: \(error)")
                                 }
                                 refreshReadiness()
                             }
                         }
                         .buttonStyle(.bordered)
-                        .disabled(!settings.isDaemonRunning)
                     }
 
                     if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
@@ -277,8 +282,10 @@ struct HomeTabView: View {
                 try SMAppService.mainApp.unregister()
             }
             settings.launchAtLoginEnabled = newValue
+            loginItemError = nil
         } catch {
             print("[HomeTab] Failed to update login item: \(error)")
+            loginItemError = "Failed to update login item. Make sure you're running the installed .app bundle."
         }
     }
 
@@ -484,6 +491,19 @@ struct InteractiveHotkeyRecorder: View {
     private func startListening() {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let keyCode = Int(event.keyCode)
+
+            // Escape cancels the recorder
+            if keyCode == 53 {
+                cleanup()
+                onCancel()
+                return nil
+            }
+
+            // Pass through Cmd+Q and Cmd+W so the user can still quit/close
+            if event.modifierFlags.contains(.command) && (keyCode == 12 || keyCode == 13) {
+                return event
+            }
+
             let modifiers = modifierFlagsToInt(event.modifierFlags)
             let name = displayNameForHotkey(keyCode: keyCode, modifierFlags: modifiers)
             applyHotkey(keyCode: keyCode, modifiers: modifiers, name: name)

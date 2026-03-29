@@ -67,6 +67,10 @@ struct OnboardingView: View {
             }
             .padding(20)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshReadiness()
+            hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
+        }
     }
 
     // MARK: - Step 1: Welcome

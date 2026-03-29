@@ -5,6 +5,7 @@ struct HistoryView: View {
     @ObservedObject var historyStore = HistoryStore.shared
     @State private var searchText: String = ""
     @State private var selectedRecord: TranscriptionRecord?
+    @State private var confirmClearAll: Bool = false
 
     var filteredRecords: [TranscriptionRecord] {
         if searchText.isEmpty {
@@ -26,11 +27,19 @@ struct HistoryView: View {
                 Spacer()
                 if !historyStore.records.isEmpty {
                     Button("Clear All") {
-                        historyStore.clearHistory()
+                        confirmClearAll = true
                     }
                     .foregroundColor(.red)
                     .buttonStyle(.plain)
                     .font(.caption)
+                    .alert("Clear All History?", isPresented: $confirmClearAll) {
+                        Button("Delete All", role: .destructive) {
+                            historyStore.clearHistory()
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This will permanently delete all \(historyStore.records.count) transcription records. This cannot be undone.")
+                    }
                 }
             }
             .padding()
@@ -94,7 +103,7 @@ struct HistoryView: View {
                 }
             }
         }
-        .frame(width: 480, height: 520)
+        .frame(minWidth: 480, maxWidth: .infinity, minHeight: 520, maxHeight: .infinity)
     }
 }
 

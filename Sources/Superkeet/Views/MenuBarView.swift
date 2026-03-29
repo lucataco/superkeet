@@ -9,7 +9,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let parakeetService = ParakeetService.shared
     private let settings = AppSettings.shared
     private let hotkeyManager = HotkeyManager.shared
-    private var settingsWindow: NSWindow?
     private var historyWindow: NSWindow?
     private var onboardingWindow: NSWindow?
 
@@ -170,26 +169,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc func openSettings() {
-        if let existingWindow = settingsWindow, existingWindow.isVisible {
-            existingWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let settingsView = SettingsView()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 650, height: 480),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = NSHostingView(rootView: settingsView)
-        window.title = "Superkeet - Settings"
-        window.minSize = NSSize(width: 550, height: 400)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
-        self.settingsWindow = window
     }
 
     @objc private func runSetupAgain() {

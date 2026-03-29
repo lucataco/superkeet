@@ -10,6 +10,7 @@ final class HistoryStore: ObservableObject {
     private let fileURL: URL
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private var saveDebounceTask: DispatchWorkItem?
 
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -104,12 +105,25 @@ final class HistoryStore: ObservableObject {
     }
 
     private func saveRecords() {
-        do {
-            let data = try encoder.encode(records)
-            try data.write(to: fileURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch {
-            print("[HistoryStore] Failed to save history: \(error)")
+        // Debounce: coalesce rapid saves (e.g., multiple transcriptions in quick succession)
+        saveDebounceTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            self?.performSave()
+        }
+        saveDebounceTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
+    }
+
+    private func performSave() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let data = try self.encoder.encode(self.records)
+                try data.write(to: self.fileURL, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: self.fileURL.path)
+            } catch {
+                print("[HistoryStore] Failed to save history: \(error)")
+            }
         }
     }
 }

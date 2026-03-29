@@ -11,10 +11,9 @@ struct SuperkeetApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // We use a minimal Settings scene to satisfy SwiftUI's Scene requirement,
-        // but the actual UI is driven by NSMenu and NSWindow via AppDelegate
         Settings {
-            EmptyView()
+            SettingsView()
+                .frame(minWidth: 550, minHeight: 400)
         }
     }
 }

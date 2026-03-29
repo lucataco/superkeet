@@ -51,7 +51,11 @@ final class AppSettings: ObservableObject {
         if let resolved = resolvedDevelopmentBinaryPath {
             return resolved
         }
-        return "\(NSHomeDirectory())/Code/CLIs/parakeet-cli/target/release/parakeet"
+        // No bundled or development binary found — return a descriptive placeholder
+        // so error messages clearly indicate the binary is missing rather than
+        // referencing a developer-specific path.
+        return Bundle.main.resourceURL?.appendingPathComponent("bin/parakeet").path
+            ?? "/usr/local/bin/parakeet"
     }
 
     var hasBundledParakeetBinary: Bool {

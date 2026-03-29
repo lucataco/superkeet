@@ -47,7 +47,7 @@ final class ParakeetService: ObservableObject {
         }
 
         // Kill any orphaned daemon from a previous run
-        killStaleProcesses()
+        await killStaleProcesses()
 
         try ensureRuntimeDirectory()
 
@@ -125,18 +125,51 @@ final class ParakeetService: ObservableObject {
 
         process.terminationHandler = { [weak self] proc in
             Task { @MainActor [weak self] in
-                if self?.daemonState == .starting {
+                guard let self = self else { return }
+                let previousState = self.daemonState
+
+                if previousState == .starting {
                     let detail = "Parakeet exited during startup with code \(proc.terminationStatus)."
-                    let diagnostics = self?.recentStderrExcerpt()
-                    self?.lastUserFacingError = diagnostics == nil ? detail : "\(detail)\n\n\(diagnostics!)"
-                    self?.lastDiagnosticsSummary = diagnostics
-                    self?.startupStatusDetail = "Startup failed"
-                    self?.settings.runtimeIssue = self?.lastUserFacingError
+                    let diagnostics = self.recentStderrExcerpt()
+                    self.lastUserFacingError = diagnostics == nil ? detail : "\(detail)\n\n\(diagnostics!)"
+                    self.lastDiagnosticsSummary = diagnostics
+                    self.startupStatusDetail = "Startup failed"
+                    self.settings.runtimeIssue = self.lastUserFacingError
+                } else if previousState == .idle || previousState == .recording {
+                    // Unexpected crash — notify user and attempt auto-restart
+                    let message = "Speech engine exited unexpectedly (code \(proc.terminationStatus)). Restarting..."
+                    print("[ParakeetService] \(message)")
+                    self.settings.runtimeIssue = message
                 }
-                self?.daemonState = .stopped
-                self?.daemonProcess = nil
-                self?.settings.isDaemonRunning = false
-                self?.settings.isRecording = false
+
+                // Clear pipe handlers in case stopDaemon wasn't called
+                self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+                self.stderrPipe?.fileHandleForReading.readabilityHandler = nil
+                self.stdoutPipe = nil
+                self.stderrPipe = nil
+
+                self.daemonState = .stopped
+                self.daemonProcess = nil
+                self.settings.isDaemonRunning = false
+                self.settings.isRecording = false
+
+                // Auto-restart on unexpected crash (not during intentional stop or failed startup)
+                if previousState == .idle || previousState == .recording {
+                    Task {
+                        // Brief delay before restart to avoid tight restart loops
+                        try? await Task.sleep(for: .seconds(2))
+                        do {
+                            try await self.startDaemon()
+                            await MainActor.run {
+                                self.settings.runtimeIssue = nil
+                            }
+                        } catch {
+                            await MainActor.run {
+                                self.settings.runtimeIssue = "Failed to restart speech engine: \(error.localizedDescription)"
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -173,17 +206,30 @@ final class ParakeetService: ObservableObject {
     }
 
     func stopDaemon() {
-        // Try graceful shutdown via socket
-        sendSocketCommand("shutdown")
+        daemonState = .stopping
+
+        // Clear pipe handlers to avoid stale callbacks after termination
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        stdoutPipe = nil
+        stderrPipe = nil
 
         if let process = daemonProcess, process.isRunning {
-            process.terminate()
-            // Wait up to 2 seconds on a background thread instead of blocking main with Thread.sleep
-            let waitItem = DispatchWorkItem { process.waitUntilExit() }
-            DispatchQueue.global(qos: .userInitiated).async(execute: waitItem)
-            let finished = waitItem.wait(timeout: .now() + 2.0)
-            if finished == .timedOut && process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
+            // Try graceful shutdown via socket, give it 500ms, then SIGTERM
+            sendSocketCommand("shutdown")
+            let pid = process.processIdentifier
+            DispatchQueue.global(qos: .userInitiated).async {
+                // Give the graceful shutdown a brief window
+                Thread.sleep(forTimeInterval: 0.5)
+                guard process.isRunning else { return }
+                process.terminate()
+                // Wait up to 2s for SIGTERM to take effect
+                let waitItem = DispatchWorkItem { process.waitUntilExit() }
+                DispatchQueue.global(qos: .userInitiated).async(execute: waitItem)
+                let finished = waitItem.wait(timeout: .now() + 2.0)
+                if finished == .timedOut && kill(pid, 0) == 0 {
+                    kill(pid, SIGKILL)
+                }
             }
         }
 
@@ -202,7 +248,7 @@ final class ParakeetService: ObservableObject {
 
     /// Kill any orphaned parakeet serve processes from previous runs.
     /// Only terminates a validated stale PID from Superkeet's own runtime state.
-    private func killStaleProcesses() {
+    private func killStaleProcesses() async {
         let pidPath = settings.pidFilePath
         let socketPath = settings.socketPath
 
@@ -211,7 +257,7 @@ final class ParakeetService: ObservableObject {
            let pid = Int32(pidString), pid > 0 {
             if isExpectedParakeetProcess(pid: pid) {
                 print("[ParakeetService] Found stale validated PID file (pid: \(pid)), killing...")
-                terminateProcess(pid: pid)
+                await terminateProcess(pid: pid)
             }
         }
 
@@ -220,7 +266,7 @@ final class ParakeetService: ObservableObject {
         try? FileManager.default.removeItem(atPath: pidPath)
 
         // Brief pause to let the OS release the socket
-        Thread.sleep(forTimeInterval: 0.2)
+        try? await Task.sleep(for: .milliseconds(200))
     }
 
     // MARK: - Recording Control
@@ -568,13 +614,13 @@ final class ParakeetService: ObservableObject {
         return "Starting daemon"
     }
 
-    private func terminateProcess(pid: pid_t) {
+    private func terminateProcess(pid: pid_t) async {
         guard kill(pid, 0) == 0 else { return }
         kill(pid, SIGTERM)
-        Thread.sleep(forTimeInterval: 0.5)
+        try? await Task.sleep(for: .milliseconds(500))
         if kill(pid, 0) == 0 {
             kill(pid, SIGKILL)
-            Thread.sleep(forTimeInterval: 0.2)
+            try? await Task.sleep(for: .milliseconds(200))
         }
     }
 

@@ -31,11 +31,17 @@ final class HotkeyManager: ObservableObject {
     private var runLoopSource: CFRunLoopSource?
     private let settings = AppSettings.shared
     private var retryTimer: Timer?
+    /// Stores the retained self reference passed to the event tap's userInfo.
+    /// Must be released exactly once in stopListening() to balance passRetained().
+    private var retainedSelf: Unmanaged<HotkeyManager>?
 
     /// Track whether the PTT key is currently held to avoid repeat keyDown events
     fileprivate var pttKeyDown: Bool = false
     /// Track previous fn key state for edge detection (fn only fires flagsChanged)
     fileprivate var fnKeyDown: Bool = false
+    /// Track rapid tap re-enables to detect a tight re-enable loop
+    fileprivate var tapReEnableCount: Int = 0
+    fileprivate var tapReEnableWindowStart: Date = .distantPast
 
     private init() {
         // Only check silently at init – don't show the macOS system dialog.
@@ -86,7 +92,11 @@ final class HotkeyManager: ObservableObject {
             options: .listenOnly,
             eventsOfInterest: eventMask,
             callback: hotkeyCallback,
-            userInfo: Unmanaged.passRetained(self).toOpaque()
+            userInfo: { [self] in
+                let retained = Unmanaged.passRetained(self)
+                self.retainedSelf = retained
+                return retained.toOpaque()
+            }()
         )
 
         guard let tap = tap else {
@@ -113,7 +123,8 @@ final class HotkeyManager: ObservableObject {
                 CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
             }
             // Balance the passRetained(self) from startListening()
-            Unmanaged.passUnretained(self).release()
+            retainedSelf?.release()
+            retainedSelf = nil
         }
         eventTap = nil
         runLoopSource = nil
@@ -362,8 +373,27 @@ private func hotkeyCallback(
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         if let userInfo = userInfo {
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-            if let tap = manager.eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
+            // Reset PTT state — a keyUp may have been missed while the tap was disabled
+            if manager.pttKeyDown {
+                manager.pttKeyDown = false
+                manager.fnKeyDown = false
+                manager.onPushToTalkEnded?()
+            }
+            // Backoff: if re-enabled too many times in a short window, stop trying
+            let now = Date()
+            if now.timeIntervalSince(manager.tapReEnableWindowStart) > 10 {
+                manager.tapReEnableCount = 0
+                manager.tapReEnableWindowStart = now
+            }
+            manager.tapReEnableCount += 1
+            if manager.tapReEnableCount <= 5 {
+                if let tap = manager.eventTap {
+                    CGEvent.tapEnable(tap: tap, enable: true)
+                }
+            } else {
+                hotkeyLog.warning("Event tap disabled repeatedly (\(manager.tapReEnableCount) times in 10s), backing off. Will retry via timer.")
+                manager.isListening = false
+                manager.startRetryTimer()
             }
         }
         return Unmanaged.passUnretained(event)
