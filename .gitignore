@@ -19,6 +19,7 @@ DerivedData/
 *.app
 dist/
 .release/
+.release-check/
 
 # macOS
 .DS_Store
