@@ -10,6 +10,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let settings = AppSettings.shared
     private let hotkeyManager = HotkeyManager.shared
     private var historyWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
 
     func setup() {
@@ -169,8 +170,26 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc func openSettings() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        if let existingWindow = settingsWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let settingsView = SettingsView()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 650, height: 480),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSHostingView(rootView: settingsView)
+        window.title = "Superkeet Settings"
+        window.minSize = NSSize(width: 550, height: 400)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        self.settingsWindow = window
     }
 
     @objc private func runSetupAgain() {
@@ -188,13 +207,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 480),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 580),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.contentView = NSHostingView(rootView: onboardingView)
         window.title = "Superkeet Setup"
+        window.minSize = NSSize(width: 560, height: 580)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -205,8 +225,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
-        // Re-prompt via AXIsProcessTrustedWithOptions
-        hotkeyManager.checkAccessibility()
+        // Silently check — the deep-link above already opens System Settings
+        hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
     }
 
     @objc private func quitApp() {

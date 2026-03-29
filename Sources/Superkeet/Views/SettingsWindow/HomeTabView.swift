@@ -86,7 +86,10 @@ struct HomeTabView: View {
                         isComplete: !readiness.issues.contains(.accessibility),
                         buttonTitle: "Open Settings"
                     ) {
-                        hotkeyManager.checkAccessibility()
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
+                        }
+                        hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
                     }
 
                     SetupRow(

@@ -11,9 +11,11 @@ struct SuperkeetApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
+        // Settings window is created manually in MenuBarManager.openSettings()
+        // so we have full control over resizability and window behavior.
+        // An empty Settings scene is required to satisfy the App protocol.
         Settings {
-            SettingsView()
-                .frame(minWidth: 550, minHeight: 400)
+            EmptyView()
         }
     }
 }
@@ -47,8 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !settings.hasCompletedOnboarding {
             showOnboardingWindow()
         } else {
-            // Prompt for Accessibility once (shows macOS system dialog if not yet granted)
-            hotkeyManager.checkAccessibility()
+            // Silent check — never prompt on normal launch (permissions may reset after brew upgrade)
+            hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
             hotkeyManager.startListening()
             if !hotkeyManager.isListening {
                 hotkeyManager.startRetryTimer()
@@ -129,8 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onboardingWindow?.close()
         onboardingWindow = nil
         NSApp.setActivationPolicy(.accessory)
-        // Prompt for Accessibility once (shows macOS system dialog if not yet granted)
-        hotkeyManager.checkAccessibility()
+        // Silent check — never prompt after onboarding (permissions may reset after brew upgrade)
+        hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
         hotkeyManager.startListening()
         if !hotkeyManager.isListening {
             hotkeyManager.startRetryTimer()

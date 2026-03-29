@@ -23,6 +23,10 @@ final class AudioLevelMonitor: ObservableObject {
     func startMonitoring() {
         guard !isMonitoring else { return }
 
+        // Don't access the audio engine if mic permission isn't granted —
+        // AVAudioEngine.inputNode implicitly triggers a system mic prompt.
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
+
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
