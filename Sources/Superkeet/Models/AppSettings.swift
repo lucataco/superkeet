@@ -33,44 +33,29 @@ final class AppSettings: ObservableObject {
     // MARK: - Output
     @AppStorage("autoPasteEnabled") var autoPasteEnabled: Bool = false
     @AppStorage("clipboardCopyEnabled") var clipboardCopyEnabled: Bool = true
-    @AppStorage("saveHistoryEnabled") var saveHistoryEnabled: Bool = true
+    @AppStorage("saveHistoryEnabled") var saveHistoryEnabled: Bool = false
     @AppStorage("fillerWordRemovalEnabled") var fillerWordRemovalEnabled: Bool = false
-
-    // MARK: - Paths / Engine
-    /// Optional manual override for the parakeet-cli project directory.
-    /// When empty (default), the binary is discovered automatically.
-    @AppStorage("parakeetCliPath") var parakeetCliPath: String = ""
 
     // MARK: - State (non-persisted observation)
     @Published var isRecording: Bool = false
     @Published var isDaemonRunning: Bool = false
     @Published var runtimeIssue: String?
 
-    /// Resolved path to the parakeet-cli binary.
-    /// Uses the first location where the binary actually exists on disk,
-    /// falling back to the user-configured path if nothing is found.
+    /// Resolved path to the bundled speech engine binary.
+    /// Public app bundles only use the embedded engine. Local development
+    /// can still fall back to well-known host paths.
     var parakeetBinaryPath: String {
-        if let resolved = resolvedBinaryPath {
+        if let bundledPath = bundledBinaryPath {
+            return bundledPath
+        }
+        if let resolved = resolvedDevelopmentBinaryPath {
             return resolved
         }
-        // Fallback: construct from user-configured path (may not exist)
-        if !parakeetCliPath.isEmpty {
-            return "\(parakeetCliPath)/target/release/parakeet-cli"
-        }
-        return "\(NSHomeDirectory())/Code/CLIs/parakeet-cli/target/release/parakeet-cli"
+        return "\(NSHomeDirectory())/Code/CLIs/parakeet-cli/target/release/parakeet"
     }
 
-    /// The parakeet-cli project directory for cargo build.
-    /// Derived from resolvedBinaryPath, user config, or the default dev location.
-    var parakeetProjectDirectory: String {
-        // If we found a binary under a target/release path, derive the project root
-        if let resolved = resolvedBinaryPath, resolved.hasSuffix("/target/release/parakeet-cli") {
-            return String(resolved.dropLast("/target/release/parakeet-cli".count))
-        }
-        if !parakeetCliPath.isEmpty {
-            return parakeetCliPath
-        }
-        return "\(NSHomeDirectory())/Code/CLIs/parakeet-cli"
+    var hasBundledParakeetBinary: Bool {
+        bundledBinaryPath != nil
     }
 
     var socketPath: String {
@@ -81,50 +66,32 @@ final class AppSettings: ObservableObject {
         AppReadiness.runtimeFilesDirectory().appendingPathComponent("parakeet.pid").path
     }
 
-    private init() {
-        // Clear stale persisted path if it points to a non-existent binary
-        if !parakeetCliPath.isEmpty,
-           !FileManager.default.fileExists(atPath: "\(parakeetCliPath)/target/release/parakeet-cli") {
-            parakeetCliPath = ""
-        }
-    }
+    private init() {}
 
     // MARK: - Binary Discovery
 
-    /// Searches for the parakeet-cli binary in multiple well-known locations.
-    /// Returns the first path where the binary actually exists on disk, or nil.
-    private var resolvedBinaryPath: String? {
+    private var bundledBinaryPath: String? {
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent("bin/parakeet").path,
+            Bundle.main.resourceURL?.appendingPathComponent("parakeet").path,
+            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("parakeet").path
+        ]
+
+        return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// Searches for the development parakeet binary in well-known local paths.
+    private var resolvedDevelopmentBinaryPath: String? {
         let fm = FileManager.default
         let home = NSHomeDirectory()
 
-        var candidates: [String] = []
+        let candidates = [
+            "\(home)/Code/CLIs/parakeet-cli/target/release/parakeet",
+            "\(home)/.cargo/bin/parakeet",
+            "/usr/local/bin/parakeet",
+            "/opt/homebrew/bin/parakeet"
+        ]
 
-        // 1. User-configured path takes priority
-        if !parakeetCliPath.isEmpty {
-            candidates.append("\(parakeetCliPath)/target/release/parakeet-cli")
-        }
-
-        // 2. Common dev location relative to $HOME
-        candidates.append("\(home)/Code/CLIs/parakeet-cli/target/release/parakeet-cli")
-
-        // 3. App bundle (for future bundled distribution)
-        if let bundleBin = Bundle.main.executableURL?
-            .deletingLastPathComponent()
-            .appendingPathComponent("parakeet-cli").path {
-            candidates.append(bundleBin)
-        }
-        if let resourceBin = Bundle.main.resourceURL?
-            .appendingPathComponent("parakeet-cli").path {
-            candidates.append(resourceBin)
-        }
-
-        // 4. Cargo install location
-        candidates.append("\(home)/.cargo/bin/parakeet-cli")
-
-        // 5. Common system paths
-        candidates.append("/usr/local/bin/parakeet-cli")
-        candidates.append("/opt/homebrew/bin/parakeet-cli")
-
-        return candidates.first { fm.fileExists(atPath: $0) }
+        return candidates.first { fm.isExecutableFile(atPath: $0) }
     }
 }

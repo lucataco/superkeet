@@ -13,7 +13,7 @@ struct OutputTabView: View {
                     .font(.title)
                     .fontWeight(.bold)
 
-                Text("Keep the default flow simple: transcribe, copy to clipboard, and let automatic paste stay optional.")
+                Text("Keep the default flow simple: transcribe, copy to clipboard, and leave both automatic paste and saved history as opt-in.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
@@ -126,12 +126,16 @@ struct OutputTabView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Save History")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Keep past transcriptions in the local history list")
+                            Text("Opt in to keep past transcriptions in the local history list on this Mac")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
                     .toggleStyle(.switch)
+
+                    Text("Saved history is stored locally in plain JSON at ~/Library/Application Support/Superkeet/history.json with restricted file permissions.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {

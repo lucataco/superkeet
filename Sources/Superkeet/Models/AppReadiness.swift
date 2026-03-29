@@ -128,7 +128,7 @@ enum AppReadiness {
         return AppDiagnostics(
             microphoneStatus: AVCaptureDevice.authorizationStatus(for: .audio),
             availableInputDeviceNames: availableInputDeviceNames,
-            engineBinaryExists: FileManager.default.fileExists(atPath: settings.parakeetBinaryPath),
+            engineBinaryExists: FileManager.default.isExecutableFile(atPath: settings.parakeetBinaryPath),
             runtimeDirectory: runtimeDirectory,
             runtimeDirectoryWritable: validateRuntimeDirectory(runtimeDirectory),
             configuredInputDeviceFound: configuredInputDeviceFound
@@ -136,9 +136,13 @@ enum AppReadiness {
     }
 
     static func runtimeFilesDirectory() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directory = base.appendingPathComponent("Superkeet/Runtime", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let directory = base.appendingPathComponent("com.superkeet.app/Runtime", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         return directory
     }
 

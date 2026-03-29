@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import Sparkle
 import os.log
 
 private let appLog = Logger(subsystem: "com.superkeet.app", category: "AppDelegate")
@@ -26,7 +25,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let parakeetService = ParakeetService.shared
     private let hotkeyManager = HotkeyManager.shared
     private let settings = AppSettings.shared
-    private let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
     private var onboardingWindow: NSWindow?
@@ -171,10 +169,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-    }
-
-    func checkForUpdates() {
-        updaterController.checkForUpdates(nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

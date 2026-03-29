@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import Sparkle
 
 /// Manages the NSMenu displayed from the menu bar status item
 final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
@@ -90,11 +89,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         settingsItem.target = self
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")
         menu.addItem(settingsItem)
-
-        // Check for Updates
-        let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
-        updateItem.target = self
-        menu.addItem(updateItem)
 
         // Run Setup
         let setupItem = NSMenuItem(title: "Run Setup Again...", action: #selector(runSetupAgain), keyEquivalent: "")
@@ -196,13 +190,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.settingsWindow = window
-    }
-
-    @objc private func checkForUpdates() {
-        // Access the updater from the AppDelegate's SPUStandardUpdaterController
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            appDelegate.checkForUpdates()
-        }
     }
 
     @objc private func runSetupAgain() {

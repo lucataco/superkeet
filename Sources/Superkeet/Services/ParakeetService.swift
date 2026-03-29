@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Darwin
 
 /// Manages the parakeet serve daemon subprocess and communicates via Unix socket
 final class ParakeetService: ObservableObject {
@@ -7,8 +8,6 @@ final class ParakeetService: ObservableObject {
     private static let startupPollIntervalNanoseconds: UInt64 = 100_000_000
     private static let startupTimeoutNanoseconds: UInt64 = 20_000_000_000
 
-    @Published var isBuilding: Bool = false
-    @Published var buildError: String?
     @Published var daemonState: DaemonState = .stopped
     @Published var lastTranscription: String = ""
     @Published var lastUserFacingError: String?
@@ -36,64 +35,6 @@ final class ParakeetService: ObservableObject {
 
     private init() {}
 
-    // MARK: - Build
-
-    func buildParakeetCLI() async throws {
-        await MainActor.run { isBuilding = true; buildError = nil }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["cargo", "build", "--release"]
-        process.currentDirectoryURL = URL(fileURLWithPath: settings.parakeetProjectDirectory)
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        // Drain pipes asynchronously to avoid deadlock when output exceeds the 64KB buffer.
-        // Use a serial dispatch queue for thread-safe accumulation (avoids NSLock in async context).
-        let collectQueue = DispatchQueue(label: "com.superkeet.build-output")
-        var outputData = Data()
-
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            collectQueue.sync { outputData.append(data) }
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            collectQueue.sync { outputData.append(data) }
-        }
-
-        try process.run()
-        process.waitUntilExit()
-
-        // Stop reading handlers and collect final output
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-        let output: String = collectQueue.sync {
-            String(data: outputData, encoding: .utf8) ?? ""
-        }
-
-        if process.terminationStatus != 0 {
-            await MainActor.run {
-                self.isBuilding = false
-                self.buildError = "Build failed (exit \(process.terminationStatus)):\n\(output)"
-            }
-            throw NSError(domain: "ParakeetService", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Build failed: \(output)"
-            ])
-        }
-
-        await MainActor.run {
-            self.isBuilding = false
-            self.buildError = nil
-        }
-    }
-
     // MARK: - Daemon Management
 
     func startDaemon() async throws {
@@ -113,7 +54,7 @@ final class ParakeetService: ObservableObject {
         let readiness = AppReadiness.current(settings: settings)
         if readiness.hasDaemonBlockingIssue {
             let detail = readiness.issues.contains(.engine)
-                ? "Superkeet could not find the Parakeet engine at \(settings.parakeetBinaryPath). Build or bundle the engine first."
+                ? "Superkeet could not find the embedded Parakeet engine at \(settings.parakeetBinaryPath). Reinstall the app to restore the bundled engine."
                 : "Superkeet could not prepare its runtime directory at \(readiness.diagnostics.runtimeDirectory.path)."
             await publishStartupFailure(detail, diagnostics: diagnosticSummary(readiness: readiness))
             throw NSError(domain: "ParakeetService", code: 3, userInfo: [
@@ -122,10 +63,12 @@ final class ParakeetService: ObservableObject {
         }
 
         let binaryPath = settings.parakeetBinaryPath
-        if !FileManager.default.fileExists(atPath: binaryPath) {
-            let message = "Superkeet could not find the Parakeet engine at \(binaryPath). Build or bundle the engine first."
+        if !FileManager.default.isExecutableFile(atPath: binaryPath) {
+            let message = "Superkeet could not find a runnable bundled speech engine at \(binaryPath). Reinstall the app to restore the embedded engine."
             await publishStartupFailure(message, diagnostics: diagnosticSummary(readiness: readiness))
-            try await buildParakeetCLI()
+            throw NSError(domain: "ParakeetService", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: message
+            ])
         }
 
         await MainActor.run { daemonState = .starting }
@@ -257,34 +200,22 @@ final class ParakeetService: ObservableObject {
 
     // MARK: - Stale Process Cleanup
 
-    /// Kill any orphaned parakeet-cli serve processes from previous runs.
-    /// Checks the PID file first, then does a broad pkill as a safety net.
+    /// Kill any orphaned parakeet serve processes from previous runs.
+    /// Only terminates a validated stale PID from Superkeet's own runtime state.
     private func killStaleProcesses() {
         let pidPath = settings.pidFilePath
         let socketPath = settings.socketPath
 
-        // 1. Try to kill via PID file
+        // 1. Try to kill via PID file if it still points at the bundled engine.
         if let pidString = try? String(contentsOfFile: pidPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            let pid = Int32(pidString), pid > 0 {
-            print("[ParakeetService] Found stale PID file (pid: \(pid)), killing...")
-            kill(pid, SIGTERM)
-            // Wait briefly for graceful exit
-            Thread.sleep(forTimeInterval: 0.5)
-            // Force kill if still alive
-            if kill(pid, 0) == 0 {  // kill with signal 0 checks if process exists
-                kill(pid, SIGKILL)
-                Thread.sleep(forTimeInterval: 0.2)
+            if isExpectedParakeetProcess(pid: pid) {
+                print("[ParakeetService] Found stale validated PID file (pid: \(pid)), killing...")
+                terminateProcess(pid: pid)
             }
         }
 
-        // 2. Broad cleanup: kill any parakeet-cli serve processes owned by this user
-        let pkill = Process()
-        pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        pkill.arguments = ["-U", String(getuid()), "-f", "parakeet-cli serve"]
-        try? pkill.run()
-        pkill.waitUntilExit()
-
-        // 3. Remove stale files
+        // 2. Remove stale files owned by this app runtime.
         try? FileManager.default.removeItem(atPath: socketPath)
         try? FileManager.default.removeItem(atPath: pidPath)
 
@@ -521,13 +452,6 @@ final class ParakeetService: ObservableObject {
         // Clean up socket and pid files
         try? FileManager.default.removeItem(atPath: settings.socketPath)
         try? FileManager.default.removeItem(atPath: settings.pidFilePath)
-
-        // Safety net: kill any remaining parakeet-cli serve processes owned by this user
-        let pkill = Process()
-        pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        pkill.arguments = ["-U", String(getuid()), "-f", "parakeet-cli serve"]
-        try? pkill.run()
-        pkill.waitUntilExit()
     }
 
     private func ensureRuntimeDirectory() throws {
@@ -535,6 +459,7 @@ final class ParakeetService: ObservableObject {
         let fileManager = FileManager.default
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             let probeURL = directory.appendingPathComponent(".runtime-probe")
             try "ok".data(using: .utf8)?.write(to: probeURL)
             try? fileManager.removeItem(at: probeURL)
@@ -641,6 +566,35 @@ final class ParakeetService: ObservableObject {
             return "Loading VAD"
         }
         return "Starting daemon"
+    }
+
+    private func terminateProcess(pid: pid_t) {
+        guard kill(pid, 0) == 0 else { return }
+        kill(pid, SIGTERM)
+        Thread.sleep(forTimeInterval: 0.5)
+        if kill(pid, 0) == 0 {
+            kill(pid, SIGKILL)
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+    }
+
+    private func isExpectedParakeetProcess(pid: pid_t) -> Bool {
+        guard let executablePath = processExecutablePath(pid: pid) else { return false }
+        let normalizedExecutable = URL(fileURLWithPath: executablePath).standardizedFileURL.path
+        let normalizedExpected = URL(fileURLWithPath: settings.parakeetBinaryPath).standardizedFileURL.path
+
+        if normalizedExecutable == normalizedExpected {
+            return true
+        }
+
+        return URL(fileURLWithPath: executablePath).lastPathComponent == "parakeet"
+    }
+
+    private func processExecutablePath(pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        let result = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard result > 0 else { return nil }
+        return String(cString: buffer)
     }
 
     private func diagnosticSummary(readiness: AppReadinessReport) -> String {

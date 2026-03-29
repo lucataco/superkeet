@@ -219,7 +219,7 @@ struct OnboardingView: View {
                 Text("Speech Engine")
                     .font(.title)
                     .fontWeight(.bold)
-                Text("Superkeet uses the Parakeet engine for local speech recognition. Make sure it's installed.")
+                Text("Superkeet uses a bundled Parakeet engine for local speech recognition. Make sure the embedded binary is present.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -240,7 +240,7 @@ struct OnboardingView: View {
                             .textSelection(.enabled)
 
                         if !readiness.diagnostics.engineBinaryExists {
-                            Text("Build parakeet-cli with:\n  cd ~/Code/CLIs/parakeet-cli && cargo build --release")
+                            Text("The embedded engine is missing. Reinstall Superkeet with ./install.sh to restore the signed app bundle.")
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(.orange)
                                 .padding(.top, 4)

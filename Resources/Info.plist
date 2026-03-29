@@ -22,7 +22,5 @@
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
-    <key>SUFeedURL</key>
-    <string>https://example.com/superkeet/appcast.xml</string>
 </dict>
 </plist>

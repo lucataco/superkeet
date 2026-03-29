@@ -17,6 +17,8 @@ DerivedData/
 
 # App bundle (built by install.sh)
 *.app
+dist/
+.release/
 
 # macOS
 .DS_Store

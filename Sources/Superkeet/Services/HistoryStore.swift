@@ -14,7 +14,11 @@ final class HistoryStore: ObservableObject {
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let superkeetDir = appSupport.appendingPathComponent("Superkeet", isDirectory: true)
-        try? FileManager.default.createDirectory(at: superkeetDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: superkeetDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         self.fileURL = superkeetDir.appendingPathComponent("history.json")
 
         encoder.dateEncodingStrategy = .iso8601
@@ -103,6 +107,7 @@ final class HistoryStore: ObservableObject {
         do {
             let data = try encoder.encode(records)
             try data.write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         } catch {
             print("[HistoryStore] Failed to save history: \(error)")
         }

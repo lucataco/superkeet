@@ -53,8 +53,8 @@ struct HomeTabView: View {
                     SetupRow(
                         title: "Speech engine",
                         detail: readiness.diagnostics.engineBinaryExists
-                            ? "Parakeet engine found at \(settings.parakeetBinaryPath)"
-                            : "Parakeet engine not found at \(settings.parakeetBinaryPath)",
+                            ? "Bundled Parakeet engine found at \(settings.parakeetBinaryPath)"
+                            : "Bundled Parakeet engine not found at \(settings.parakeetBinaryPath)",
                         isComplete: !readiness.issues.contains(.engine),
                         buttonTitle: "Refresh"
                     ) {
