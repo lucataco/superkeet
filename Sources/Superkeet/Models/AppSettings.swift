@@ -17,6 +17,7 @@ final class AppSettings: ObservableObject {
 
     // MARK: - First Run
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
+    @AppStorage("hasVerifiedSetup") var hasVerifiedSetup: Bool = false
 
     // MARK: - Launch Behavior
     @AppStorage("launchAtLoginEnabled") var launchAtLoginEnabled: Bool = false
@@ -48,14 +49,13 @@ final class AppSettings: ObservableObject {
         if let bundledPath = bundledBinaryPath {
             return bundledPath
         }
+        if isRunningFromAppBundle {
+            return missingBundledBinaryPlaceholderPath
+        }
         if let resolved = resolvedDevelopmentBinaryPath {
             return resolved
         }
-        // No bundled or development binary found — return a descriptive placeholder
-        // so error messages clearly indicate the binary is missing rather than
-        // referencing a developer-specific path.
-        return Bundle.main.resourceURL?.appendingPathComponent("bin/parakeet").path
-            ?? "/usr/local/bin/parakeet"
+        return missingBundledBinaryPlaceholderPath
     }
 
     var hasBundledParakeetBinary: Bool {
@@ -73,6 +73,15 @@ final class AppSettings: ObservableObject {
     private init() {}
 
     // MARK: - Binary Discovery
+
+    private var isRunningFromAppBundle: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+    }
+
+    private var missingBundledBinaryPlaceholderPath: String {
+        Bundle.main.resourceURL?.appendingPathComponent("bin/parakeet").path
+            ?? "/nonexistent/parakeet"
+    }
 
     private var bundledBinaryPath: String? {
         let candidates = [

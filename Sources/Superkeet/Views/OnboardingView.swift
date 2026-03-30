@@ -68,7 +68,6 @@ struct OnboardingView: View {
                     .buttonStyle(.borderedProminent)
                 } else {
                     Button("Start Using Superkeet") {
-                        settings.hasCompletedOnboarding = true
                         onComplete()
                     }
                     .buttonStyle(.borderedProminent)
@@ -96,7 +95,7 @@ struct OnboardingView: View {
             readiness = AppReadiness.current()
             microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
-            hotkeyManager.accessibilityGranted = accessibilityGranted
+            syncAccessibilityState(accessibilityGranted)
         }
     }
 
@@ -533,7 +532,7 @@ struct OnboardingView: View {
             let granted = hotkeyManager.checkAccessibilitySilently()
             if granted != accessibilityGranted {
                 accessibilityGranted = granted
-                hotkeyManager.accessibilityGranted = granted
+                syncAccessibilityState(granted)
             }
         }
     }
@@ -541,5 +540,14 @@ struct OnboardingView: View {
     private func stopAccessibilityPolling() {
         accessibilityPollingTimer?.invalidate()
         accessibilityPollingTimer = nil
+    }
+
+    private func syncAccessibilityState(_ granted: Bool) {
+        hotkeyManager.accessibilityGranted = granted
+        guard granted else { return }
+        hotkeyManager.startListening()
+        if !hotkeyManager.isListening {
+            hotkeyManager.startRetryTimer()
+        }
     }
 }

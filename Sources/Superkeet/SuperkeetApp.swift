@@ -11,11 +11,8 @@ struct SuperkeetApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // Settings window is created manually in MenuBarManager.openSettings()
-        // so we have full control over resizability and window behavior.
-        // An empty Settings scene is required to satisfy the App protocol.
         Settings {
-            EmptyView()
+            SettingsView()
         }
     }
 }
@@ -30,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sigtermSource: DispatchSourceSignal?
     private var onboardingWindow: NSWindow?
     private var didFinishOnboarding: Bool = false
+    private var isTerminating: Bool = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide the dock icon (LSUIElement in Info.plist handles this for release builds,
@@ -49,12 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !settings.hasCompletedOnboarding {
             showOnboardingWindow()
         } else {
-            // Silent check — never prompt on normal launch (permissions may reset after brew upgrade)
-            hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
-            hotkeyManager.startListening()
-            if !hotkeyManager.isListening {
-                hotkeyManager.startRetryTimer()
-            }
+            activatePostOnboardingServices()
             startDaemonWithErrorHandling()
         }
     }
@@ -105,9 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         self.onboardingWindow = window
 
-        // If the user closes the window via the X button without clicking
-        // "Start Using Superkeet", still activate hotkeys and daemon so the
-        // app is functional (onboarding can be re-run from the menu).
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(onboardingWindowWillClose),
@@ -119,8 +109,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func onboardingWindowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === onboardingWindow else { return }
         NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
-        // If onboarding was already completed via the button, completeOnboarding()
-        // already ran and this is a no-op thanks to the hasCompletedOnboarding guard below.
         completeOnboarding()
     }
 
@@ -131,13 +119,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onboardingWindow?.close()
         onboardingWindow = nil
         NSApp.setActivationPolicy(.accessory)
+        activatePostOnboardingServices()
+        startDaemonWithErrorHandling()
+    }
+
+    private func activatePostOnboardingServices() {
         // Silent check — never prompt after onboarding (permissions may reset after brew upgrade)
         hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
         hotkeyManager.startListening()
         if !hotkeyManager.isListening {
             hotkeyManager.startRetryTimer()
         }
-        startDaemonWithErrorHandling()
     }
 
     private func startDaemonWithErrorHandling() {
@@ -173,10 +165,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        parakeetService.cleanup()
-        hotkeyManager.stopListening()
-        AudioLevelMonitor.shared.stopMonitoring()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isTerminating else { return .terminateNow }
+        isTerminating = true
+
+        Task { [weak self] in
+            await self?.performShutdownCleanup()
+            await MainActor.run {
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+        }
+
+        return .terminateLater
     }
 
     // MARK: - Signal Handlers
@@ -191,10 +191,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sigintSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigintSrc.setEventHandler { [weak self] in
             print("\n[Superkeet] Received SIGINT, cleaning up...")
-            self?.parakeetService.cleanup()
-            self?.hotkeyManager.stopListening()
-            AudioLevelMonitor.shared.stopMonitoring()
-            exit(0)
+            Task {
+                await self?.performShutdownCleanup()
+                exit(0)
+            }
         }
         sigintSrc.resume()
         self.sigintSource = sigintSrc
@@ -202,12 +202,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sigtermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigtermSrc.setEventHandler { [weak self] in
             print("[Superkeet] Received SIGTERM, cleaning up...")
-            self?.parakeetService.cleanup()
-            self?.hotkeyManager.stopListening()
-            AudioLevelMonitor.shared.stopMonitoring()
-            exit(0)
+            Task {
+                await self?.performShutdownCleanup()
+                exit(0)
+            }
         }
         sigtermSrc.resume()
         self.sigtermSource = sigtermSrc
+    }
+
+    private func performShutdownCleanup() async {
+        await parakeetService.cleanupAndWait()
+        hotkeyManager.stopListening()
+        AudioLevelMonitor.shared.stopMonitoring()
     }
 }

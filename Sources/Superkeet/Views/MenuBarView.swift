@@ -10,7 +10,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let settings = AppSettings.shared
     private let hotkeyManager = HotkeyManager.shared
     private var historyWindow: NSWindow?
-    private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
 
     func setup() {
@@ -170,26 +169,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc func openSettings() {
-        if let existingWindow = settingsWindow, existingWindow.isVisible {
-            existingWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let settingsView = SettingsView()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 650, height: 480),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = NSHostingView(rootView: settingsView)
-        window.title = "Superkeet Settings"
-        window.minSize = NSSize(width: 550, height: 400)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        self.settingsWindow = window
+        _ = NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 
     @objc private func runSetupAgain() {
@@ -230,9 +211,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func quitApp() {
-        ParakeetService.shared.cleanup()
-        AudioLevelMonitor.shared.stopMonitoring()
-        HotkeyManager.shared.stopListening()
         NSApp.terminate(nil)
     }
 

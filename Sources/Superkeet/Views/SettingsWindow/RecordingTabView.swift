@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 
 /// Recording settings: audio device, model directory
 struct RecordingTabView: View {
@@ -111,7 +112,21 @@ struct RecordingTabView: View {
 
             do {
                 try process.run()
-                process.waitUntilExit()
+                let group = DispatchGroup()
+                group.enter()
+                DispatchQueue.global(qos: .utility).async {
+                    process.waitUntilExit()
+                    group.leave()
+                }
+
+                if group.wait(timeout: .now() + 5) == .timedOut {
+                    process.terminate()
+                    if group.wait(timeout: .now() + 1) == .timedOut {
+                        kill(process.processIdentifier, SIGKILL)
+                        _ = group.wait(timeout: .now() + 1)
+                    }
+                }
+
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 if let output = String(data: data, encoding: .utf8) {
                     // Parse device names from output

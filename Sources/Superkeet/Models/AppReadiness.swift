@@ -75,6 +75,10 @@ struct AppReadinessReport {
         !hasDaemonBlockingIssue && !hasRecordingBlockingIssue
     }
 
+    func passesSetupSmokeTest(daemonStarted: Bool) -> Bool {
+        daemonStarted && isReadyForBasicRecording
+    }
+
     var statusText: String {
         if issues.isEmpty {
             return "Ready to record"

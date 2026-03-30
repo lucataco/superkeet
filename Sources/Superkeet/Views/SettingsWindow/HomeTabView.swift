@@ -32,15 +32,26 @@ struct HomeTabView: View {
                 }
 
                 StatusCard(
-                    title: readiness.statusText,
+                    title: statusTitle,
                     detail: statusDetail,
-                    color: readiness.isReadyForDaemon ? .green : .orange
+                    color: statusColor
                 )
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Checklist")
                         .font(.title3)
                         .fontWeight(.semibold)
+
+                    SetupRow(
+                        title: "Setup verification",
+                        detail: settings.hasVerifiedSetup
+                            ? "Superkeet has passed its startup smoke test on this Mac."
+                            : "Superkeet has not passed a full startup smoke test yet. Finish setup and run the daemon successfully to verify it.",
+                        isComplete: settings.hasVerifiedSetup,
+                        buttonTitle: settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon"
+                    ) {
+                        runSetupVerification()
+                    }
 
                     SetupRow(
                         title: "Microphone access",
@@ -89,7 +100,14 @@ struct HomeTabView: View {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                             NSWorkspace.shared.open(url)
                         }
-                        hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
+                        let granted = hotkeyManager.checkAccessibilitySilently()
+                        hotkeyManager.accessibilityGranted = granted
+                        if granted {
+                            hotkeyManager.startListening()
+                            if !hotkeyManager.isListening {
+                                hotkeyManager.startRetryTimer()
+                            }
+                        }
                     }
 
                     SetupRow(
@@ -225,6 +243,15 @@ struct HomeTabView: View {
     }
 
     private var statusDetail: String {
+        if !settings.hasVerifiedSetup {
+            if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
+                return issue
+            }
+            if readiness.isReadyForBasicRecording {
+                return "Setup is close, but Superkeet still needs one successful startup smoke test before it is marked complete."
+            }
+            return "Onboarding is skippable, but setup stays unverified until microphone, input, runtime, and engine checks pass together."
+        }
         if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
             return issue
         }
@@ -237,6 +264,17 @@ struct HomeTabView: View {
             return "The daemon can start, but recording will fail until microphone access and an input device are available."
         }
         return "Finish the missing setup items below before relying on Superkeet."
+    }
+
+    private var statusTitle: String {
+        settings.hasVerifiedSetup ? readiness.statusText : "Setup still needs verification"
+    }
+
+    private var statusColor: Color {
+        if !settings.hasVerifiedSetup {
+            return readiness.isReadyForBasicRecording ? .orange : .red
+        }
+        return readiness.isReadyForDaemon ? .green : .orange
     }
 
     private var microphoneDetail: String {
@@ -289,6 +327,21 @@ struct HomeTabView: View {
         } catch {
             print("[HomeTab] Failed to update login item: \(error)")
             loginItemError = "Failed to update login item. Make sure you're running the installed .app bundle."
+        }
+    }
+
+    private func runSetupVerification() {
+        Task {
+            do {
+                if settings.isDaemonRunning {
+                    try await parakeetService.restartDaemon()
+                } else {
+                    try await parakeetService.startDaemon()
+                }
+            } catch {
+                print("[HomeTab] Failed to verify setup: \(error)")
+            }
+            refreshReadiness()
         }
     }
 
