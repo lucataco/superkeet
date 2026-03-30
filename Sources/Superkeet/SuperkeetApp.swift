@@ -191,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sigintSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigintSrc.setEventHandler { [weak self] in
             print("\n[Superkeet] Received SIGINT, cleaning up...")
-            Task {
+            Task { @MainActor [weak self] in
                 await self?.performShutdownCleanup()
                 exit(0)
             }
@@ -202,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sigtermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigtermSrc.setEventHandler { [weak self] in
             print("[Superkeet] Received SIGTERM, cleaning up...")
-            Task {
+            Task { @MainActor [weak self] in
                 await self?.performShutdownCleanup()
                 exit(0)
             }
