@@ -27,10 +27,18 @@ jobs:
   release:
     runs-on: macos-14
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - name: Check out source for tag push
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Check out source for manual publish
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ github.event.inputs.tag }}
 
       - name: Resolve tag and pinned parakeet ref
         id: vars
@@ -67,16 +75,40 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Check out pinned parakeet-cli source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.PARAKEET_REPOSITORY }}
           ref: ${{ steps.vars.outputs.parakeet_ref }}
           path: .release/parakeet-cli
 
-      - name: Prepare signing keychain
-        if: env.HAS_APPLE_CERTIFICATE == 'true'
+      - name: Resolve signing mode
+        id: signing
         env:
-          HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_KEYCHAIN_PASSWORD != '' }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          if [ -n "$APPLE_SIGNING_IDENTITY" ] && [ -n "$APPLE_CERTIFICATE_P12" ] && [ -n "$APPLE_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_KEYCHAIN_PASSWORD" ]; then
+            echo "has_certificate=true" >> "$GITHUB_OUTPUT"
+            echo "codesign_identity=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_certificate=false" >> "$GITHUB_OUTPUT"
+            echo "codesign_identity=-" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$APPLE_NOTARY_APPLE_ID" ] && [ -n "$APPLE_NOTARY_TEAM_ID" ] && [ -n "$APPLE_NOTARY_PASSWORD" ]; then
+            echo "has_notary=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notary=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare signing keychain
+        if: steps.signing.outputs.has_certificate == 'true'
+        env:
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
@@ -95,10 +127,10 @@ jobs:
         env:
           PARAKEET_SOURCE_DIR: ${{ github.workspace }}/.release/parakeet-cli
           DIST_DIR: ${{ github.workspace }}/.release/dist
-          CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
-          NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
-          NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          CODESIGN_IDENTITY: ${{ steps.signing.outputs.codesign_identity }}
+          NOTARY_APPLE_ID: ${{ steps.signing.outputs.has_notary == 'true' && secrets.APPLE_NOTARY_APPLE_ID || '' }}
+          NOTARY_TEAM_ID: ${{ steps.signing.outputs.has_notary == 'true' && secrets.APPLE_NOTARY_TEAM_ID || '' }}
+          NOTARY_PASSWORD: ${{ steps.signing.outputs.has_notary == 'true' && secrets.APPLE_NOTARY_PASSWORD || '' }}
         run: |
           chmod +x ./scripts/package_release.sh
           ./scripts/package_release.sh
@@ -132,7 +164,7 @@ jobs:
 
       - name: Check out Homebrew tap
         if: secrets.HOMEBREW_TAP_TOKEN != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.HOMEBREW_TAP_REPOSITORY }}
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
