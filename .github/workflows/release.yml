@@ -106,6 +106,17 @@ jobs:
             echo "has_notary=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve Homebrew tap sync mode
+        id: tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Prepare signing keychain
         if: steps.signing.outputs.has_certificate == 'true'
         env:
@@ -163,7 +174,7 @@ jobs:
           gh release upload "$TAG" .release/dist/*.zip .release/dist/*.sha256 --clobber
 
       - name: Check out Homebrew tap
-        if: secrets.HOMEBREW_TAP_TOKEN != ''
+        if: steps.tap.outputs.enabled == 'true'
         uses: actions/checkout@v5
         with:
           repository: ${{ env.HOMEBREW_TAP_REPOSITORY }}
@@ -171,7 +182,7 @@ jobs:
           path: .release/homebrew-tap
 
       - name: Update Homebrew tap
-        if: secrets.HOMEBREW_TAP_TOKEN != ''
+        if: steps.tap.outputs.enabled == 'true'
         env:
           TAG: ${{ steps.vars.outputs.tag }}
         run: |
@@ -183,7 +194,7 @@ jobs:
             "$SHA256"
 
       - name: Commit Homebrew tap update
-        if: secrets.HOMEBREW_TAP_TOKEN != ''
+        if: steps.tap.outputs.enabled == 'true'
         env:
           TAG: ${{ steps.vars.outputs.tag }}
         run: |
@@ -200,6 +211,6 @@ jobs:
           git -C .release/homebrew-tap push
 
       - name: Warn when tap sync is disabled
-        if: secrets.HOMEBREW_TAP_TOKEN == ''
+        if: steps.tap.outputs.enabled != 'true'
         run: |
           echo "HOMEBREW_TAP_TOKEN is not configured, so the Homebrew tap was not updated."
