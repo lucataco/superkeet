@@ -21,6 +21,7 @@ permissions:
 env:
   PARAKEET_REPOSITORY: lucataco/parakeet-cli
   PARAKEET_REF: v0.1.0
+  HOMEBREW_TAP_REPOSITORY: lucataco/homebrew-tap
 
 jobs:
   release:
@@ -128,3 +129,45 @@ jobs:
           TAG: ${{ steps.vars.outputs.tag }}
         run: |
           gh release upload "$TAG" .release/dist/*.zip .release/dist/*.sha256 --clobber
+
+      - name: Check out Homebrew tap
+        if: secrets.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPOSITORY }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: .release/homebrew-tap
+
+      - name: Update Homebrew tap
+        if: secrets.HOMEBREW_TAP_TOKEN != ''
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          SHA256="$(shasum -a 256 .release/dist/Superkeet-${VERSION}.zip | awk '{print $1}')"
+          python3 ./scripts/update_homebrew_cask.py \
+            .release/homebrew-tap/Casks/superkeet.rb \
+            "$VERSION" \
+            "$SHA256"
+
+      - name: Commit Homebrew tap update
+        if: secrets.HOMEBREW_TAP_TOKEN != ''
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          if git -C .release/homebrew-tap diff --quiet; then
+            echo "Homebrew tap already up to date"
+            exit 0
+          fi
+
+          VERSION="${TAG#v}"
+          git -C .release/homebrew-tap config user.name "github-actions[bot]"
+          git -C .release/homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C .release/homebrew-tap add Casks/superkeet.rb
+          git -C .release/homebrew-tap commit -m "Update superkeet to v${VERSION}"
+          git -C .release/homebrew-tap push
+
+      - name: Warn when tap sync is disabled
+        if: secrets.HOMEBREW_TAP_TOKEN == ''
+        run: |
+          echo "HOMEBREW_TAP_TOKEN is not configured, so the Homebrew tap was not updated."
