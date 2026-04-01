@@ -40,6 +40,10 @@ final class ParakeetService: ObservableObject {
 
     private static let maxBufferedOutputCharacters = 16_384
 
+    static func shouldScheduleIdleShutdown(timeoutMinutes: Int, state: DaemonState) -> Bool {
+        timeoutMinutes > 0 && state == .idle
+    }
+
     private init() {}
 
     // MARK: - Daemon Management
@@ -228,6 +232,7 @@ final class ParakeetService: ObservableObject {
             self.startupStatusDetail = "Ready"
             self.settings.runtimeIssue = nil
             self.settings.hasVerifiedSetup = readiness.passesSetupSmokeTest(daemonStarted: true)
+            self.scheduleIdleShutdownIfNeeded()
         }
         autoRestartPolicy.reset()
     }
@@ -354,7 +359,7 @@ final class ParakeetService: ObservableObject {
             DispatchQueue.main.async {
                 self?.daemonState = .idle
                 self?.settings.isRecording = false
-                self?.resetIdleTimer()
+                self?.scheduleIdleShutdownIfNeeded()
             }
         }
     }
@@ -380,12 +385,14 @@ final class ParakeetService: ObservableObject {
 
     /// Schedule a daemon shutdown after the configured idle timeout.
     /// Called after each recording stops. Cancelled when a new recording starts.
-    private func resetIdleTimer() {
+    private func scheduleIdleShutdownIfNeeded() {
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
 
         let timeoutMinutes = settings.idleTimeoutMinutes
-        guard timeoutMinutes > 0 else { return }
+        guard Self.shouldScheduleIdleShutdown(timeoutMinutes: timeoutMinutes, state: daemonState) else {
+            return
+        }
 
         let task = DispatchWorkItem { [weak self] in
             guard let self = self, self.daemonState == .idle else { return }
