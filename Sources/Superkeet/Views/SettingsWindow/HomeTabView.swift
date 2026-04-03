@@ -484,12 +484,12 @@ struct HotkeyBadge: View {
 // MARK: - Interactive Hotkey Recorder
 
 struct InteractiveHotkeyRecorder: View {
+    @StateObject private var recorderState = RecorderState()
+
     let onRecord: (Int, Int, String) -> Void
     let onCancel: () -> Void
 
     @State private var capturedName: String? = nil
-    @State private var eventMonitor: Any? = nil
-    @State private var flagsMonitor: Any? = nil
 
     var body: some View {
         VStack(spacing: 10) {
@@ -525,7 +525,7 @@ struct InteractiveHotkeyRecorder: View {
                 Spacer()
 
                 Button("Cancel") {
-                    cleanup()
+                    teardown()
                     onCancel()
                 }
                 .foregroundColor(.secondary)
@@ -537,20 +537,24 @@ struct InteractiveHotkeyRecorder: View {
         .background(Color.accentColor.opacity(0.05))
         .cornerRadius(10)
         .onAppear {
+            recorderState.isActive = true
             startListening()
         }
         .onDisappear {
-            cleanup()
+            teardown()
         }
     }
 
     private func startListening() {
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        guard recorderState.eventMonitor == nil, recorderState.flagsMonitor == nil else { return }
+
+        recorderState.eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard recorderState.isActive else { return event }
             let keyCode = Int(event.keyCode)
 
             // Escape cancels the recorder
             if keyCode == 53 {
-                cleanup()
+                teardown()
                 onCancel()
                 return nil
             }
@@ -566,7 +570,8 @@ struct InteractiveHotkeyRecorder: View {
             return nil
         }
 
-        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+        recorderState.flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            guard recorderState.isActive else { return event }
             let keyCode = Int(event.keyCode)
             if keyCode == 63 {
                 applyHotkey(keyCode: 63, modifiers: 0, name: "fn")
@@ -578,21 +583,34 @@ struct InteractiveHotkeyRecorder: View {
 
     private func applyHotkey(keyCode: Int, modifiers: Int, name: String) {
         capturedName = name
-        cleanup()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        stopListening()
+        recorderState.pendingRecord?.cancel()
+
+        let workItem = DispatchWorkItem { [recorderState] in
+            guard recorderState.isActive else { return }
+            recorderState.pendingRecord = nil
             onRecord(keyCode, modifiers, name)
+        }
+        recorderState.pendingRecord = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem)
+    }
+
+    private func stopListening() {
+        if let monitor = recorderState.eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            recorderState.eventMonitor = nil
+        }
+        if let monitor = recorderState.flagsMonitor {
+            NSEvent.removeMonitor(monitor)
+            recorderState.flagsMonitor = nil
         }
     }
 
-    private func cleanup() {
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-            eventMonitor = nil
-        }
-        if let monitor = flagsMonitor {
-            NSEvent.removeMonitor(monitor)
-            flagsMonitor = nil
-        }
+    private func teardown() {
+        recorderState.isActive = false
+        recorderState.pendingRecord?.cancel()
+        recorderState.pendingRecord = nil
+        stopListening()
     }
 
     private func modifierFlagsToInt(_ flags: NSEvent.ModifierFlags) -> Int {
@@ -602,5 +620,23 @@ struct InteractiveHotkeyRecorder: View {
         if flags.contains(.control) { result |= CGEventFlags.maskControl.rawValue }
         if flags.contains(.shift) { result |= CGEventFlags.maskShift.rawValue }
         return Int(result)
+    }
+
+    @MainActor
+    private final class RecorderState: ObservableObject {
+        var eventMonitor: Any?
+        var flagsMonitor: Any?
+        var pendingRecord: DispatchWorkItem?
+        var isActive = false
+
+        deinit {
+            pendingRecord?.cancel()
+            if let monitor = eventMonitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            if let monitor = flagsMonitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
     }
 }

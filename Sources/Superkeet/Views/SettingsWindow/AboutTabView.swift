@@ -3,6 +3,8 @@ import AppKit
 
 /// About tab showing app version and credits
 struct AboutTabView: View {
+    private let websiteURL = URL(string: "https://catacolabs.com")
+
     private var appVersion: String {
         let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? shortVersion
@@ -84,9 +86,11 @@ struct AboutTabView: View {
                 Text("Made with love from")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Link("Catacolabs", destination: URL(string: "https://catacolabs.com")!)
-                    .font(.caption)
-                    .foregroundColor(.accentColor)
+                if let websiteURL {
+                    Link("Catacolabs", destination: websiteURL)
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                }
             }
             .padding(.bottom, 4)
         }

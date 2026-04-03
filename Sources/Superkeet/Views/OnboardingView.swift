@@ -15,6 +15,7 @@ struct OnboardingView: View {
     @State private var accessibilityPollingTimer: Timer?
     @State private var accessibilityGranted: Bool = false
     @State private var didTriggerAccessibilityPrompt: Bool = false
+    @State private var pendingAccessibilitySettingsOpen: DispatchWorkItem?
 
     // Microphone state
     @State private var microphoneGranted: Bool = false
@@ -89,6 +90,7 @@ struct OnboardingView: View {
         }
         .onDisappear {
             stopAccessibilityPolling()
+            cancelPendingAccessibilitySettingsOpen()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Refresh everything when user switches back to the app
@@ -506,6 +508,7 @@ struct OnboardingView: View {
     private func triggerAccessibilityPromptIfNeeded() {
         guard !didTriggerAccessibilityPrompt && !accessibilityGranted else { return }
         didTriggerAccessibilityPrompt = true
+        cancelPendingAccessibilitySettingsOpen()
 
         // This call adds "Superkeet" to the Accessibility list in System Settings
         // and shows the macOS system prompt asking the user to open System Settings.
@@ -513,9 +516,16 @@ struct OnboardingView: View {
 
         // After a short delay, open System Settings directly to the Accessibility pane
         // so the user just needs to find Superkeet and toggle the switch.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        let workItem = DispatchWorkItem {
             openAccessibilitySettings()
         }
+        pendingAccessibilitySettingsOpen = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+    }
+
+    private func cancelPendingAccessibilitySettingsOpen() {
+        pendingAccessibilitySettingsOpen?.cancel()
+        pendingAccessibilitySettingsOpen = nil
     }
 
     private func openAccessibilitySettings() {

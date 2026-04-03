@@ -23,26 +23,29 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            // Sidebar
-            List(SettingsTab.allCases, selection: $selectedTab) { tab in
+        HStack(spacing: 0) {
+            List(SettingsTab.allCases, id: \.id, selection: $selectedTab) { tab in
                 Label(tab.rawValue, systemImage: tab.icon)
                     .tag(tab)
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 150, ideal: 170, max: 200)
-        } detail: {
-            // Content
-            switch selectedTab {
-            case .home:
-                HomeTabView()
-            case .recording:
-                RecordingTabView()
-            case .output:
-                OutputTabView()
-            case .about:
-                AboutTabView()
+            .frame(minWidth: 150, idealWidth: 170, maxWidth: 200)
+
+            Divider()
+
+            Group {
+                switch selectedTab {
+                case .home:
+                    HomeTabView()
+                case .recording:
+                    RecordingTabView()
+                case .output:
+                    OutputTabView()
+                case .about:
+                    AboutTabView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 550, idealWidth: 650, minHeight: 400, idealHeight: 480)
     }

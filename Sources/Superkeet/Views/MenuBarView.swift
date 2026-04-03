@@ -9,8 +9,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let parakeetService = ParakeetService.shared
     private let settings = AppSettings.shared
     private let hotkeyManager = HotkeyManager.shared
-    private var historyWindow: NSWindow?
-    private var onboardingWindow: NSWindow?
+    private var settingsWindowController: NSWindowController?
+    private var historyWindowController: NSWindowController?
+    private var onboardingWindowController: NSWindowController?
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -147,59 +148,117 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func openHistory() {
-        if let existingWindow = historyWindow, existingWindow.isVisible {
+        if let existingWindow = historyWindowController?.window, existingWindow.isVisible {
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let historyView = HistoryView()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = NSHostingView(rootView: historyView)
+        let hostingController = NSHostingController(rootView: HistoryView())
+        let window = NSWindow(contentViewController: hostingController)
+        window.setContentSize(NSSize(width: 480, height: 520))
+        window.styleMask = [.titled, .closable, .resizable]
         window.title = "Superkeet - History"
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        self.historyWindow = window
+        let controller = NSWindowController(window: window)
+        self.historyWindowController = controller
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(historyWindowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
+    @objc private func historyWindowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === historyWindowController?.window else { return }
+        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.historyWindowController?.window === window else { return }
+            self.historyWindowController = nil
+        }
     }
 
     @objc func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        _ = NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    }
-
-    @objc private func runSetupAgain() {
-        if let existingWindow = onboardingWindow, existingWindow.isVisible {
+        if let existingWindow = settingsWindowController?.window, existingWindow.isVisible {
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let onboardingView = OnboardingView {
+        let hostingController = NSHostingController(rootView: SettingsView())
+        let window = NSWindow(contentViewController: hostingController)
+        window.setContentSize(NSSize(width: 650, height: 480))
+        window.styleMask = [.titled, .closable, .resizable]
+        window.title = "Superkeet - Settings"
+        window.minSize = NSSize(width: 550, height: 400)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        let controller = NSWindowController(window: window)
+        self.settingsWindowController = controller
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(settingsWindowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
+    @objc private func settingsWindowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindowController?.window else { return }
+        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.settingsWindowController?.window === window else { return }
+            self.settingsWindowController = nil
+        }
+    }
+
+    @objc private func runSetupAgain() {
+        if let existingWindow = onboardingWindowController?.window, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let onboardingView = OnboardingView { [weak self] in
             // On completion, just close the window (daemon is already running)
-            self.onboardingWindow?.close()
-            self.onboardingWindow = nil
+            self?.onboardingWindowController?.window?.close()
+            self?.onboardingWindowController = nil
             NSApp.setActivationPolicy(.accessory)
         }
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 580),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = NSHostingView(rootView: onboardingView)
+        let hostingController = NSHostingController(rootView: onboardingView)
+        let window = NSWindow(contentViewController: hostingController)
+        window.setContentSize(NSSize(width: 560, height: 580))
+        window.styleMask = [.titled, .closable, .resizable]
         window.title = "Superkeet Setup"
         window.minSize = NSSize(width: 560, height: 580)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        self.onboardingWindow = window
+        let controller = NSWindowController(window: window)
+        self.onboardingWindowController = controller
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(runSetupWindowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
+    @objc private func runSetupWindowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === onboardingWindowController?.window else { return }
+        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.onboardingWindowController?.window === window else { return }
+            self.onboardingWindowController = nil
+        }
     }
 
     @objc private func openAccessibilitySettings() {

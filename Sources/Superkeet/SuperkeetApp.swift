@@ -1,21 +1,8 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 import os.log
 
 private let appLog = Logger(subsystem: "com.superkeet.app", category: "AppDelegate")
-
-/// Superkeet - Voice-to-text Mac app powered by Parakeet
-/// Runs as a menu bar app (no dock icon) with global hotkey support
-@main
-struct SuperkeetApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    var body: some Scene {
-        Settings {
-            SettingsView()
-        }
-    }
-}
 
 /// AppDelegate handles the lifecycle, menu bar setup, daemon management, and hotkey registration
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -25,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings.shared
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
-    private var onboardingWindow: NSWindow?
+    private var onboardingWindowController: NSWindowController?
     private var didFinishOnboarding: Bool = false
     private var isTerminating: Bool = false
 
@@ -80,23 +67,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showOnboardingWindow() {
+        if let existingWindow = onboardingWindowController?.window, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
         let onboardingView = OnboardingView { [weak self] in
             self?.completeOnboarding()
         }
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 580),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = NSHostingView(rootView: onboardingView)
+        let hostingController = NSHostingController(rootView: onboardingView)
+        let window = NSWindow(contentViewController: hostingController)
+        window.setContentSize(NSSize(width: 560, height: 580))
+        window.styleMask = [.titled, .closable, .resizable]
         window.title = "Superkeet Setup"
         window.minSize = NSSize(width: 560, height: 580)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        self.onboardingWindow = window
+        let controller = NSWindowController(window: window)
+        self.onboardingWindowController = controller
 
         NotificationCenter.default.addObserver(
             self,
@@ -107,17 +98,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func onboardingWindowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === onboardingWindow else { return }
+        guard let window = notification.object as? NSWindow, window === onboardingWindowController?.window else { return }
         NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
-        completeOnboarding()
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.onboardingWindowController?.window === window else { return }
+            self.onboardingWindowController = nil
+        }
     }
 
     private func completeOnboarding() {
         guard !didFinishOnboarding else { return }
         didFinishOnboarding = true
         settings.hasCompletedOnboarding = true
-        onboardingWindow?.close()
-        onboardingWindow = nil
+        onboardingWindowController?.window?.close()
+        onboardingWindowController = nil
         NSApp.setActivationPolicy(.accessory)
         activatePostOnboardingServices()
         startDaemonWithErrorHandling()

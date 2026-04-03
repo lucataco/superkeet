@@ -166,7 +166,7 @@ final class ParakeetService: ObservableObject {
                 if previousState == .starting {
                     let detail = "Parakeet exited during startup with code \(proc.terminationStatus)."
                     let diagnostics = self.recentStderrExcerpt()
-                    self.lastUserFacingError = diagnostics == nil ? detail : "\(detail)\n\n\(diagnostics!)"
+                    self.lastUserFacingError = diagnostics.map { "\(detail)\n\n\($0)" } ?? detail
                     self.lastDiagnosticsSummary = diagnostics
                     self.startupStatusDetail = "Startup failed"
                     self.settings.runtimeIssue = self.lastUserFacingError
@@ -635,7 +635,7 @@ final class ParakeetService: ObservableObject {
 
     @MainActor
     private func publishStartupFailure(_ detail: String, diagnostics: String?) async {
-        let message = diagnostics == nil ? detail : "\(detail)\n\n\(diagnostics!)"
+        let message = diagnostics.map { "\(detail)\n\n\($0)" } ?? detail
         lastUserFacingError = message
         lastDiagnosticsSummary = diagnostics
         startupStatusDetail = "Startup failed"
