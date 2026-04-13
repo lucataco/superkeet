@@ -5,6 +5,25 @@ import os.log
 
 private let hotkeyLog = Logger(subsystem: "com.superkeet.app", category: "HotkeyManager")
 
+struct AccessibilityRetryPolicy {
+    let maxAttempts: Int
+    private(set) var attempts: Int = 0
+
+    init(maxAttempts: Int = 10) {
+        self.maxAttempts = maxAttempts
+    }
+
+    mutating func reset() {
+        attempts = 0
+    }
+
+    mutating func beginNextAttempt() -> Int? {
+        guard attempts < maxAttempts else { return nil }
+        attempts += 1
+        return attempts
+    }
+}
+
 /// Global hotkey manager using CGEvent tap for monitoring keyboard events system-wide.
 /// Supports two independent hotkeys:
 ///   1. Toggle Recording — press to start, press again to stop
@@ -42,6 +61,7 @@ final class HotkeyManager: ObservableObject {
     /// Track rapid tap re-enables to detect a tight re-enable loop
     fileprivate var tapReEnableCount: Int = 0
     fileprivate var tapReEnableWindowStart: Date = .distantPast
+    private var retryPolicy = AccessibilityRetryPolicy()
 
     private init() {
         // Only check silently at init – don't show the macOS system dialog.
@@ -112,11 +132,21 @@ final class HotkeyManager: ObservableObject {
 
         hotkeyLog.info("Event tap created and listening. Toggle=\(self.settings.toggleHotkeyDisplayName), PTT=\(self.settings.pttHotkeyDisplayName)")
 
+        tapReEnableCount = 0
+        tapReEnableWindowStart = .distantPast
+        retryPolicy.reset()
         self.isListening = true
     }
 
     func stopListening() {
-        stopRetryTimer()
+        tearDownEventTap(stopRetryTimer: true)
+        retryPolicy.reset()
+    }
+
+    private func tearDownEventTap(stopRetryTimer: Bool) {
+        if stopRetryTimer {
+            stopRetryTimerInternal()
+        }
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             if let source = runLoopSource {
@@ -137,28 +167,44 @@ final class HotkeyManager: ObservableObject {
     /// Accessibility permission is granted. Stops automatically on success.
     func startRetryTimer() {
         guard retryTimer == nil else { return }
+        retryPolicy.reset()
         hotkeyLog.info("Starting accessibility retry timer (every 3s)")
         retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if self.isListening {
-                self.stopRetryTimer()
+                self.stopRetryTimerInternal()
+                return
+            }
+            guard let attempt = self.retryPolicy.beginNextAttempt() else {
+                hotkeyLog.info("Stopping accessibility retry timer after \(self.retryPolicy.maxAttempts) attempts")
+                self.stopRetryTimerInternal()
                 return
             }
             let trusted = AXIsProcessTrusted()
             if trusted {
-                hotkeyLog.info("Accessibility now granted — retrying event tap creation")
+                hotkeyLog.info("Accessibility now granted on retry attempt \(attempt) — recreating event tap")
                 self.accessibilityGranted = true
+                self.tearDownEventTap(stopRetryTimer: false)
                 self.startListening()
                 if self.isListening {
-                    self.stopRetryTimer()
+                    self.stopRetryTimerInternal()
                 }
             }
         }
     }
 
     private func stopRetryTimer() {
+        stopRetryTimerInternal()
+    }
+
+    private func stopRetryTimerInternal() {
         retryTimer?.invalidate()
         retryTimer = nil
+    }
+
+    fileprivate func enterRetryModeAfterTapFailure() {
+        tearDownEventTap(stopRetryTimer: false)
+        startRetryTimer()
     }
 
     // MARK: - Event Handling
@@ -392,8 +438,7 @@ private func hotkeyCallback(
                 }
             } else {
                 hotkeyLog.warning("Event tap disabled repeatedly (\(manager.tapReEnableCount) times in 10s), backing off. Will retry via timer.")
-                manager.isListening = false
-                manager.startRetryTimer()
+                manager.enterRetryModeAfterTapFailure()
             }
         }
         return Unmanaged.passUnretained(event)
