@@ -37,7 +37,7 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
         case .runtimeDirectory:
             return "Superkeet needs a writable runtime directory for its local socket and PID file."
         case .accessibility:
-            return "Accessibility is only needed for optional global shortcuts and auto-paste."
+            return "Accessibility enables global shortcuts and automatic paste."
         }
     }
 }
@@ -75,8 +75,16 @@ struct AppReadinessReport {
         !hasDaemonBlockingIssue && !hasRecordingBlockingIssue
     }
 
-    func passesSetupSmokeTest(daemonStarted: Bool) -> Bool {
-        daemonStarted && isReadyForBasicRecording
+    func hasConfiguredOutputBlockingIssue(autoPasteEnabled: Bool) -> Bool {
+        autoPasteEnabled && issues.contains(.accessibility)
+    }
+
+    func isReadyForSelectedConfiguration(autoPasteEnabled: Bool) -> Bool {
+        isReadyForBasicRecording && !hasConfiguredOutputBlockingIssue(autoPasteEnabled: autoPasteEnabled)
+    }
+
+    func passesSetupSmokeTest(daemonStarted: Bool, autoPasteEnabled: Bool = false) -> Bool {
+        daemonStarted && isReadyForSelectedConfiguration(autoPasteEnabled: autoPasteEnabled)
     }
 
     var statusText: String {

@@ -48,23 +48,38 @@ final class PasteService {
     // MARK: - Clipboard Snapshot & Restore
 
     /// Save all current clipboard contents so they can be restored after a paste operation.
-    private func snapshotClipboard() -> [(NSPasteboard.PasteboardType, Data)] {
+    private func snapshotClipboard() -> [[NSPasteboard.PasteboardType: Data]] {
         let pb = NSPasteboard.general
-        var items: [(NSPasteboard.PasteboardType, Data)] = []
-        for type in pb.types ?? [] {
-            if let data = pb.data(forType: type) {
-                items.append((type, data))
+        return (pb.pasteboardItems ?? []).map { item in
+            var snapshot: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    snapshot[type] = data
+                }
             }
+            return snapshot
         }
-        return items
     }
 
     /// Restore previously saved clipboard contents.
-    private func restoreClipboard(_ items: [(NSPasteboard.PasteboardType, Data)]) {
+    private func restoreClipboard(_ items: [[NSPasteboard.PasteboardType: Data]]) {
         let pb = NSPasteboard.general
         pb.clearContents()
-        for (type, data) in items {
-            pb.setData(data, forType: type)
+
+        guard !items.isEmpty else { return }
+
+        let restoredItems = items.compactMap { snapshot -> NSPasteboardItem? in
+            let item = NSPasteboardItem()
+            for (type, data) in snapshot {
+                guard item.setData(data, forType: type) else {
+                    return nil
+                }
+            }
+            return item
+        }
+
+        if !restoredItems.isEmpty {
+            pb.writeObjects(restoredItems)
         }
     }
 

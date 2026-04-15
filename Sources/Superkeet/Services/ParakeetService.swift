@@ -227,7 +227,10 @@ final class ParakeetService: ObservableObject {
             self.settings.isDaemonRunning = true
             self.startupStatusDetail = "Ready"
             self.settings.runtimeIssue = nil
-            self.settings.hasVerifiedSetup = readiness.passesSetupSmokeTest(daemonStarted: true)
+            self.settings.hasVerifiedSetup = readiness.passesSetupSmokeTest(
+                daemonStarted: true,
+                autoPasteEnabled: self.settings.autoPasteEnabled
+            )
         }
         autoRestartPolicy.reset()
     }

@@ -93,7 +93,7 @@ struct HomeTabView: View {
 
                     SetupRow(
                         title: "Accessibility access",
-                        detail: "Optional. Needed for global shortcuts and automatic paste.",
+                        detail: accessibilityDetail,
                         isComplete: !readiness.issues.contains(.accessibility),
                         buttonTitle: "Open Settings"
                     ) {
@@ -247,13 +247,19 @@ struct HomeTabView: View {
             if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
                 return issue
             }
-            if readiness.isReadyForBasicRecording {
+            if readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled) {
                 return "Setup is close, but Superkeet still needs one successful startup smoke test before it is marked complete."
+            }
+            if configuredOutputBlocked {
+                return "Recording works, but setup stays unverified until Accessibility is granted because \(selectedOutputModeName) is selected."
             }
             return "Onboarding is skippable, but setup stays unverified until microphone, input, runtime, and engine checks pass together."
         }
         if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
             return issue
+        }
+        if configuredOutputBlocked {
+            return "Recording is ready, but \(selectedOutputModeName) needs Accessibility access before it can work reliably."
         }
         if readiness.isReadyForBasicRecording {
             return readiness.issues.contains(.accessibility)
@@ -267,14 +273,38 @@ struct HomeTabView: View {
     }
 
     private var statusTitle: String {
-        settings.hasVerifiedSetup ? readiness.statusText : "Setup still needs verification"
+        if !settings.hasVerifiedSetup {
+            return "Setup still needs verification"
+        }
+        if configuredOutputBlocked {
+            return "Output setup required"
+        }
+        return readiness.statusText
     }
 
     private var statusColor: Color {
         if !settings.hasVerifiedSetup {
-            return readiness.isReadyForBasicRecording ? .orange : .red
+            return readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled) ? .orange : .red
+        }
+        if configuredOutputBlocked {
+            return .orange
         }
         return readiness.isReadyForDaemon ? .green : .orange
+    }
+
+    private var configuredOutputBlocked: Bool {
+        readiness.hasConfiguredOutputBlockingIssue(autoPasteEnabled: settings.autoPasteEnabled)
+    }
+
+    private var selectedOutputModeName: String {
+        settings.autoPasteEnabled ? "Paste Automatically" : "Copy to Clipboard"
+    }
+
+    private var accessibilityDetail: String {
+        if settings.autoPasteEnabled {
+            return "Required for \(selectedOutputModeName) and still used for global shortcuts."
+        }
+        return "Optional for the current clipboard-first flow. Grant it to enable global shortcuts and automatic paste."
     }
 
     private var microphoneDetail: String {

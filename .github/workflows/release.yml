@@ -117,6 +117,18 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate release signing prerequisites
+        run: |
+          if [ "${{ steps.signing.outputs.has_certificate }}" != 'true' ]; then
+            echo "Tagged releases require APPLE_SIGNING_IDENTITY, APPLE_CERTIFICATE_P12, APPLE_CERTIFICATE_PASSWORD, and APPLE_KEYCHAIN_PASSWORD secrets." >&2
+            exit 1
+          fi
+
+          if [ "${{ steps.signing.outputs.has_notary }}" != 'true' ]; then
+            echo "Tagged releases require APPLE_NOTARY_APPLE_ID, APPLE_NOTARY_TEAM_ID, and APPLE_NOTARY_PASSWORD secrets." >&2
+            exit 1
+          fi
+
       - name: Prepare signing keychain
         if: steps.signing.outputs.has_certificate == 'true'
         env:

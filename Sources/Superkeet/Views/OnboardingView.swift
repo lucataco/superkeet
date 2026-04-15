@@ -26,6 +26,11 @@ struct OnboardingView: View {
 
     private let totalSteps = 4
 
+    private enum OnboardingOutputMode {
+        case clipboard
+        case autoPaste
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Step content
@@ -68,7 +73,7 @@ struct OnboardingView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
-                    Button("Start Using Superkeet") {
+                    Button(completionButtonTitle) {
                         onComplete()
                     }
                     .buttonStyle(.borderedProminent)
@@ -367,12 +372,29 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("You're All Set!")
+                    Text(readyStepTitle)
                         .font(.title)
                         .fontWeight(.bold)
-                    Text("Here are your default keyboard shortcuts. You can change them anytime in Settings.")
+                    Text(readyStepSubtitle)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                }
+
+                if !isReadyForSelectedConfiguration {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(blockingIssueTitle, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.orange)
+
+                        ForEach(blockingIssueDetails, id: \.self) { detail in
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.08))
+                    .cornerRadius(10)
                 }
 
                 VStack(spacing: 12) {
@@ -393,6 +415,46 @@ struct OnboardingView: View {
                         description: "Press Escape while recording to cancel",
                         displayName: "Esc"
                     )
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("After each transcription")
+                        .font(.headline)
+
+                    Text("Choose the default output flow for first run. You can still fine-tune clipboard, auto-paste, and history later in Settings.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 12) {
+                        OnboardingOutputModeOption(
+                            title: "Copy to Clipboard",
+                            description: "Recommended. Safer default that lets you choose where to paste.",
+                            icon: "clipboard",
+                            isSelected: selectedOutputMode == .clipboard,
+                            action: { selectOutputMode(.clipboard) }
+                        )
+
+                        OnboardingOutputModeOption(
+                            title: "Paste Automatically",
+                            description: "Fastest flow. Pastes into the last active app and keeps the transcript on your clipboard.",
+                            icon: "doc.on.clipboard",
+                            isSelected: selectedOutputMode == .autoPaste,
+                            action: { selectOutputMode(.autoPaste) }
+                        )
+                    }
+
+                    if selectedOutputMode == .autoPaste && !accessibilityGranted {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.orange)
+                            Text("Auto-paste is selected, but Accessibility access is still off. Superkeet will still copy transcripts to the clipboard, but automatic paste will not work until you grant access.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.06))
+                        .cornerRadius(10)
+                    }
                 }
 
                 // Engine warning (only shown if engine binary is missing)
@@ -432,6 +494,16 @@ struct OnboardingView: View {
                         title: "Speech Engine",
                         granted: readiness.diagnostics.engineBinaryExists
                     )
+                    permissionSummaryRow(
+                        icon: "mic.badge.plus",
+                        title: "Input Device",
+                        granted: inputDeviceReady
+                    )
+                    permissionSummaryRow(
+                        icon: "folder.badge.gearshape",
+                        title: "Runtime Directory",
+                        granted: readiness.diagnostics.runtimeDirectoryWritable
+                    )
                 }
                 .padding(14)
                 .background(Color.primary.opacity(0.03))
@@ -440,7 +512,7 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Text("Click \"Start Using Superkeet\" to launch the speech engine and begin.")
+            Text(readyStepFooter)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
@@ -485,6 +557,69 @@ struct OnboardingView: View {
                 .foregroundColor(granted ? .green : .orange)
                 .font(.system(size: 14))
         }
+    }
+
+    private var completionButtonTitle: String {
+        isReadyForSelectedConfiguration ? "Start Using Superkeet" : "Continue to Superkeet"
+    }
+
+    private var selectedOutputMode: OnboardingOutputMode {
+        settings.autoPasteEnabled ? .autoPaste : .clipboard
+    }
+
+    private var isReadyForSelectedConfiguration: Bool {
+        readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled)
+    }
+
+    private var readyStepTitle: String {
+        isReadyForSelectedConfiguration ? "You're All Set!" : "Setup Still Needs Attention"
+    }
+
+    private var readyStepSubtitle: String {
+        if isReadyForSelectedConfiguration {
+            return "Here are your default keyboard shortcuts. You can change them anytime in Settings."
+        }
+        if selectedOutputMode == .autoPaste && readiness.issues.contains(.accessibility) {
+            return "Recording is nearly ready, but the selected auto-paste flow still needs Accessibility access before Superkeet can finish setup for your chosen output mode."
+        }
+        return "Superkeet can finish onboarding now, but recording will stay unavailable until the blocking setup items below are resolved in Settings."
+    }
+
+    private var readyStepFooter: String {
+        if isReadyForSelectedConfiguration {
+            return "Click \"Start Using Superkeet\" to launch the speech engine and begin."
+        }
+        if selectedOutputMode == .autoPaste && readiness.issues.contains(.accessibility) {
+            return "Continue to Superkeet to access the menu bar app. Setup will remain unverified until Accessibility is granted for automatic paste."
+        }
+        return "Continue to Superkeet to access the menu bar app. Setup will remain unverified until recording is ready."
+    }
+
+    private var inputDeviceReady: Bool {
+        readiness.diagnostics.hasInputDevice && readiness.diagnostics.configuredInputDeviceFound
+    }
+
+    private var blockingIssueDetails: [String] {
+        readiness.issues
+            .filter { issue in
+                if issue == .accessibility {
+                    return selectedOutputMode == .autoPaste
+                }
+                return true
+            }
+            .map(\.detail)
+    }
+
+    private var blockingIssueTitle: String {
+        if selectedOutputMode == .autoPaste && readiness.issues == [.accessibility] {
+            return "Automatic paste is still blocked"
+        }
+        return "Setup still needs attention"
+    }
+
+    private func selectOutputMode(_ mode: OnboardingOutputMode) {
+        settings.clipboardCopyEnabled = true
+        settings.autoPasteEnabled = mode == .autoPaste
     }
 
     // MARK: - Actions
@@ -559,5 +694,48 @@ struct OnboardingView: View {
         if !hotkeyManager.isListening {
             hotkeyManager.startRetryTimer()
         }
+    }
+}
+
+private struct OnboardingOutputModeOption: View {
+    let title: String
+    let description: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.system(size: 18))
+                        .foregroundColor(isSelected ? .accentColor : .secondary)
+
+                    Spacer()
+
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.5))
+                }
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.primary)
+
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
+            .padding(14)
+            .background(isSelected ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.03))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08), lineWidth: 1.5)
+            )
+            .cornerRadius(10)
+        }
+        .buttonStyle(.plain)
     }
 }

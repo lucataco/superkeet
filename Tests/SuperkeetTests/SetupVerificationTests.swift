@@ -17,6 +17,13 @@ final class SetupVerificationTests: XCTestCase {
         XCTAssertFalse(report.passesSetupSmokeTest(daemonStarted: true))
     }
 
+    func testSetupSmokeTestFailsWhenAutoPasteNeedsAccessibility() {
+        let report = makeReport(issues: [.accessibility])
+
+        XCTAssertTrue(report.passesSetupSmokeTest(daemonStarted: true))
+        XCTAssertFalse(report.passesSetupSmokeTest(daemonStarted: true, autoPasteEnabled: true))
+    }
+
     private func makeReport(issues: [AppReadinessIssue]) -> AppReadinessReport {
         AppReadinessReport(
             issues: issues,
