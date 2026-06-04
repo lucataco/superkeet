@@ -89,7 +89,7 @@ final class HotkeyManager: ObservableObject {
         let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: eventMask,
             callback: hotkeyCallback,
             userInfo: { [self] in
@@ -404,8 +404,19 @@ private func hotkeyCallback(
     }
 
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-    _ = manager.handleEvent(event)
+    let handled = manager.handleEvent(event)
+    if handled {
+        return nil
+    }
 
-    // Always pass the event through (listenOnly tap)
     return Unmanaged.passUnretained(event)
+}
+
+func hotkeyAssignmentsConflict(
+    firstKeyCode: Int,
+    firstModifiers: Int,
+    secondKeyCode: Int,
+    secondModifiers: Int
+) -> Bool {
+    firstKeyCode == secondKeyCode && firstModifiers == secondModifiers
 }

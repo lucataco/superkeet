@@ -107,18 +107,19 @@ final class HistoryStore: ObservableObject {
     private func saveRecords() {
         // Debounce: coalesce rapid saves (e.g., multiple transcriptions in quick succession)
         saveDebounceTask?.cancel()
+        let snapshot = records
         let task = DispatchWorkItem { [weak self] in
-            self?.performSave()
+            self?.performSave(records: snapshot)
         }
         saveDebounceTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
     }
 
-    private func performSave() {
+    private func performSave(records snapshot: [TranscriptionRecord]) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             do {
-                let data = try self.encoder.encode(self.records)
+                let data = try self.encoder.encode(snapshot)
                 try data.write(to: self.fileURL, options: .atomic)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: self.fileURL.path)
             } catch {

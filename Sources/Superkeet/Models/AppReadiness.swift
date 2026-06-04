@@ -103,7 +103,7 @@ enum AppReadiness {
         let diagnostics = collectDiagnostics(settings: settings)
         var issues: [AppReadinessIssue] = []
 
-        if diagnostics.microphoneStatus == .denied || diagnostics.microphoneStatus == .restricted {
+        if diagnostics.microphoneStatus != .authorized {
             issues.append(.microphone)
         }
 

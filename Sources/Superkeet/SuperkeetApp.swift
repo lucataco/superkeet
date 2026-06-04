@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.onEscapePressed = { [weak self] in
             DispatchQueue.main.async {
                 appLog.info("Escape callback fired — cancelling recording")
-                self?.menuBarManager.stopRecordingOnly()
+                self?.menuBarManager.cancelRecordingOnly()
             }
         }
     }

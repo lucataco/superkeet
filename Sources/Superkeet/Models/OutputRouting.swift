@@ -4,6 +4,7 @@ struct OutputRoutingDecision: Equatable {
     let shouldCopyToClipboard: Bool
     let shouldAutoPaste: Bool
     let shouldSaveHistory: Bool
+    let shouldKeepClipboardAfterPaste: Bool
 }
 
 enum OutputRouting {
@@ -15,7 +16,8 @@ enum OutputRouting {
         OutputRoutingDecision(
             shouldCopyToClipboard: clipboardCopyEnabled || autoPasteEnabled,
             shouldAutoPaste: autoPasteEnabled,
-            shouldSaveHistory: saveHistoryEnabled
+            shouldSaveHistory: saveHistoryEnabled,
+            shouldKeepClipboardAfterPaste: clipboardCopyEnabled
         )
     }
 }

@@ -92,4 +92,22 @@ final class HotkeyDisplayTests: XCTestCase {
         let result = displayNameForHotkey(keyCode: 63, modifierFlags: 0)
         XCTAssertEqual(result, "fn")
     }
+
+    func testHotkeyAssignmentsConflictWhenKeyAndModifiersMatch() {
+        XCTAssertTrue(hotkeyAssignmentsConflict(
+            firstKeyCode: 49,
+            firstModifiers: Int(CGEventFlags.maskAlternate.rawValue),
+            secondKeyCode: 49,
+            secondModifiers: Int(CGEventFlags.maskAlternate.rawValue)
+        ))
+    }
+
+    func testHotkeyAssignmentsDoNotConflictWhenModifiersDiffer() {
+        XCTAssertFalse(hotkeyAssignmentsConflict(
+            firstKeyCode: 49,
+            firstModifiers: Int(CGEventFlags.maskAlternate.rawValue),
+            secondKeyCode: 49,
+            secondModifiers: Int(CGEventFlags.maskControl.rawValue)
+        ))
+    }
 }

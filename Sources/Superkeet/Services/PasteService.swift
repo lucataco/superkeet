@@ -27,7 +27,7 @@ final class PasteService {
                 self.simulatePaste()
                 // Restore original clipboard after paste completes
                 // (unless user also wants clipboard copy, in which case keep the transcription)
-                if !decision.shouldCopyToClipboard {
+                if !decision.shouldKeepClipboardAfterPaste {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         self.restoreClipboard(savedClipboard)
                     }

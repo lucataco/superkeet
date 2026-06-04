@@ -12,6 +12,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var settingsWindowController: NSWindowController?
     private var historyWindowController: NSWindowController?
     private var onboardingWindowController: NSWindowController?
+    private var recordingRequested: Bool = false
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -112,16 +113,28 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     // MARK: - Actions
 
+    @MainActor
     @objc private func startRecording() {
+        recordingRequested = true
+
         // If daemon was stopped (e.g., idle timeout), restart it first
         if !settings.isDaemonRunning {
             updateMenuBarIcon(recording: false)
             Task {
                 do {
                     try await parakeetService.startDaemon()
-                    await MainActor.run { self.performStartRecording() }
+                    await MainActor.run {
+                        guard self.recordingRequested else { return }
+                        self.performStartRecording()
+                    }
                 } catch {
                     print("[MenuBar] Failed to restart daemon for recording: \(error)")
+                    await MainActor.run {
+                        self.recordingRequested = false
+                        self.updateMenuBarIcon(recording: false)
+                        AudioLevelMonitor.shared.stopMonitoring()
+                        RecordingOverlayWindowController.shared.hide()
+                    }
                 }
             }
             return
@@ -129,6 +142,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         performStartRecording()
     }
 
+    @MainActor
     private func performStartRecording() {
         parakeetService.startRecording()
         updateMenuBarIcon(recording: true)
@@ -140,8 +154,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
+    @MainActor
     @objc private func stopRecording() {
+        recordingRequested = false
         parakeetService.stopRecording()
+        updateMenuBarIcon(recording: false)
+        AudioLevelMonitor.shared.stopMonitoring()
+        RecordingOverlayWindowController.shared.hide()
+    }
+
+    @MainActor
+    @objc private func cancelRecording() {
+        recordingRequested = false
+        parakeetService.cancelRecording()
         updateMenuBarIcon(recording: false)
         AudioLevelMonitor.shared.stopMonitoring()
         RecordingOverlayWindowController.shared.hide()
@@ -295,6 +320,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     /// Called by the hotkey manager to toggle recording
+    @MainActor
     func toggleRecording() {
         if settings.isRecording {
             stopRecording()
@@ -304,14 +330,23 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     /// Called by PTT key press — only starts, never stops
+    @MainActor
     func startRecordingOnly() {
-        guard !settings.isRecording else { return }
+        guard !settings.isRecording && !recordingRequested else { return }
         startRecording()
     }
 
     /// Called by Escape key or PTT key release — only stops, never starts
+    @MainActor
     func stopRecordingOnly() {
-        guard settings.isRecording else { return }
+        guard settings.isRecording || recordingRequested else { return }
         stopRecording()
+    }
+
+    /// Called by Escape key — cancels without asking the daemon to transcribe.
+    @MainActor
+    func cancelRecordingOnly() {
+        guard settings.isRecording || recordingRequested else { return }
+        cancelRecording()
     }
 }

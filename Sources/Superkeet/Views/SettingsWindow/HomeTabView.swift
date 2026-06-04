@@ -13,6 +13,7 @@ struct HomeTabView: View {
     @State private var editingHotkey: EditingHotkey? = nil
     @State private var readiness = AppReadiness.current()
     @State private var loginItemError: String?
+    @State private var shortcutError: String?
 
     enum EditingHotkey {
         case toggle
@@ -130,6 +131,12 @@ struct HomeTabView: View {
                         .font(.title3)
                         .fontWeight(.semibold)
 
+                    if let shortcutError {
+                        Text(shortcutError)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+
                     HotkeyRow(
                         title: "Toggle Recording",
                         description: "Press once to start, press again to stop",
@@ -143,10 +150,7 @@ struct HomeTabView: View {
                     if editingHotkey == .toggle {
                         InteractiveHotkeyRecorder(
                             onRecord: { keyCode, modifiers, name in
-                                settings.toggleHotkeyKeyCode = keyCode
-                                settings.toggleHotkeyModifierFlags = modifiers
-                                settings.toggleHotkeyDisplayName = name
-                                editingHotkey = nil
+                                assignToggleHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
                             },
                             onCancel: { editingHotkey = nil }
                         )
@@ -165,10 +169,7 @@ struct HomeTabView: View {
                     if editingHotkey == .pushToTalk {
                         InteractiveHotkeyRecorder(
                             onRecord: { keyCode, modifiers, name in
-                                settings.pttHotkeyKeyCode = keyCode
-                                settings.pttHotkeyModifierFlags = modifiers
-                                settings.pttHotkeyDisplayName = name
-                                editingHotkey = nil
+                                assignPushToTalkHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
                             },
                             onCancel: { editingHotkey = nil }
                         )
@@ -342,6 +343,64 @@ struct HomeTabView: View {
     private func refreshReadiness() {
         readiness = AppReadiness.current()
         parakeetService.lastDiagnosticsSummary = parakeetService.lastDiagnosticsSummary ?? diagnosticsSummary
+    }
+
+    private func assignToggleHotkey(keyCode: Int, modifiers: Int, name: String) {
+        guard validateShortcutDoesNotMatchPushToTalk(keyCode: keyCode, modifiers: modifiers) else { return }
+
+        settings.toggleHotkeyKeyCode = keyCode
+        settings.toggleHotkeyModifierFlags = modifiers
+        settings.toggleHotkeyDisplayName = name
+        shortcutError = nil
+        editingHotkey = nil
+    }
+
+    private func assignPushToTalkHotkey(keyCode: Int, modifiers: Int, name: String) {
+        guard validateShortcutDoesNotMatchToggle(keyCode: keyCode, modifiers: modifiers) else { return }
+
+        settings.pttHotkeyKeyCode = keyCode
+        settings.pttHotkeyModifierFlags = modifiers
+        settings.pttHotkeyDisplayName = name
+        shortcutError = nil
+        editingHotkey = nil
+    }
+
+    private func validateShortcutDoesNotMatchPushToTalk(keyCode: Int, modifiers: Int) -> Bool {
+        validateShortcut(
+            keyCode: keyCode,
+            modifiers: modifiers,
+            againstKeyCode: settings.pttHotkeyKeyCode,
+            againstModifiers: settings.pttHotkeyModifierFlags
+        )
+    }
+
+    private func validateShortcutDoesNotMatchToggle(keyCode: Int, modifiers: Int) -> Bool {
+        validateShortcut(
+            keyCode: keyCode,
+            modifiers: modifiers,
+            againstKeyCode: settings.toggleHotkeyKeyCode,
+            againstModifiers: settings.toggleHotkeyModifierFlags
+        )
+    }
+
+    private func validateShortcut(
+        keyCode: Int,
+        modifiers: Int,
+        againstKeyCode: Int,
+        againstModifiers: Int
+    ) -> Bool {
+        guard !hotkeyAssignmentsConflict(
+            firstKeyCode: keyCode,
+            firstModifiers: modifiers,
+            secondKeyCode: againstKeyCode,
+            secondModifiers: againstModifiers
+        ) else {
+            shortcutError = "Toggle Recording and Push to Talk cannot use the same shortcut."
+            editingHotkey = nil
+            return false
+        }
+
+        return true
     }
 
     private func toggleLaunchAtLogin() {

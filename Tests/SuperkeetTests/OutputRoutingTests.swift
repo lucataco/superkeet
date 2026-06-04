@@ -15,6 +15,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertTrue(decision.shouldCopyToClipboard)
         XCTAssertTrue(decision.shouldAutoPaste)
         XCTAssertTrue(decision.shouldSaveHistory)
+        XCTAssertFalse(decision.shouldKeepClipboardAfterPaste)
     }
 
     func testClipboardOnlyFlowStaysSimple() {
@@ -27,6 +28,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertTrue(decision.shouldCopyToClipboard)
         XCTAssertFalse(decision.shouldAutoPaste)
         XCTAssertFalse(decision.shouldSaveHistory)
+        XCTAssertTrue(decision.shouldKeepClipboardAfterPaste)
     }
 
     func testNoOutputDestinationsMeansNoClipboardOrPaste() {
@@ -39,6 +41,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertFalse(decision.shouldCopyToClipboard)
         XCTAssertFalse(decision.shouldAutoPaste)
         XCTAssertTrue(decision.shouldSaveHistory)
+        XCTAssertFalse(decision.shouldKeepClipboardAfterPaste)
     }
 
     // MARK: - Remaining combinations
@@ -53,6 +56,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertFalse(decision.shouldCopyToClipboard)
         XCTAssertFalse(decision.shouldAutoPaste)
         XCTAssertFalse(decision.shouldSaveHistory)
+        XCTAssertFalse(decision.shouldKeepClipboardAfterPaste)
     }
 
     func testAllEnabled() {
@@ -65,6 +69,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertTrue(decision.shouldCopyToClipboard)
         XCTAssertTrue(decision.shouldAutoPaste)
         XCTAssertTrue(decision.shouldSaveHistory)
+        XCTAssertTrue(decision.shouldKeepClipboardAfterPaste)
     }
 
     func testAutoPasteWithClipboardNoHistory() {
@@ -77,6 +82,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertTrue(decision.shouldCopyToClipboard)
         XCTAssertTrue(decision.shouldAutoPaste)
         XCTAssertFalse(decision.shouldSaveHistory)
+        XCTAssertTrue(decision.shouldKeepClipboardAfterPaste)
     }
 
     func testClipboardWithHistory() {
@@ -89,6 +95,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertTrue(decision.shouldCopyToClipboard)
         XCTAssertFalse(decision.shouldAutoPaste)
         XCTAssertTrue(decision.shouldSaveHistory)
+        XCTAssertTrue(decision.shouldKeepClipboardAfterPaste)
     }
 
     func testAutoPasteForcesClipboardEvenWithoutHistory() {
@@ -101,6 +108,7 @@ final class OutputRoutingTests: XCTestCase {
         XCTAssertTrue(decision.shouldCopyToClipboard, "autoPaste must force clipboard copy")
         XCTAssertTrue(decision.shouldAutoPaste)
         XCTAssertFalse(decision.shouldSaveHistory)
+        XCTAssertFalse(decision.shouldKeepClipboardAfterPaste)
     }
 
     // MARK: - Invariant: autoPaste always implies clipboard
@@ -118,6 +126,7 @@ final class OutputRoutingTests: XCTestCase {
                     decision.shouldCopyToClipboard,
                     "autoPaste=true must force clipboard (clipboard=\(clipboard), history=\(history))"
                 )
+                XCTAssertEqual(decision.shouldKeepClipboardAfterPaste, clipboard)
             }
         }
     }

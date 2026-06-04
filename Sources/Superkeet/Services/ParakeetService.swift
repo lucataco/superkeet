@@ -50,21 +50,29 @@ final class ParakeetService: ObservableObject {
             await pendingStop.value
         }
 
-        if let pendingStart = lifecycleLock.withLock({ startTask }) {
-            return try await pendingStart.value
+        let (task, createdTask) = lifecycleLock.withLock { () -> (Task<Void, Error>?, Bool) in
+            if let startTask {
+                return (startTask, false)
+            }
+
+            if daemonProcess != nil {
+                return (nil, false)
+            }
+
+            let task = Task { try await self.performStartDaemon() }
+            startTask = task
+            return (task, true)
         }
-        if lifecycleLock.withLock({ daemonProcess != nil }) {
+
+        guard let task else {
             return
         }
 
-        let task = Task { try await self.performStartDaemon() }
-        lifecycleLock.withLock {
-            startTask = task
-        }
-
         defer {
-            lifecycleLock.withLock {
-                startTask = nil
+            if createdTask {
+                lifecycleLock.withLock {
+                    startTask = nil
+                }
             }
         }
 
@@ -116,10 +124,6 @@ final class ParakeetService: ObservableObject {
             "--socket", settings.socketPath,
             "--pid-file", settings.pidFilePath,
         ]
-
-        if settings.clipboardCopyEnabled {
-            args.append("--clipboard")
-        }
 
         if !settings.audioInputDevice.isEmpty {
             args.append(contentsOf: ["--device", settings.audioInputDevice])
@@ -207,19 +211,19 @@ final class ParakeetService: ObservableObject {
             self.daemonProcess = process
         }
 
-        try await waitForDaemonReadiness(process: process)
+        do {
+            try await waitForDaemonReadiness(process: process)
 
-        guard FileManager.default.fileExists(atPath: settings.socketPath) else {
-            await terminateRunningProcess(process)
-            let message = "Parakeet launched but never created its socket at \(settings.socketPath)."
-            await publishStartupFailure(message, diagnostics: recentStderrExcerpt())
-            await MainActor.run {
-                self.daemonState = .stopped
-                self.settings.isDaemonRunning = false
+            guard FileManager.default.fileExists(atPath: settings.socketPath) else {
+                let message = "Parakeet launched but never created its socket at \(settings.socketPath)."
+                await publishStartupFailure(message, diagnostics: recentStderrExcerpt())
+                throw NSError(domain: "ParakeetService", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: lastUserFacingError ?? message
+                ])
             }
-            throw NSError(domain: "ParakeetService", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: lastUserFacingError ?? message
-            ])
+        } catch {
+            await cleanupFailedStartup(process)
+            throw error
         }
 
         await MainActor.run {
@@ -272,12 +276,13 @@ final class ParakeetService: ObservableObject {
         autoRestartTask?.cancel()
         autoRestartTask = nil
 
-        daemonState = .stopping
-
-        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
-        stderrPipe?.fileHandleForReading.readabilityHandler = nil
-        stdoutPipe = nil
-        stderrPipe = nil
+        await MainActor.run {
+            self.daemonState = .stopping
+            self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+            self.stderrPipe?.fileHandleForReading.readabilityHandler = nil
+            self.stdoutPipe = nil
+            self.stderrPipe = nil
+        }
 
         let process = lifecycleLock.withLock { daemonProcess }
         if let process, process.isRunning {
@@ -289,10 +294,33 @@ final class ParakeetService: ObservableObject {
         lifecycleLock.withLock {
             daemonProcess = nil
         }
-        daemonState = .stopped
-        settings.isDaemonRunning = false
-        settings.isRecording = false
-        startupStatusDetail = "Stopped"
+        await MainActor.run {
+            self.daemonState = .stopped
+            self.settings.isDaemonRunning = false
+            self.settings.isRecording = false
+            self.startupStatusDetail = "Stopped"
+        }
+    }
+
+    private func cleanupFailedStartup(_ process: Process) async {
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        stdoutPipe = nil
+        stderrPipe = nil
+
+        await MainActor.run {
+            self.daemonState = .stopped
+            self.settings.isDaemonRunning = false
+            self.settings.isRecording = false
+        }
+
+        await terminateRunningProcess(process)
+
+        lifecycleLock.withLock {
+            if daemonProcess === process {
+                daemonProcess = nil
+            }
+        }
     }
 
     func restartDaemon() async throws {
@@ -327,6 +355,7 @@ final class ParakeetService: ObservableObject {
 
     // MARK: - Recording Control
 
+    @MainActor
     func startRecording() {
         // Cancel any pending idle shutdown since the user is active
         idleShutdownTask?.cancel()
@@ -344,24 +373,57 @@ final class ParakeetService: ObservableObject {
 
         sendSocketCommand("start") { [weak self] response in
             DispatchQueue.main.async {
-                if response.contains("recording") || response.contains("ok") {
-                    self?.daemonState = .recording
-                    self?.settings.isRecording = true
+                guard let envelope = self?.decodeSocketResponse(response),
+                      envelope.status == "ok",
+                      envelope.state == "recording" else {
+                    return
+                }
+
+                self?.daemonState = .recording
+                self?.settings.isRecording = true
+            }
+        }
+    }
+
+    @MainActor
+    func stopRecording() {
+        sendSocketCommand("stop") { [weak self] response in
+            DispatchQueue.main.async {
+                guard let envelope = self?.decodeSocketResponse(response),
+                      envelope.status == "ok" else {
+                    return
+                }
+
+                if envelope.state == "stopping" || envelope.state == "idle" {
+                    self?.daemonState = .idle
+                    self?.settings.isRecording = false
+                    self?.resetIdleTimer()
                 }
             }
         }
     }
 
-    func stopRecording() {
-        sendSocketCommand("stop") { [weak self] response in
+    @MainActor
+    func cancelRecording() {
+        sendSocketCommand("cancel") { [weak self] response in
             DispatchQueue.main.async {
-                self?.daemonState = .idle
-                self?.settings.isRecording = false
-                self?.resetIdleTimer()
+                guard let envelope = self?.decodeSocketResponse(response),
+                      envelope.status == "ok" else {
+                    return
+                }
+
+                if envelope.state == "idle" || envelope.state == "cancelling" {
+                    self?.daemonState = .idle
+                    self?.settings.isRecording = false
+                    self?.recordingStartTime = nil
+                    self?.activeAppAtRecordingStart = nil
+                    self?.resetIdleTimer()
+                }
             }
         }
     }
 
+    @MainActor
     func toggleRecording() {
         if settings.isRecording {
             stopRecording()
@@ -374,6 +436,7 @@ final class ParakeetService: ObservableObject {
         sendSocketCommand("status", completion: completion)
     }
 
+    @MainActor
     func refreshDiagnostics() {
         let readiness = AppReadiness.current(settings: settings)
         lastDiagnosticsSummary = diagnosticSummary(readiness: readiness)
@@ -383,6 +446,7 @@ final class ParakeetService: ObservableObject {
 
     /// Schedule a daemon shutdown after the configured idle timeout.
     /// Called after each recording stops. Cancelled when a new recording starts.
+    @MainActor
     private func resetIdleTimer() {
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
@@ -405,79 +469,131 @@ final class ParakeetService: ObservableObject {
         let command: String
     }
 
+    private struct SocketResponseEnvelope: Decodable {
+        let status: String
+        let state: String?
+    }
+
+    private func decodeSocketResponse(_ response: String) -> SocketResponseEnvelope? {
+        guard let data = response.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(SocketResponseEnvelope.self, from: data)
+    }
+
     private func sendSocketCommand(_ command: String, completion: ((String) -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let socketPath = self.settings.socketPath
+            let timeout = timeval(tv_sec: 5, tv_usec: 0)
+            let response = self.sendSocketCommandSynchronously(
+                command,
+                timeout: timeout,
+                publishConnectionErrors: true
+            )
+            completion?(response ?? "")
+        }
+    }
 
-            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-            guard fd >= 0 else {
-                print("[ParakeetService] Failed to create socket")
-                completion?("")
-                return
+    private func sendSocketCommandSynchronously(
+        _ command: String,
+        timeout requestedTimeout: timeval,
+        publishConnectionErrors: Bool
+    ) -> String? {
+        let socketPath = settings.socketPath
+
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            print("[ParakeetService] Failed to create socket")
+            return nil
+        }
+        defer { close(fd) }
+
+        #if os(macOS)
+        var noSigPipe: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+        #endif
+
+        var timeout = requestedTimeout
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        guard let addr = unixSocketAddress(for: socketPath) else {
+            let message = "Superkeet's runtime socket path is too long for macOS Unix sockets. Move the app/runtime directory to a shorter path."
+            print("[ParakeetService] \(message) Path: \(socketPath)")
+            if publishConnectionErrors {
+                publishRuntimeIssue(message)
             }
-            defer { close(fd) }
+            return nil
+        }
 
-            // Set a 5-second receive timeout to prevent blocking a GCD thread forever
-            var timeout = timeval(tv_sec: 5, tv_usec: 0)
-            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
+        var mutableAddr = addr
+        let connectResult = withUnsafePointer(to: &mutableAddr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                connect(fd, sockPtr, addrLen)
+            }
+        }
 
-            var addr = sockaddr_un()
-            addr.sun_family = sa_family_t(AF_UNIX)
-            let pathBytes = socketPath.utf8CString
-            withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-                ptr.withMemoryRebound(to: Int8.self, capacity: 104) { dst in
-                    pathBytes.withUnsafeBufferPointer { src in
-                        let count = min(src.count, 104)
-                        for i in 0..<count {
-                            dst[i] = src[i]
-                        }
+        guard connectResult == 0 else {
+            print("[ParakeetService] Failed to connect to socket at \(socketPath): \(errno)")
+            if publishConnectionErrors {
+                publishRuntimeIssue("Superkeet could not reach the speech engine. Try relaunching the app.")
+            }
+            return nil
+        }
+
+        guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command)),
+              var json = String(data: jsonData, encoding: .utf8) else {
+            print("[ParakeetService] Failed to encode socket command")
+            return nil
+        }
+        json.append("\n")
+
+        let sentAllBytes = json.withCString { cstr in
+            let byteCount = strlen(cstr)
+            return send(fd, cstr, byteCount, 0) == byteCount
+        }
+
+        guard sentAllBytes else {
+            print("[ParakeetService] Failed to send socket command '\(command)' to daemon")
+            return nil
+        }
+
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let bytesRead = recv(fd, &buffer, buffer.count - 1, 0)
+        if bytesRead > 0 {
+            let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
+            print("[ParakeetService] Response: \(response)")
+            return response
+        }
+
+        print("[ParakeetService] recv returned \(bytesRead) (timeout or error)")
+        return nil
+    }
+
+    private func unixSocketAddress(for socketPath: String) -> sockaddr_un? {
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+
+        let pathBytes = socketPath.utf8CString
+        let maxSocketPathBytes = MemoryLayout.size(ofValue: addr.sun_path)
+        guard pathBytes.count <= maxSocketPathBytes else { return nil }
+
+        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: Int8.self, capacity: maxSocketPathBytes) { dst in
+                pathBytes.withUnsafeBufferPointer { src in
+                    for i in 0..<src.count {
+                        dst[i] = src[i]
                     }
                 }
             }
+        }
 
-            let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
-            let connectResult = withUnsafePointer(to: &addr) { ptr in
-                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                    connect(fd, sockPtr, addrLen)
-                }
-            }
+        return addr
+    }
 
-            guard connectResult == 0 else {
-                print("[ParakeetService] Failed to connect to socket at \(socketPath): \(errno)")
-                DispatchQueue.main.async {
-                    self.lastUserFacingError = "Superkeet could not reach the speech engine. Try relaunching the app."
-                    self.settings.runtimeIssue = self.lastUserFacingError
-                    self.daemonState = .stopped
-                    self.settings.isDaemonRunning = false
-                }
-                completion?("")
-                return
-            }
-
-            // Send the command as JSON
-            guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command)),
-                  var json = String(data: jsonData, encoding: .utf8) else {
-                print("[ParakeetService] Failed to encode socket command")
-                completion?("")
-                return
-            }
-            json.append("\n")
-            json.withCString { cstr in
-                _ = send(fd, cstr, strlen(cstr), 0)
-            }
-
-            // Read response
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            let bytesRead = recv(fd, &buffer, buffer.count - 1, 0)
-            if bytesRead > 0 {
-                let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
-                print("[ParakeetService] Response: \(response)")
-                completion?(response)
-            } else {
-                print("[ParakeetService] recv returned \(bytesRead) (timeout or error)")
-                completion?("")
-            }
+    private func publishRuntimeIssue(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.lastUserFacingError = message
+            self?.settings.runtimeIssue = message
         }
     }
 
@@ -539,7 +655,7 @@ final class ParakeetService: ObservableObject {
             HistoryStore.shared.addRecord(record)
         }
 
-        if outputDecision.shouldCopyToClipboard || outputDecision.shouldAutoPaste {
+        if outputDecision.shouldCopyToClipboard {
             PasteService.shared.deliverText(trimmed)
         }
 
@@ -616,24 +732,13 @@ final class ParakeetService: ObservableObject {
     }
 
     private func probeSocketReadiness() async throws -> Bool {
-        await withTaskGroup(of: Bool.self) { group in
-            group.addTask { [weak self] in
-                await withCheckedContinuation { continuation in
-                    self?.sendSocketCommand("status") { response in
-                        continuation.resume(returning: response.contains("\"status\":\"ok\""))
-                    }
-                }
-            }
-
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                return false
-            }
-
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
-        }
+        let timeout = timeval(tv_sec: 0, tv_usec: 300_000)
+        let response = sendSocketCommandSynchronously(
+            "status",
+            timeout: timeout,
+            publishConnectionErrors: false
+        )
+        return response?.contains("\"status\":\"ok\"") == true
     }
 
     @MainActor
@@ -703,25 +808,13 @@ final class ParakeetService: ObservableObject {
     }
 
     private func waitForProcessToExit(_ process: Process, timeoutNanoseconds: UInt64) async -> Bool {
-        if !process.isRunning {
-            return true
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
+
+        while process.isRunning && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
         }
 
-        return await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                process.waitUntilExit()
-                return true
-            }
-
-            group.addTask {
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                return false
-            }
-
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
-        }
+        return !process.isRunning
     }
 
     @MainActor
