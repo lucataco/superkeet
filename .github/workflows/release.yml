@@ -20,7 +20,7 @@ permissions:
 
 env:
   PARAKEET_REPOSITORY: lucataco/parakeet-cli
-  PARAKEET_REF: v0.1.0
+  PARAKEET_REF: v0.1.4
   HOMEBREW_TAP_REPOSITORY: lucataco/homebrew-tap
 
 jobs:
