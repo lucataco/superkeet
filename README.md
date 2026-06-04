@@ -134,9 +134,8 @@ The settings window currently has four tabs:
   - local history retention
 - Advanced
   - audio device selection
-  - VAD sensitivity
-  - silence timeout
   - model directory override
+  - idle daemon timeout
 - About
   - version and credits
 

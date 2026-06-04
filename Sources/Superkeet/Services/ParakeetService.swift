@@ -645,6 +645,10 @@ final class ParakeetService: ObservableObject {
             activeAppBundleId: appInfo.bundleId
         )
 
+        // Record privacy-safe aggregate metrics (numbers only, no text)
+        // regardless of whether history saving is enabled.
+        UsageStatsStore.shared.record(wordCount: record.wordCount, durationSeconds: duration)
+
         let outputDecision = OutputRouting.decision(
             clipboardCopyEnabled: settings.clipboardCopyEnabled,
             autoPasteEnabled: settings.autoPasteEnabled,

@@ -14,6 +14,7 @@ struct HomeTabView: View {
     @State private var readiness = AppReadiness.current()
     @State private var loginItemError: String?
     @State private var shortcutError: String?
+    @State private var showAllChecks = false
 
     enum EditingHotkey {
         case toggle
@@ -23,11 +24,13 @@ struct HomeTabView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                StatsHeaderView()
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Setup")
                         .font(.title)
                         .fontWeight(.bold)
-                    Text("Keep first run simple: confirm the app is ready, pick your shortcuts, and run a quick diagnostic before recording.")
+                    Text("Confirm the app is ready and pick your shortcuts.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -38,91 +41,7 @@ struct HomeTabView: View {
                     color: statusColor
                 )
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Checklist")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-
-                    SetupRow(
-                        title: "Setup verification",
-                        detail: settings.hasVerifiedSetup
-                            ? "Superkeet has passed its startup smoke test on this Mac."
-                            : "Superkeet has not passed a full startup smoke test yet. Finish setup and run the daemon successfully to verify it.",
-                        isComplete: settings.hasVerifiedSetup,
-                        buttonTitle: settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon"
-                    ) {
-                        runSetupVerification()
-                    }
-
-                    SetupRow(
-                        title: "Microphone access",
-                        detail: microphoneDetail,
-                        isComplete: !readiness.issues.contains(.microphone),
-                        buttonTitle: "Open Settings"
-                    ) {
-                        openMicrophoneSettings()
-                    }
-
-                    SetupRow(
-                        title: "Speech engine",
-                        detail: readiness.diagnostics.engineBinaryExists
-                            ? "Bundled Parakeet engine found at \(settings.parakeetBinaryPath)"
-                            : "Bundled Parakeet engine not found at \(settings.parakeetBinaryPath)",
-                        isComplete: !readiness.issues.contains(.engine),
-                        buttonTitle: "Refresh"
-                    ) {
-                        refreshReadiness()
-                    }
-
-                    SetupRow(
-                        title: "Input device",
-                        detail: inputDeviceDetail,
-                        isComplete: !readiness.issues.contains(.inputDevice),
-                        buttonTitle: "Refresh"
-                    ) {
-                        refreshReadiness()
-                    }
-
-                    SetupRow(
-                        title: "Runtime directory",
-                        detail: runtimeDirectoryDetail,
-                        isComplete: !readiness.issues.contains(.runtimeDirectory),
-                        buttonTitle: "Refresh"
-                    ) {
-                        refreshReadiness()
-                    }
-
-                    SetupRow(
-                        title: "Accessibility access",
-                        detail: accessibilityDetail,
-                        isComplete: !readiness.issues.contains(.accessibility),
-                        buttonTitle: "Open Settings"
-                    ) {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                            NSWorkspace.shared.open(url)
-                        }
-                        let granted = hotkeyManager.checkAccessibilitySilently()
-                        hotkeyManager.accessibilityGranted = granted
-                        if granted {
-                            hotkeyManager.startListening()
-                            if !hotkeyManager.isListening {
-                                hotkeyManager.startRetryTimer()
-                            }
-                        }
-                    }
-
-                    SetupRow(
-                        title: "Launch at Login",
-                        detail: loginItemError
-                            ?? (settings.launchAtLoginEnabled
-                                ? "Superkeet will start automatically when you log in."
-                                : "Optional. Start Superkeet automatically when you log in. Requires the installed .app bundle."),
-                        isComplete: settings.launchAtLoginEnabled,
-                        buttonTitle: settings.launchAtLoginEnabled ? "Disable" : "Enable"
-                    ) {
-                        toggleLaunchAtLogin()
-                    }
-                }
+                checklistSection
 
                 Divider()
 
@@ -229,10 +148,8 @@ struct HomeTabView: View {
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.secondary)
                             .textSelection(.enabled)
-                            .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.primary.opacity(0.04))
-                            .cornerRadius(10)
+                            .cardStyle(padding: 10)
                     }
                 }
             }
@@ -243,42 +160,154 @@ struct HomeTabView: View {
         }
     }
 
+    // MARK: - Checklist
+
+    private var checks: [SetupCheck] {
+        [
+            SetupCheck(
+                title: "Setup verification",
+                detail: settings.hasVerifiedSetup
+                    ? "Startup test passed."
+                    : "Run the daemon once to verify.",
+                isComplete: settings.hasVerifiedSetup,
+                buttonTitle: settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon",
+                action: { runSetupVerification() }
+            ),
+            SetupCheck(
+                title: "Microphone access",
+                detail: microphoneDetail,
+                isComplete: !readiness.issues.contains(.microphone),
+                buttonTitle: "Open Settings",
+                action: { openMicrophoneSettings() }
+            ),
+            SetupCheck(
+                title: "Speech engine",
+                detail: readiness.diagnostics.engineBinaryExists ? "Bundled engine found." : "Bundled engine not found.",
+                isComplete: !readiness.issues.contains(.engine),
+                buttonTitle: "Refresh",
+                action: { refreshReadiness() }
+            ),
+            SetupCheck(
+                title: "Input device",
+                detail: inputDeviceDetail,
+                isComplete: !readiness.issues.contains(.inputDevice),
+                buttonTitle: "Refresh",
+                action: { refreshReadiness() }
+            ),
+            SetupCheck(
+                title: "Runtime directory",
+                detail: runtimeDirectoryDetail,
+                isComplete: !readiness.issues.contains(.runtimeDirectory),
+                buttonTitle: "Refresh",
+                action: { refreshReadiness() }
+            ),
+            SetupCheck(
+                title: "Accessibility access",
+                detail: accessibilityDetail,
+                isComplete: !readiness.issues.contains(.accessibility),
+                buttonTitle: "Open Settings",
+                action: { openAccessibilitySettings() }
+            ),
+            SetupCheck(
+                title: "Launch at Login",
+                detail: loginItemError
+                    ?? (settings.launchAtLoginEnabled ? "Starts automatically at login." : "Optional. Start at login."),
+                isComplete: settings.launchAtLoginEnabled,
+                buttonTitle: settings.launchAtLoginEnabled ? "Disable" : "Enable",
+                action: { toggleLaunchAtLogin() }
+            )
+        ]
+    }
+
+    @ViewBuilder
+    private var checklistSection: some View {
+        let allChecks = checks
+        let incomplete = allChecks.filter { !$0.isComplete }
+        let allComplete = incomplete.isEmpty
+        let hasCompleteItems = incomplete.count < allChecks.count
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Checklist")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                Spacer()
+                if allComplete || hasCompleteItems {
+                    Button(checklistToggleLabel(allComplete: allComplete)) {
+                        withAnimation(.easeInOut(duration: 0.15)) { showAllChecks.toggle() }
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+            }
+
+            if allComplete {
+                ReadyRow(count: allChecks.count)
+                if showAllChecks {
+                    checkRows(allChecks)
+                }
+            } else {
+                checkRows(showAllChecks ? allChecks : incomplete)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func checkRows(_ items: [SetupCheck]) -> some View {
+        ForEach(items) { item in
+            SetupRow(
+                title: item.title,
+                detail: item.detail,
+                isComplete: item.isComplete,
+                buttonTitle: item.buttonTitle,
+                action: item.action
+            )
+        }
+    }
+
+    private func checklistToggleLabel(allComplete: Bool) -> String {
+        if allComplete {
+            return showAllChecks ? "Hide details" : "Show details"
+        }
+        return showAllChecks ? "Show issues only" : "Show all"
+    }
+
     private var statusDetail: String {
         if !settings.hasVerifiedSetup {
             if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
                 return issue
             }
             if readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled) {
-                return "Setup is close, but Superkeet still needs one successful startup smoke test before it is marked complete."
+                return "Run the daemon once to finish setup."
             }
             if configuredOutputBlocked {
-                return "Recording works, but setup stays unverified until Accessibility is granted because \(selectedOutputModeName) is selected."
+                return "Grant Accessibility to enable \(selectedOutputModeName)."
             }
-            return "Onboarding is skippable, but setup stays unverified until microphone, input, runtime, and engine checks pass together."
+            return "Finish the checks below to get started."
         }
         if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
             return issue
         }
         if configuredOutputBlocked {
-            return "Recording is ready, but \(selectedOutputModeName) needs Accessibility access before it can work reliably."
+            return "\(selectedOutputModeName) needs Accessibility access."
         }
         if readiness.isReadyForBasicRecording {
             return readiness.issues.contains(.accessibility)
-                ? "Recording is ready. Global automation will stay limited until Accessibility access is granted."
-                : "Recording and basic output are ready."
+                ? "Ready to record. Grant Accessibility for global shortcuts."
+                : "Ready to record."
         }
         if readiness.isReadyForDaemon {
-            return "The daemon can start, but recording will fail until microphone access and an input device are available."
+            return "Grant microphone access and pick an input device."
         }
-        return "Finish the missing setup items below before relying on Superkeet."
+        return "Finish the checks below to get started."
     }
 
     private var statusTitle: String {
         if !settings.hasVerifiedSetup {
-            return "Setup still needs verification"
+            return "Almost ready"
         }
         if configuredOutputBlocked {
-            return "Output setup required"
+            return "One step left"
         }
         return readiness.statusText
     }
@@ -303,41 +332,40 @@ struct HomeTabView: View {
 
     private var accessibilityDetail: String {
         if settings.autoPasteEnabled {
-            return "Required for \(selectedOutputModeName) and still used for global shortcuts."
+            return "Required for \(selectedOutputModeName) and shortcuts."
         }
-        return "Optional for the current clipboard-first flow. Grant it to enable global shortcuts and automatic paste."
+        return "Optional. Enables global shortcuts and auto-paste."
     }
 
     private var microphoneDetail: String {
         switch readiness.diagnostics.microphoneStatus {
         case .authorized:
-            return "Microphone access is granted."
+            return "Access granted."
         case .denied:
-            return "Microphone access is denied. Superkeet cannot record until you re-enable it in System Settings."
+            return "Denied. Re-enable it in System Settings."
         case .restricted:
-            return "Microphone access is restricted by the system."
+            return "Restricted by the system."
         case .notDetermined:
-            return "Microphone access has not been requested yet."
+            return "Not requested yet."
         @unknown default:
-            return "Microphone permission status is unknown."
+            return "Status unknown."
         }
     }
 
     private var inputDeviceDetail: String {
         if readiness.diagnostics.availableInputDeviceNames.isEmpty {
-            return "No input devices detected. Check macOS Sound settings and connected microphones."
+            return "No input devices detected."
         }
         if !settings.audioInputDevice.isEmpty && !readiness.diagnostics.configuredInputDeviceFound {
-            return "Selected device '\(settings.audioInputDevice)' is unavailable. Available: \(readiness.diagnostics.availableInputDeviceNames.joined(separator: ", "))"
+            return "'\(settings.audioInputDevice)' is unavailable."
         }
         return "Available: \(readiness.diagnostics.availableInputDeviceNames.joined(separator: ", "))"
     }
 
     private var runtimeDirectoryDetail: String {
-        let path = readiness.diagnostics.runtimeDirectory.path
-        return readiness.diagnostics.runtimeDirectoryWritable
-            ? "Writable runtime directory at \(path)"
-            : "Superkeet cannot write to \(path)"
+        readiness.diagnostics.runtimeDirectoryWritable
+            ? "Writable."
+            : "Not writable: \(readiness.diagnostics.runtimeDirectory.path)"
     }
 
     private func refreshReadiness() {
@@ -440,6 +468,20 @@ struct HomeTabView: View {
         }
     }
 
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+        let granted = hotkeyManager.checkAccessibilitySilently()
+        hotkeyManager.accessibilityGranted = granted
+        if granted {
+            hotkeyManager.startListening()
+            if !hotkeyManager.isListening {
+                hotkeyManager.startRetryTimer()
+            }
+        }
+    }
+
     private var diagnosticsSummary: String {
         let devices = readiness.diagnostics.availableInputDeviceNames.isEmpty
             ? "none"
@@ -507,9 +549,39 @@ private struct SetupRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
-        .padding(12)
-        .background(Color.primary.opacity(0.04))
-        .cornerRadius(10)
+        .cardStyle()
+    }
+}
+
+// MARK: - Checklist model
+
+private struct SetupCheck: Identifiable {
+    var id: String { title }
+    let title: String
+    let detail: String
+    let isComplete: Bool
+    let buttonTitle: String
+    let action: () -> Void
+}
+
+private struct ReadyRow: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+                .font(.system(size: 18))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Everything's ready")
+                    .font(.system(size: 13, weight: .medium))
+                Text("All \(count) checks passed. You're set to record.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+        }
+        .cardStyle()
     }
 }
 
@@ -539,9 +611,7 @@ struct HotkeyRow: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(12)
-        .background(Color.primary.opacity(0.04))
-        .cornerRadius(10)
+        .cardStyle()
     }
 }
 

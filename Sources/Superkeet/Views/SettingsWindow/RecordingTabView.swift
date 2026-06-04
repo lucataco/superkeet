@@ -11,9 +11,14 @@ struct RecordingTabView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("Recording")
-                    .font(.title)
-                    .fontWeight(.bold)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Advanced")
+                        .font(.title)
+                        .fontWeight(.bold)
+                    Text("Fine-tune audio input, model location, and engine behavior.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
 
                 // Audio Input Device
                 VStack(alignment: .leading, spacing: 8) {

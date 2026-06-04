@@ -191,9 +191,7 @@ struct OutputTabView: View {
                             .foregroundColor(.orange)
                         }
                     }
-                    .padding(12)
-                    .background(Color.primary.opacity(0.03))
-                    .cornerRadius(8)
+                    .cardStyle(cornerRadius: 8)
                 }
 
                 Spacer()

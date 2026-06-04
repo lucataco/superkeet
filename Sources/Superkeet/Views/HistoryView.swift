@@ -58,9 +58,7 @@ struct HistoryView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(8)
-            .background(Color.primary.opacity(0.05))
-            .cornerRadius(8)
+            .cardStyle(padding: 8, cornerRadius: 8)
             .padding(.horizontal)
             .padding(.bottom, 8)
 
