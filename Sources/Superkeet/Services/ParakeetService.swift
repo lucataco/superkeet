@@ -84,10 +84,11 @@ final class ParakeetService: ObservableObject {
             self.lastUserFacingError = nil
             self.lastDiagnosticsSummary = nil
             self.startupStatusDetail = "Starting daemon"
+            self.outputBuffer = ""
+            self.autoRestartTask?.cancel()
+            self.autoRestartTask = nil
             self.settings.runtimeIssue = nil
         }
-        autoRestartTask?.cancel()
-        autoRestartTask = nil
 
         // Kill any orphaned daemon from a previous run
         await killStaleProcesses()
@@ -139,9 +140,11 @@ final class ParakeetService: ObservableObject {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-        self.stdoutPipe = stdout
-        self.stderrPipe = stderr
-        self.stderrBuffer = ""
+        await MainActor.run {
+            self.stdoutPipe = stdout
+            self.stderrPipe = stderr
+            self.stderrBuffer = ""
+        }
 
         // Read stdout for transcriptions
         stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -216,9 +219,10 @@ final class ParakeetService: ObservableObject {
 
             guard FileManager.default.fileExists(atPath: settings.socketPath) else {
                 let message = "Parakeet launched but never created its socket at \(settings.socketPath)."
-                await publishStartupFailure(message, diagnostics: recentStderrExcerpt())
+                let diagnostics = await MainActor.run { self.recentStderrExcerpt() }
+                await publishStartupFailure(message, diagnostics: diagnostics)
                 throw NSError(domain: "ParakeetService", code: 2, userInfo: [
-                    NSLocalizedDescriptionKey: lastUserFacingError ?? message
+                    NSLocalizedDescriptionKey: message
                 ])
             }
         } catch {
@@ -271,13 +275,13 @@ final class ParakeetService: ObservableObject {
     }
 
     private func performStopDaemon() async {
-        idleShutdownTask?.cancel()
-        idleShutdownTask = nil
-        autoRestartTask?.cancel()
-        autoRestartTask = nil
-
         await MainActor.run {
+            self.idleShutdownTask?.cancel()
+            self.idleShutdownTask = nil
+            self.autoRestartTask?.cancel()
+            self.autoRestartTask = nil
             self.daemonState = .stopping
+            self.outputBuffer = ""
             self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
             self.stderrPipe?.fileHandleForReading.readabilityHandler = nil
             self.stdoutPipe = nil
@@ -309,6 +313,7 @@ final class ParakeetService: ObservableObject {
         stderrPipe = nil
 
         await MainActor.run {
+            self.outputBuffer = ""
             self.daemonState = .stopped
             self.settings.isDaemonRunning = false
             self.settings.isRecording = false
@@ -356,7 +361,7 @@ final class ParakeetService: ObservableObject {
     // MARK: - Recording Control
 
     @MainActor
-    func startRecording() {
+    func startRecording() async -> Bool {
         // Cancel any pending idle shutdown since the user is active
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
@@ -371,18 +376,18 @@ final class ParakeetService: ObservableObject {
         recordingStartTime = Date()
         lastDeliveredTranscription = nil
 
-        sendSocketCommand("start") { [weak self] response in
-            DispatchQueue.main.async {
-                guard let envelope = self?.decodeSocketResponse(response),
-                      envelope.status == "ok",
-                      envelope.state == "recording" else {
-                    return
-                }
-
-                self?.daemonState = .recording
-                self?.settings.isRecording = true
-            }
+        let response = await sendSocketCommandAsync("start")
+        guard let envelope = decodeSocketResponse(response ?? ""),
+              envelope.status == "ok",
+              envelope.state == "recording" else {
+            recordingStartTime = nil
+            activeAppAtRecordingStart = nil
+            return false
         }
+
+        daemonState = .recording
+        settings.isRecording = true
+        return true
     }
 
     @MainActor
@@ -428,7 +433,7 @@ final class ParakeetService: ObservableObject {
         if settings.isRecording {
             stopRecording()
         } else {
-            startRecording()
+            Task { _ = await startRecording() }
         }
     }
 
@@ -469,6 +474,11 @@ final class ParakeetService: ObservableObject {
         let command: String
     }
 
+    private struct SocketCommandResult: Sendable {
+        let response: String?
+        let runtimeIssue: String?
+    }
+
     private struct SocketResponseEnvelope: Decodable {
         let status: String
         let state: String?
@@ -480,16 +490,29 @@ final class ParakeetService: ObservableObject {
     }
 
     private func sendSocketCommand(_ command: String, completion: ((String) -> Void)? = nil) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let timeout = timeval(tv_sec: 5, tv_usec: 0)
-            let response = self.sendSocketCommandSynchronously(
-                command,
-                timeout: timeout,
-                publishConnectionErrors: true
-            )
+        Task { [weak self] in
+            let response = await self?.sendSocketCommandAsync(command)
             completion?(response ?? "")
         }
+    }
+
+    private func sendSocketCommandAsync(_ command: String) async -> String? {
+        let socketPath = settings.socketPath
+        let result = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let timeout = timeval(tv_sec: 5, tv_usec: 0)
+                let result = Self.sendSocketCommandSynchronously(
+                    command,
+                    socketPath: socketPath,
+                    timeout: timeout
+                )
+                continuation.resume(returning: result)
+            }
+        }
+        if let issue = result.runtimeIssue {
+            publishRuntimeIssue(issue)
+        }
+        return result.response
     }
 
     private func sendSocketCommandSynchronously(
@@ -497,12 +520,26 @@ final class ParakeetService: ObservableObject {
         timeout requestedTimeout: timeval,
         publishConnectionErrors: Bool
     ) -> String? {
-        let socketPath = settings.socketPath
+        let result = Self.sendSocketCommandSynchronously(
+            command,
+            socketPath: settings.socketPath,
+            timeout: requestedTimeout
+        )
+        if publishConnectionErrors, let issue = result.runtimeIssue {
+            publishRuntimeIssue(issue)
+        }
+        return result.response
+    }
 
+    private static func sendSocketCommandSynchronously(
+        _ command: String,
+        socketPath: String,
+        timeout requestedTimeout: timeval
+    ) -> SocketCommandResult {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
             print("[ParakeetService] Failed to create socket")
-            return nil
+            return SocketCommandResult(response: nil, runtimeIssue: nil)
         }
         defer { close(fd) }
 
@@ -518,10 +555,7 @@ final class ParakeetService: ObservableObject {
         guard let addr = unixSocketAddress(for: socketPath) else {
             let message = "Superkeet's runtime socket path is too long for macOS Unix sockets. Move the app/runtime directory to a shorter path."
             print("[ParakeetService] \(message) Path: \(socketPath)")
-            if publishConnectionErrors {
-                publishRuntimeIssue(message)
-            }
-            return nil
+            return SocketCommandResult(response: nil, runtimeIssue: message)
         }
 
         let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -534,16 +568,13 @@ final class ParakeetService: ObservableObject {
 
         guard connectResult == 0 else {
             print("[ParakeetService] Failed to connect to socket at \(socketPath): \(errno)")
-            if publishConnectionErrors {
-                publishRuntimeIssue("Superkeet could not reach the speech engine. Try relaunching the app.")
-            }
-            return nil
+            return SocketCommandResult(response: nil, runtimeIssue: "Superkeet could not reach the speech engine. Try relaunching the app.")
         }
 
         guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command)),
               var json = String(data: jsonData, encoding: .utf8) else {
             print("[ParakeetService] Failed to encode socket command")
-            return nil
+            return SocketCommandResult(response: nil, runtimeIssue: nil)
         }
         json.append("\n")
 
@@ -554,7 +585,7 @@ final class ParakeetService: ObservableObject {
 
         guard sentAllBytes else {
             print("[ParakeetService] Failed to send socket command '\(command)' to daemon")
-            return nil
+            return SocketCommandResult(response: nil, runtimeIssue: nil)
         }
 
         var buffer = [UInt8](repeating: 0, count: 4096)
@@ -562,14 +593,14 @@ final class ParakeetService: ObservableObject {
         if bytesRead > 0 {
             let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
             print("[ParakeetService] Response: \(response)")
-            return response
+            return SocketCommandResult(response: response, runtimeIssue: nil)
         }
 
         print("[ParakeetService] recv returned \(bytesRead) (timeout or error)")
-        return nil
+        return SocketCommandResult(response: nil, runtimeIssue: nil)
     }
 
-    private func unixSocketAddress(for socketPath: String) -> sockaddr_un? {
+    private static func unixSocketAddress(for socketPath: String) -> sockaddr_un? {
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
 
@@ -715,9 +746,10 @@ final class ParakeetService: ObservableObject {
 
             if !process.isRunning {
                 let detail = "Parakeet exited during startup with code \(process.terminationStatus)."
-                await publishStartupFailure(detail, diagnostics: recentStderrExcerpt())
+                let diagnostics = await MainActor.run { self.recentStderrExcerpt() }
+                await publishStartupFailure(detail, diagnostics: diagnostics)
                 throw NSError(domain: "ParakeetService", code: 5, userInfo: [
-                    NSLocalizedDescriptionKey: lastUserFacingError ?? detail
+                    NSLocalizedDescriptionKey: detail
                 ])
             }
 
@@ -729,9 +761,10 @@ final class ParakeetService: ObservableObject {
         }
 
         let detail = "Parakeet did not become ready within \(Self.startupTimeoutNanoseconds / 1_000_000_000) seconds."
-        await publishStartupFailure(detail, diagnostics: recentStderrExcerpt())
+        let diagnostics = await MainActor.run { self.recentStderrExcerpt() }
+        await publishStartupFailure(detail, diagnostics: diagnostics)
         throw NSError(domain: "ParakeetService", code: 6, userInfo: [
-            NSLocalizedDescriptionKey: lastUserFacingError ?? detail
+            NSLocalizedDescriptionKey: detail
         ])
     }
 
@@ -754,6 +787,7 @@ final class ParakeetService: ObservableObject {
         settings.runtimeIssue = message
     }
 
+    @MainActor
     private func appendStderr(_ text: String) {
         stderrBuffer += text
         let lines = stderrBuffer.components(separatedBy: .newlines)
@@ -763,12 +797,14 @@ final class ParakeetService: ObservableObject {
         startupStatusDetail = derivedStartupStatus()
     }
 
+    @MainActor
     private func recentStderrExcerpt() -> String? {
         let trimmed = stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return "Parakeet stderr:\n\(trimmed)"
     }
 
+    @MainActor
     private func derivedStartupStatus() -> String {
         let stderr = stderrBuffer.lowercased()
         if stderr.contains("ready. waiting for commands") {

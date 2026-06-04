@@ -4,7 +4,9 @@ import SwiftUI
 struct OutputTabView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var historyStore = HistoryStore.shared
+    @ObservedObject var usageStats = UsageStatsStore.shared
     @State private var confirmClearHistory = false
+    @State private var confirmResetUsageStats = false
 
     var body: some View {
         ScrollView {
@@ -151,6 +153,27 @@ struct OutputTabView: View {
                         }
                         .disabled(historyStore.records.isEmpty)
                     }
+
+                    Divider()
+
+                    Text("Usage stats store counts, durations, and sessions only — never transcribed text — at ~/Library/Application Support/Superkeet/usage-stats.json.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Usage Stats")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(usageStats.hasData ? "\(usageStats.totalWords) words across \(usageStats.totalSessions) session\(usageStats.totalSessions == 1 ? "" : "s")" : "No usage stats saved yet")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button("Reset Stats") {
+                            confirmResetUsageStats = true
+                        }
+                        .disabled(!usageStats.hasData)
+                    }
                 }
 
                 Divider()
@@ -205,6 +228,14 @@ struct OutputTabView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes all saved transcriptions from this Mac.")
+        }
+        .alert("Reset usage stats?", isPresented: $confirmResetUsageStats) {
+            Button("Reset", role: .destructive) {
+                usageStats.reset()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears aggregate counts like words dictated, average speaking rate, and time saved. It does not affect saved transcription history.")
         }
     }
 

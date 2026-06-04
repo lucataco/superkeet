@@ -13,6 +13,7 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - Clipboard-first output is the default
 - Auto-paste is still available, but treated as an advanced option
 - Saved history is opt-in for privacy
+- Aggregate usage stats store counts and durations only, never transcribed text
 - Startup diagnostics are surfaced in the app when the Parakeet daemon fails
 
 ## Features
@@ -49,6 +50,12 @@ open ~/Applications/Superkeet.app
 ```
 
 `install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`.
+
+By default, local installs are ad-hoc signed. To keep the same macOS privacy identity across local installs, pass a Developer ID identity:
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./install.sh
+```
 
 ## Public Releases
 
@@ -155,6 +162,7 @@ This keeps the default flow safer and simpler. Auto-paste is available, but it d
 |---|---|
 | App settings | `UserDefaults` |
 | History | `~/Library/Application Support/Superkeet/history.json` |
+| Usage stats | `~/Library/Application Support/Superkeet/usage-stats.json` |
 | Bundled engine | `Superkeet.app/Contents/Resources/bin/parakeet` |
 | Runtime directory | `~/Library/Caches/com.superkeet.app/Runtime/` |
 | Daemon socket | `~/Library/Caches/com.superkeet.app/Runtime/parakeet.sock` |

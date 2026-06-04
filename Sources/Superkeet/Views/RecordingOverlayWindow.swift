@@ -78,6 +78,10 @@ final class RecordingOverlayWindowController {
         guard let window = window else { return }
 
         let style = AppSettings.shared.recordingOverlayStyle
+        if style == "none" {
+            hide()
+            return
+        }
         let newSize = style == "classic" ? Self.expandedSize : Self.compactSize
 
         // Calculate new frame keeping horizontal center and bottom edge stable

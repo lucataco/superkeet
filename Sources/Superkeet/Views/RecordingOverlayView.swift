@@ -20,6 +20,8 @@ struct RecordingOverlayView: View {
                     onStop: stopRecording,
                     onToggleMode: toggleMode
                 )
+            case "none":
+                EmptyView()
             default: // "mini" or any other value
                 CompactRecordingOverlay(
                     audioMonitor: audioMonitor,
@@ -41,6 +43,9 @@ struct RecordingOverlayView: View {
         .onDisappear {
             timer?.invalidate()
             timer = nil
+        }
+        .onChange(of: settings.recordingOverlayStyle) { _, _ in
+            RecordingOverlayWindowController.shared.resizeForCurrentMode()
         }
     }
 

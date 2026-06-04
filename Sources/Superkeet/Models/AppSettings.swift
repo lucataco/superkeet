@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 import SwiftUI
 
 /// Persisted app settings backed by UserDefaults
@@ -71,6 +72,10 @@ final class AppSettings: ObservableObject {
     }
 
     private init() {}
+
+    func syncLaunchAtLoginStatus() {
+        launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    }
 
     // MARK: - Binary Discovery
 

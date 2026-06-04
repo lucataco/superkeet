@@ -3,6 +3,7 @@ import SwiftUI
 /// Displays transcription history with rich context
 struct HistoryView: View {
     @ObservedObject var historyStore = HistoryStore.shared
+    @ObservedObject var settings = AppSettings.shared
     @State private var searchText: String = ""
     @State private var selectedRecord: TranscriptionRecord?
     @State private var confirmClearAll: Bool = false
@@ -67,15 +68,16 @@ struct HistoryView: View {
             // Records list
             if filteredRecords.isEmpty {
                 VStack(spacing: 12) {
-                    Image(systemName: searchText.isEmpty ? "waveform" : "magnifyingglass")
+                    Image(systemName: emptyStateIcon)
                         .font(.system(size: 40))
                         .foregroundColor(.secondary.opacity(0.5))
-                Text(searchText.isEmpty ? "No transcriptions yet" : "No results found")
+                    Text(emptyStateTitle)
                         .font(.headline)
                         .foregroundColor(.secondary)
-                    Text(searchText.isEmpty ? "Use \(AppSettings.shared.toggleHotkeyDisplayName) or the menu bar to start recording" : "Try a different search term")
+                    Text(emptyStateMessage)
                         .font(.caption)
                         .foregroundColor(.secondary.opacity(0.7))
+                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -102,6 +104,24 @@ struct HistoryView: View {
             }
         }
         .frame(minWidth: 480, maxWidth: .infinity, minHeight: 520, maxHeight: .infinity)
+    }
+
+    private var emptyStateIcon: String {
+        if !searchText.isEmpty { return "magnifyingglass" }
+        return settings.saveHistoryEnabled ? "waveform" : "lock.shield"
+    }
+
+    private var emptyStateTitle: String {
+        if !searchText.isEmpty { return "No results found" }
+        return settings.saveHistoryEnabled ? "No transcriptions yet" : "History is off"
+    }
+
+    private var emptyStateMessage: String {
+        if !searchText.isEmpty { return "Try a different search term" }
+        if settings.saveHistoryEnabled {
+            return "Use \(settings.toggleHotkeyDisplayName) or the menu bar to start recording"
+        }
+        return "Turn on Save History in Settings > Output & Privacy to keep future transcriptions on this Mac."
     }
 }
 

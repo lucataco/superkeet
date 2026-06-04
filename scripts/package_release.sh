@@ -17,10 +17,27 @@ PARAKEET_OVERRIDE="${PARAKEET_CLI_PATH:-}"
 NOTARY_APPLE_ID="${NOTARY_APPLE_ID:-}"
 NOTARY_TEAM_ID="${NOTARY_TEAM_ID:-}"
 NOTARY_PASSWORD="${NOTARY_PASSWORD:-}"
+REQUIRE_SIGNING="${REQUIRE_SIGNING:-0}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
         printf 'Missing required command: %s\n' "$1" >&2
+        exit 1
+    fi
+}
+
+validate_release_prerequisites() {
+    if [[ "$REQUIRE_SIGNING" != "1" ]]; then
+        return 0
+    fi
+
+    if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+        printf 'Production releases require CODESIGN_IDENTITY. Refusing to publish an ad-hoc signed artifact.\n' >&2
+        exit 1
+    fi
+
+    if [[ -z "$NOTARY_APPLE_ID" || -z "$NOTARY_TEAM_ID" || -z "$NOTARY_PASSWORD" ]]; then
+        printf 'Production releases require NOTARY_APPLE_ID, NOTARY_TEAM_ID, and NOTARY_PASSWORD.\n' >&2
         exit 1
     fi
 }
@@ -97,15 +114,30 @@ notarize_and_staple() {
 
     printf '==> Stapling notarization ticket...\n'
     xcrun stapler staple "$BUNDLE_DIR"
+    xcrun stapler validate "$BUNDLE_DIR"
     codesign --verify --deep --strict "$BUNDLE_DIR"
+    spctl -a -t exec -vv "$BUNDLE_DIR"
+}
+
+verify_audio_entitlement() {
+    local target="$1"
+    if ! codesign -d --entitlements :- "$target" 2>/dev/null | grep -q 'com.apple.security.device.audio-input'; then
+        printf 'Missing audio-input entitlement on %s\n' "$target" >&2
+        exit 1
+    fi
 }
 
 require_command swift
 require_command cargo
 require_command codesign
 require_command ditto
+require_command grep
 require_command shasum
+require_command spctl
+require_command xcrun
 require_command /usr/libexec/PlistBuddy
+
+validate_release_prerequisites
 
 VERSION="$(plist_value CFBundleShortVersionString)"
 ARCHIVE_BASENAME="Superkeet-${VERSION}"
@@ -150,12 +182,14 @@ if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
     SIGN_ARGS+=(--timestamp)
 fi
 
-codesign "${SIGN_ARGS[@]}" "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
+codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS_PATH" "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
 codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS_PATH" "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
 codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS_PATH" "$BUNDLE_DIR"
 
 printf '==> Verifying code signature...\n'
 codesign --verify --deep --strict "$BUNDLE_DIR"
+verify_audio_entitlement "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
+verify_audio_entitlement "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
 
 printf '==> Creating release archive...\n'
 zip_app "$ZIP_PATH"

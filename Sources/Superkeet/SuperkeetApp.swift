@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Install signal handlers so cleanup runs even on Ctrl-C / kill
         installSignalHandlers()
 
+        settings.syncLaunchAtLoginStatus()
+
         // Setup menu bar
         menuBarManager.setup()
 
@@ -206,6 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func performShutdownCleanup() async {
+        HistoryStore.shared.flushPendingSave()
+        UsageStatsStore.shared.flushPendingSave()
         await parakeetService.cleanupAndWait()
         hotkeyManager.stopListening()
         AudioLevelMonitor.shared.stopMonitoring()

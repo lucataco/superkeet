@@ -9,6 +9,7 @@ BUILD_DIR="${SCRIPT_DIR}/.build/release"
 BUNDLE_DIR="${SCRIPT_DIR}/${BUNDLE_NAME}"
 ENTITLEMENTS_PATH="${SCRIPT_DIR}/Resources/Superkeet.entitlements"
 PARAKEET_OVERRIDE="${PARAKEET_CLI_PATH:-}"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -76,19 +77,14 @@ cp "$PARAKEET_BINARY" "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
 chmod 755 "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
 
 printf '==> Signing %s...\n' "$BUNDLE_NAME"
-codesign --force --sign - \
-    --options runtime \
-    "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
+SIGN_ARGS=(--force --sign "$CODESIGN_IDENTITY" --options runtime)
+if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
+    SIGN_ARGS+=(--timestamp)
+fi
 
-codesign --force --sign - \
-    --options runtime \
-    --entitlements "$ENTITLEMENTS_PATH" \
-    "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
-
-codesign --force --sign - \
-    --options runtime \
-    --entitlements "$ENTITLEMENTS_PATH" \
-    "$BUNDLE_DIR"
+codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS_PATH" "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
+codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS_PATH" "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
+codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS_PATH" "$BUNDLE_DIR"
 
 printf '==> Verifying code signature...\n'
 codesign --verify --deep --strict "$BUNDLE_DIR"
@@ -100,5 +96,6 @@ mv "$BUNDLE_DIR" "$INSTALL_DIR/"
 
 printf '\nDone! %s installed to %s/%s\n' "$APP_NAME" "$INSTALL_DIR" "$BUNDLE_NAME"
 printf 'Bundled speech engine: %s\n' "$PARAKEET_BINARY"
+printf 'Signing identity: %s\n' "$CODESIGN_IDENTITY"
 printf 'Open it from Finder, Spotlight, or run:\n'
 printf '  open "%s/%s"\n' "$INSTALL_DIR" "$BUNDLE_NAME"

@@ -109,6 +109,8 @@ final class HotkeyManager: ObservableObject {
         self.runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        self.tapReEnableCount = 0
+        self.tapReEnableWindowStart = .distantPast
 
         hotkeyLog.info("Event tap created and listening. Toggle=\(self.settings.toggleHotkeyDisplayName), PTT=\(self.settings.pttHotkeyDisplayName)")
 
@@ -392,7 +394,7 @@ private func hotkeyCallback(
                 }
             } else {
                 hotkeyLog.warning("Event tap disabled repeatedly (\(manager.tapReEnableCount) times in 10s), backing off. Will retry via timer.")
-                manager.isListening = false
+                manager.stopListening()
                 manager.startRetryTimer()
             }
         }

@@ -60,6 +60,13 @@ jobs:
             exit 1
           fi
 
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          EXPECTED_TAG="v${VERSION}"
+          if [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "Release tag '$TAG' does not match Info.plist version '$VERSION' (expected '$EXPECTED_TAG')" >&2
+            exit 1
+          fi
+
           if [ -n "$INPUT_PARAKEET_REF" ]; then
             PARAKEET_REF="$INPUT_PARAKEET_REF"
           else
@@ -96,14 +103,15 @@ jobs:
             echo "has_certificate=true" >> "$GITHUB_OUTPUT"
             echo "codesign_identity=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_OUTPUT"
           else
-            echo "has_certificate=false" >> "$GITHUB_OUTPUT"
-            echo "codesign_identity=-" >> "$GITHUB_OUTPUT"
+            echo "Missing required Developer ID signing secrets for a production release" >&2
+            exit 1
           fi
 
           if [ -n "$APPLE_NOTARY_APPLE_ID" ] && [ -n "$APPLE_NOTARY_TEAM_ID" ] && [ -n "$APPLE_NOTARY_PASSWORD" ]; then
             echo "has_notary=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_notary=false" >> "$GITHUB_OUTPUT"
+            echo "Missing required notarization secrets for a production release" >&2
+            exit 1
           fi
 
       - name: Resolve Homebrew tap sync mode
@@ -139,6 +147,7 @@ jobs:
           PARAKEET_SOURCE_DIR: ${{ github.workspace }}/.release/parakeet-cli
           DIST_DIR: ${{ github.workspace }}/.release/dist
           CODESIGN_IDENTITY: ${{ steps.signing.outputs.codesign_identity }}
+          REQUIRE_SIGNING: "1"
           NOTARY_APPLE_ID: ${{ steps.signing.outputs.has_notary == 'true' && secrets.APPLE_NOTARY_APPLE_ID || '' }}
           NOTARY_TEAM_ID: ${{ steps.signing.outputs.has_notary == 'true' && secrets.APPLE_NOTARY_TEAM_ID || '' }}
           NOTARY_PASSWORD: ${{ steps.signing.outputs.has_notary == 'true' && secrets.APPLE_NOTARY_PASSWORD || '' }}

@@ -73,7 +73,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             let startItem = NSMenuItem(title: "Start Recording", action: #selector(startRecording), keyEquivalent: "")
             startItem.target = self
             startItem.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Record")
-            startItem.isEnabled = settings.isDaemonRunning
+            startItem.isEnabled = !recordingRequested
             menu.addItem(startItem)
         }
 
@@ -115,36 +115,40 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     @objc private func startRecording() {
+        guard !recordingRequested else { return }
         recordingRequested = true
+        updateMenuBarIcon(recording: false)
 
-        // If daemon was stopped (e.g., idle timeout), restart it first
-        if !settings.isDaemonRunning {
-            updateMenuBarIcon(recording: false)
-            Task {
-                do {
-                    try await parakeetService.startDaemon()
-                    await MainActor.run {
-                        guard self.recordingRequested else { return }
-                        self.performStartRecording()
-                    }
-                } catch {
-                    print("[MenuBar] Failed to restart daemon for recording: \(error)")
-                    await MainActor.run {
-                        self.recordingRequested = false
-                        self.updateMenuBarIcon(recording: false)
-                        AudioLevelMonitor.shared.stopMonitoring()
-                        RecordingOverlayWindowController.shared.hide()
-                    }
-                }
-            }
-            return
+        Task { @MainActor in
+            await self.startRecordingFlow()
         }
-        performStartRecording()
     }
 
     @MainActor
-    private func performStartRecording() {
-        parakeetService.startRecording()
+    private func startRecordingFlow() async {
+        do {
+            if !settings.isDaemonRunning {
+                try await parakeetService.startDaemon()
+            }
+        } catch {
+            print("[MenuBar] Failed to restart daemon for recording: \(error)")
+            resetRecordingUI()
+            return
+        }
+
+        guard recordingRequested else { return }
+
+        let started = await parakeetService.startRecording()
+        guard started else {
+            resetRecordingUI()
+            return
+        }
+
+        guard recordingRequested else {
+            parakeetService.stopRecording()
+            return
+        }
+
         updateMenuBarIcon(recording: true)
 
         let style = settings.recordingOverlayStyle
@@ -152,6 +156,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             AudioLevelMonitor.shared.startMonitoring()
             RecordingOverlayWindowController.shared.show()
         }
+    }
+
+    @MainActor
+    private func resetRecordingUI() {
+        recordingRequested = false
+        updateMenuBarIcon(recording: false)
+        AudioLevelMonitor.shared.stopMonitoring()
+        RecordingOverlayWindowController.shared.hide()
     }
 
     @MainActor
@@ -287,10 +299,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
+        _ = hotkeyManager.checkAccessibility()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
-        // Silently check — the deep-link above already opens System Settings
         hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
     }
 

@@ -65,6 +65,12 @@ final class UsageStatsStore: ObservableObject {
         save()
     }
 
+    func flushPendingSave() {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        writeBuckets(buckets)
+    }
+
     // MARK: - Derived stats (all-time)
 
     var totalWords: Int {
@@ -122,13 +128,17 @@ final class UsageStatsStore: ObservableObject {
     private func performSave(_ snapshot: [String: DayBucket]) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
-            do {
-                let data = try self.encoder.encode(snapshot)
-                try data.write(to: self.fileURL, options: .atomic)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: self.fileURL.path)
-            } catch {
-                print("[UsageStatsStore] Failed to save stats: \(error)")
-            }
+            self.writeBuckets(snapshot)
+        }
+    }
+
+    private func writeBuckets(_ snapshot: [String: DayBucket]) {
+        do {
+            let data = try encoder.encode(snapshot)
+            try data.write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        } catch {
+            print("[UsageStatsStore] Failed to save stats: \(error)")
         }
     }
 }

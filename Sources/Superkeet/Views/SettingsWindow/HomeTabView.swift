@@ -158,6 +158,9 @@ struct HomeTabView: View {
         .onAppear {
             refreshReadiness()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshReadiness()
+        }
     }
 
     // MARK: - Checklist
@@ -177,7 +180,7 @@ struct HomeTabView: View {
                 title: "Microphone access",
                 detail: microphoneDetail,
                 isComplete: !readiness.issues.contains(.microphone),
-                buttonTitle: "Open Settings",
+                buttonTitle: microphoneButtonTitle,
                 action: { openMicrophoneSettings() }
             ),
             SetupCheck(
@@ -352,6 +355,17 @@ struct HomeTabView: View {
         }
     }
 
+    private var microphoneButtonTitle: String {
+        switch readiness.diagnostics.microphoneStatus {
+        case .notDetermined:
+            return "Request Access"
+        case .authorized:
+            return "Refresh"
+        default:
+            return "Open Settings"
+        }
+    }
+
     private var inputDeviceDetail: String {
         if readiness.diagnostics.availableInputDeviceNames.isEmpty {
             return "No input devices detected."
@@ -369,8 +383,26 @@ struct HomeTabView: View {
     }
 
     private func refreshReadiness() {
-        readiness = AppReadiness.current()
+        settings.syncLaunchAtLoginStatus()
+        let refreshed = AppReadiness.current()
+        readiness = refreshed
+        syncAccessibilityState(isGranted: !refreshed.issues.contains(.accessibility))
+        if settings.isDaemonRunning,
+           refreshed.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled) {
+            settings.hasVerifiedSetup = true
+        }
         parakeetService.lastDiagnosticsSummary = parakeetService.lastDiagnosticsSummary ?? diagnosticsSummary
+    }
+
+    private func syncAccessibilityState(isGranted: Bool) {
+        hotkeyManager.accessibilityGranted = isGranted
+        if isGranted {
+            if !hotkeyManager.isListening {
+                hotkeyManager.startListening()
+            }
+        } else if !hotkeyManager.isListening {
+            hotkeyManager.startRetryTimer()
+        }
     }
 
     private func assignToggleHotkey(keyCode: Int, modifiers: Int, name: String) {
@@ -432,14 +464,15 @@ struct HomeTabView: View {
     }
 
     private func toggleLaunchAtLogin() {
-        let newValue = !settings.launchAtLoginEnabled
+        settings.syncLaunchAtLoginStatus()
+        let newValue = SMAppService.mainApp.status != .enabled
         do {
             if newValue {
                 try SMAppService.mainApp.register()
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            settings.launchAtLoginEnabled = newValue
+            settings.syncLaunchAtLoginStatus()
             loginItemError = nil
         } catch {
             print("[HomeTab] Failed to update login item: \(error)")
@@ -463,12 +496,24 @@ struct HomeTabView: View {
     }
 
     private func openMicrophoneSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-            NSWorkspace.shared.open(url)
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in
+                DispatchQueue.main.async {
+                    refreshReadiness()
+                }
+            }
+        case .authorized:
+            refreshReadiness()
+        default:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 
     private func openAccessibilitySettings() {
+        _ = hotkeyManager.checkAccessibility()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }

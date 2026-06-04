@@ -50,6 +50,12 @@ final class HistoryStore: ObservableObject {
         saveRecords()
     }
 
+    func flushPendingSave() {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        writeRecords(records)
+    }
+
     // MARK: - Stats
 
     /// Records from the current calendar week (Monday-Sunday)
@@ -118,13 +124,17 @@ final class HistoryStore: ObservableObject {
     private func performSave(records snapshot: [TranscriptionRecord]) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
-            do {
-                let data = try self.encoder.encode(snapshot)
-                try data.write(to: self.fileURL, options: .atomic)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: self.fileURL.path)
-            } catch {
-                print("[HistoryStore] Failed to save history: \(error)")
-            }
+            self.writeRecords(snapshot)
+        }
+    }
+
+    private func writeRecords(_ snapshot: [TranscriptionRecord]) {
+        do {
+            let data = try encoder.encode(snapshot)
+            try data.write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        } catch {
+            print("[HistoryStore] Failed to save history: \(error)")
         }
     }
 }

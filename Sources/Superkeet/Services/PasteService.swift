@@ -19,6 +19,14 @@ final class PasteService {
         )
 
         if decision.shouldAutoPaste {
+            guard AXIsProcessTrusted() else {
+                copyToClipboard(text)
+                DispatchQueue.main.async {
+                    settings.runtimeIssue = "Paste Automatically needs Accessibility access. Copied to clipboard instead."
+                }
+                return
+            }
+
             // Save current clipboard, set transcription, paste, then restore original clipboard
             let savedClipboard = snapshotClipboard()
             copyToClipboard(text)
