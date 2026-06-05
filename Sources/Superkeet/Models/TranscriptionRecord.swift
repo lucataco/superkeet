@@ -15,11 +15,6 @@ struct TranscriptionRecord: Identifiable, Codable {
         return Double(wordCount) / (durationSeconds / 60.0)
     }
 
-    var charactersPerMinute: Double {
-        guard durationSeconds > 0 else { return 0 }
-        return Double(text.count) / (durationSeconds / 60.0)
-    }
-
     init(
         text: String,
         timestamp: Date = Date(),

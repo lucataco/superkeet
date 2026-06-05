@@ -105,8 +105,11 @@ struct AppReadinessReport {
         if issues.isEmpty {
             return "Ready to record"
         }
-        if isReadyForDaemon {
+        if isReadyForBasicRecording {
             return "Ready with limited automation"
+        }
+        if isReadyForDaemon {
+            return "Setup needs attention"
         }
         return "Setup required"
     }

@@ -10,17 +10,11 @@ final class HistoryStore: ObservableObject {
     private let fileURL: URL
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let persistenceQueue = DispatchQueue(label: "com.superkeet.history-store", qos: .utility)
     private var saveDebounceTask: DispatchWorkItem?
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let superkeetDir = appSupport.appendingPathComponent("Superkeet", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: superkeetDir,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        self.fileURL = superkeetDir.appendingPathComponent("history.json")
+        self.fileURL = AppPaths.applicationSupportDirectory.appendingPathComponent("history.json")
 
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = .prettyPrinted
@@ -53,44 +47,10 @@ final class HistoryStore: ObservableObject {
     func flushPendingSave() {
         saveDebounceTask?.cancel()
         saveDebounceTask = nil
-        writeRecords(records)
-    }
-
-    // MARK: - Stats
-
-    /// Records from the current calendar week (Monday-Sunday)
-    var recordsThisWeek: [TranscriptionRecord] {
-        let calendar = Calendar.current
-        let now = Date()
-        guard let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start else {
-            return []
+        let snapshot = records
+        persistenceQueue.sync {
+            writeRecords(snapshot)
         }
-        return records.filter { $0.timestamp >= weekStart }
-    }
-
-    var wordsTranscribedThisWeek: Int {
-        recordsThisWeek.reduce(0) { $0 + $1.wordCount }
-    }
-
-    var averageWordsPerMinute: Double {
-        let relevant = records.filter { $0.durationSeconds > 0 }
-        guard !relevant.isEmpty else { return 0 }
-        let totalWords = relevant.reduce(0) { $0 + $1.wordCount }
-        let totalMinutes = relevant.reduce(0.0) { $0 + $1.durationSeconds / 60.0 }
-        guard totalMinutes > 0 else { return 0 }
-        return Double(totalWords) / totalMinutes
-    }
-
-    var uniqueAppsUsedThisWeek: Int {
-        Set(recordsThisWeek.map { $0.activeAppBundleId }).filter { !$0.isEmpty }.count
-    }
-
-    /// Estimated time saved in minutes (assuming average typing speed of 40 WPM)
-    var timeSavedThisWeekMinutes: Double {
-        let words = wordsTranscribedThisWeek
-        let typingTime = Double(words) / 40.0  // minutes to type at 40 WPM
-        let speakingTime = recordsThisWeek.reduce(0.0) { $0 + $1.durationSeconds / 60.0 }
-        return max(0, typingTime - speakingTime)
     }
 
     // MARK: - Persistence
@@ -122,7 +82,7 @@ final class HistoryStore: ObservableObject {
     }
 
     private func performSave(records snapshot: [TranscriptionRecord]) {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        persistenceQueue.async { [weak self] in
             guard let self = self else { return }
             self.writeRecords(snapshot)
         }

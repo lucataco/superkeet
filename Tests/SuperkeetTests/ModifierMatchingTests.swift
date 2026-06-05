@@ -1,5 +1,5 @@
 import XCTest
-import Carbon
+import CoreGraphics
 @testable import Superkeet
 
 final class ModifierMatchingTests: XCTestCase {

@@ -29,7 +29,7 @@ final class ParakeetService: ObservableObject {
     private var outputBuffer: String = ""
     private var stderrBuffer: String = ""
     private var recordingStartTime: Date?
-    private var activeAppAtRecordingStart: (name: String, bundleId: String)?
+    private var activeAppAtRecordingStart: (name: String, bundleId: String, processIdentifier: pid_t?)?
     private var lastDeliveredTranscription: String?
     private var idleShutdownTask: DispatchWorkItem?
     private let lifecycleLock = NSLock()
@@ -92,8 +92,10 @@ final class ParakeetService: ObservableObject {
 
         // Kill any orphaned daemon from a previous run
         await killStaleProcesses()
+        try Task.checkCancellation()
 
         try ensureRuntimeDirectory()
+        try Task.checkCancellation()
 
         let readiness = AppReadiness.current(settings: settings)
         if readiness.hasDaemonBlockingIssue {
@@ -128,6 +130,7 @@ final class ParakeetService: ObservableObject {
                 throw error
             }
         }
+        try Task.checkCancellation()
 
         await MainActor.run { daemonState = .starting }
 
@@ -217,6 +220,7 @@ final class ParakeetService: ObservableObject {
             }
         }
 
+        try Task.checkCancellation()
         do {
             try process.run()
         } catch {
@@ -244,12 +248,14 @@ final class ParakeetService: ObservableObject {
             throw error
         }
 
+        let finalReadiness = AppReadiness.current(settings: settings)
+
         await MainActor.run {
             self.daemonState = .idle
             self.settings.isDaemonRunning = true
             self.startupStatusDetail = "Ready"
             self.settings.runtimeIssue = nil
-            self.settings.hasVerifiedSetup = readiness.passesSetupSmokeTest(
+            self.settings.hasVerifiedSetup = finalReadiness.passesSetupSmokeTest(
                 daemonStarted: true,
                 autoPasteEnabled: self.settings.autoPasteEnabled
             )
@@ -266,6 +272,8 @@ final class ParakeetService: ObservableObject {
     func stopDaemonAndWait() async {
         let pendingStart = lifecycleLock.withLock { startTask }
         if let pendingStart {
+            pendingStart.cancel()
+            ModelProvisioning.shared.cancelInFlightDownload()
             _ = try? await pendingStart.value
         }
 
@@ -384,7 +392,8 @@ final class ParakeetService: ObservableObject {
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             activeAppAtRecordingStart = (
                 name: frontApp.localizedName ?? "Unknown",
-                bundleId: frontApp.bundleIdentifier ?? ""
+                bundleId: frontApp.bundleIdentifier ?? "",
+                processIdentifier: frontApp.processIdentifier
             )
         }
         recordingStartTime = Date()
@@ -681,7 +690,7 @@ final class ParakeetService: ObservableObject {
         lastDeliveredTranscription = trimmed
 
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-        let appInfo = activeAppAtRecordingStart ?? (name: "Unknown", bundleId: "")
+        let appInfo = activeAppAtRecordingStart ?? (name: "Unknown", bundleId: "", processIdentifier: nil)
 
         let record = TranscriptionRecord(
             text: trimmed,
@@ -705,7 +714,11 @@ final class ParakeetService: ObservableObject {
         }
 
         if outputDecision.shouldCopyToClipboard {
-            PasteService.shared.deliverText(trimmed)
+            PasteService.shared.deliverText(
+                trimmed,
+                decision: outputDecision,
+                targetProcessIdentifier: appInfo.processIdentifier
+            )
         }
 
         // Reset

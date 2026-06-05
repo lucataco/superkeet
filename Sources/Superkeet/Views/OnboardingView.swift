@@ -1,7 +1,6 @@
 import SwiftUI
 import AVFoundation
 import AppKit
-import Combine
 
 /// Multi-step onboarding wizard shown on first launch.
 /// Walks through permissions, engine verification, and hotkey setup.
@@ -9,26 +8,36 @@ struct OnboardingView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var hotkeyManager = HotkeyManager.shared
     @ObservedObject var modelProvisioning = ModelProvisioning.shared
-    @State private var currentStep: Int = 0
+    @State private var currentStep: OnboardingStep = .welcome
     @State private var readiness = AppReadiness.current()
 
     // Accessibility polling
     @State private var accessibilityPollingTimer: Timer?
     @State private var accessibilityGranted: Bool = false
     @State private var didTriggerAccessibilityPrompt: Bool = false
-    @State private var pendingAccessibilitySettingsOpen: DispatchWorkItem?
 
     // Microphone state
     @State private var microphoneGranted: Bool = false
-    @State private var microphoneRequested: Bool = false
 
     /// Called when the user completes onboarding
     var onComplete: () -> Void
 
-    private let totalSteps = 5
+    private enum OnboardingStep: Int, CaseIterable {
+        case welcome
+        case microphone
+        case model
+        case accessibility
+        case output
+        case ready
 
-    /// Step index for the accessibility step (used to drive permission polling).
-    private let accessibilityStepIndex = 3
+        var next: OnboardingStep? {
+            OnboardingStep(rawValue: rawValue + 1)
+        }
+
+        var previous: OnboardingStep? {
+            OnboardingStep(rawValue: rawValue - 1)
+        }
+    }
 
     private enum OnboardingOutputMode {
         case clipboard
@@ -40,12 +49,12 @@ struct OnboardingView: View {
             // Step content
             Group {
                 switch currentStep {
-                case 0: welcomeStep
-                case 1: microphoneStep
-                case 2: modelStep
-                case 3: accessibilityStep
-                case 4: readyStep
-                default: welcomeStep
+                case .welcome: welcomeStep
+                case .microphone: microphoneStep
+                case .model: modelStep
+                case .accessibility: accessibilityStep
+                case .output: outputStep
+                case .ready: readyStep
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,7 +65,7 @@ struct OnboardingView: View {
             HStack {
                 // Step indicator
                 HStack(spacing: 6) {
-                    ForEach(0..<totalSteps, id: \.self) { step in
+                    ForEach(OnboardingStep.allCases, id: \.self) { step in
                         Circle()
                             .fill(step == currentStep ? Color.accentColor : Color.primary.opacity(0.15))
                             .frame(width: 8, height: 8)
@@ -65,16 +74,16 @@ struct OnboardingView: View {
 
                 Spacer()
 
-                if currentStep > 0 {
+                if currentStep.previous != nil {
                     Button("Back") {
-                        withAnimation { currentStep -= 1 }
+                        withAnimation { goToPreviousStep() }
                     }
                     .buttonStyle(.bordered)
                 }
 
-                if currentStep < totalSteps - 1 {
+                if currentStep.next != nil {
                     Button("Continue") {
-                        withAnimation { currentStep += 1 }
+                        withAnimation { goToNextStep() }
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
@@ -92,12 +101,12 @@ struct OnboardingView: View {
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
         }
         .onChange(of: currentStep) {
-            if currentStep == 2 {
+            if currentStep == .model {
                 // Kick off the model download as soon as the user reaches it, so
                 // it runs in the background while they finish the rest of setup.
                 modelProvisioning.startDownloadIfNeeded()
             }
-            if currentStep == accessibilityStepIndex {
+            if currentStep == .accessibility {
                 startAccessibilityPolling()
             } else {
                 stopAccessibilityPolling()
@@ -105,7 +114,6 @@ struct OnboardingView: View {
         }
         .onDisappear {
             stopAccessibilityPolling()
-            cancelPendingAccessibilitySettingsOpen()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Refresh everything when user switches back to the app
@@ -126,15 +134,7 @@ struct OnboardingView: View {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 72))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.blue, .purple],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            AppIconView()
 
             VStack(spacing: 8) {
                 Text("Welcome to Superkeet")
@@ -156,6 +156,14 @@ struct OnboardingView: View {
             .padding(.horizontal, 40)
 
             Spacer()
+
+            // Set expectations up front for the one-time model download.
+            Text("First-time setup downloads the on-device speech model (about 670 MB), then Superkeet runs completely offline.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 8)
         }
         .padding(24)
     }
@@ -170,6 +178,30 @@ struct OnboardingView: View {
                 .foregroundColor(.primary)
             Spacer()
         }
+    }
+
+    private func statusPill(text: String, tint: Color, icon: String = "checkmark.circle.fill") -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundColor(tint)
+            Text(text)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(tint)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(tint.opacity(0.08))
+        .cornerRadius(10)
+    }
+
+    private func goToNextStep() {
+        guard let next = currentStep.next else { return }
+        currentStep = next
+    }
+
+    private func goToPreviousStep() {
+        guard let previous = currentStep.previous else { return }
+        currentStep = previous
     }
 
     // MARK: - Step 1: Microphone
@@ -201,19 +233,10 @@ struct OnboardingView: View {
                 }
 
                 if microphoneGranted {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        Text("Microphone access granted")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.green)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.green.opacity(0.08))
-                    .cornerRadius(10)
-                } else if microphoneRequested && AVCaptureDevice.authorizationStatus(for: .audio) == .denied {
-                    // Permission was denied — guide user to System Settings
+                    statusPill(text: "Microphone access granted", tint: .green)
+                } else if microphoneAccessDenied {
+                    // Already denied/restricted — skip the dead "Grant" click and
+                    // guide the user straight to System Settings.
                     VStack(spacing: 12) {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -305,26 +328,13 @@ struct OnboardingView: View {
                 .padding(.bottom, 8)
         }
         .padding(24)
-        .onAppear {
-            modelProvisioning.startDownloadIfNeeded()
-        }
     }
 
     @ViewBuilder
     private var modelStepStatusContent: some View {
         switch modelProvisioning.state {
         case .installed:
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                Text("Speech model ready")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.green)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(Color.green.opacity(0.08))
-            .cornerRadius(10)
+            statusPill(text: "Speech model ready", tint: .green)
 
         case .downloading(let progress):
             VStack(spacing: 12) {
@@ -479,17 +489,7 @@ struct OnboardingView: View {
 
                 if accessibilityGranted {
                     // Granted state
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        Text("Accessibility access granted")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.green)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.green.opacity(0.08))
-                    .cornerRadius(10)
+                    statusPill(text: "Accessibility access granted", tint: .green)
                 } else {
                     // Instructions + Open Settings button
                     VStack(spacing: 16) {
@@ -561,7 +561,78 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Step 4: Ready
+    // MARK: - Step 4: Output
+
+    private var outputStep: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 24) {
+                ZStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.12))
+                        .frame(width: 80, height: 80)
+                    Image(systemName: "doc.on.clipboard.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.blue)
+                }
+
+                VStack(spacing: 8) {
+                    Text("After Each Transcription")
+                        .font(.title)
+                        .fontWeight(.bold)
+
+                    Text("Choose what Superkeet does with your transcribed text.\nYou can change this anytime in Settings.")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                HStack(spacing: 12) {
+                    OnboardingOutputModeOption(
+                        title: "Copy to Clipboard",
+                        description: "Recommended. Safer default that lets you choose where to paste.",
+                        icon: "clipboard",
+                        isSelected: selectedOutputMode == .clipboard,
+                        action: { selectOutputMode(.clipboard) }
+                    )
+
+                    OnboardingOutputModeOption(
+                        title: "Paste Automatically",
+                        description: "Fastest flow. Pastes into the last active app and keeps the transcript on your clipboard.",
+                        icon: "doc.on.clipboard",
+                        isSelected: selectedOutputMode == .autoPaste,
+                        action: { selectOutputMode(.autoPaste) }
+                    )
+                }
+                .frame(maxWidth: 440)
+
+                if selectedOutputMode == .autoPaste && !accessibilityGranted {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("Auto-paste needs Accessibility access, which isn't enabled yet. Superkeet will still copy transcripts to the clipboard until you turn it on.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(10)
+                    .background(Color.orange.opacity(0.06))
+                    .cornerRadius(10)
+                    .frame(maxWidth: 440)
+                }
+            }
+
+            Spacer()
+
+            Text("Either way, your transcript is always copied to the clipboard.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 8)
+        }
+        .padding(24)
+    }
+
+    // MARK: - Step 5: Ready
 
     private var readyStep: some View {
         VStack(spacing: 0) {
@@ -612,46 +683,6 @@ struct OnboardingView: View {
                     )
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("After each transcription")
-                        .font(.headline)
-
-                    Text("Choose the default output flow for first run. You can still fine-tune clipboard, auto-paste, and history later in Settings.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    HStack(spacing: 12) {
-                        OnboardingOutputModeOption(
-                            title: "Copy to Clipboard",
-                            description: "Recommended. Safer default that lets you choose where to paste.",
-                            icon: "clipboard",
-                            isSelected: selectedOutputMode == .clipboard,
-                            action: { selectOutputMode(.clipboard) }
-                        )
-
-                        OnboardingOutputModeOption(
-                            title: "Paste Automatically",
-                            description: "Fastest flow. Pastes into the last active app and keeps the transcript on your clipboard.",
-                            icon: "doc.on.clipboard",
-                            isSelected: selectedOutputMode == .autoPaste,
-                            action: { selectOutputMode(.autoPaste) }
-                        )
-                    }
-
-                    if selectedOutputMode == .autoPaste && !accessibilityGranted {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundColor(.orange)
-                            Text("Auto-paste is selected, but Accessibility access is still off. Superkeet will still copy transcripts to the clipboard, but automatic paste will not work until you grant access.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(10)
-                        .background(Color.orange.opacity(0.06))
-                        .cornerRadius(10)
-                    }
-                }
-
                 // Engine warning (only shown if engine binary is missing)
                 if !readiness.diagnostics.engineBinaryExists {
                     HStack(alignment: .top, spacing: 10) {
@@ -690,7 +721,9 @@ struct OnboardingView: View {
                     .cornerRadius(10)
                 }
 
-                // Permission summary
+                // Setup summary — keep it simple. Always show the permissions the
+                // user understands; only surface the technical diagnostics
+                // (engine, input device, runtime directory) when one needs attention.
                 VStack(spacing: 8) {
                     permissionSummaryRow(
                         icon: "mic.fill",
@@ -703,25 +736,32 @@ struct OnboardingView: View {
                         granted: accessibilityGranted
                     )
                     permissionSummaryRow(
-                        icon: "waveform",
-                        title: "Speech Engine",
-                        granted: readiness.diagnostics.engineBinaryExists
-                    )
-                    permissionSummaryRow(
                         icon: "arrow.down.circle",
                         title: "Speech Model",
                         granted: modelProvisioning.state.isInstalled
                     )
-                    permissionSummaryRow(
-                        icon: "mic.badge.plus",
-                        title: "Input Device",
-                        granted: inputDeviceReady
-                    )
-                    permissionSummaryRow(
-                        icon: "folder.badge.gearshape",
-                        title: "Runtime Directory",
-                        granted: readiness.diagnostics.runtimeDirectoryWritable
-                    )
+
+                    if !readiness.diagnostics.engineBinaryExists {
+                        permissionSummaryRow(
+                            icon: "waveform",
+                            title: "Speech Engine",
+                            granted: false
+                        )
+                    }
+                    if !inputDeviceReady {
+                        permissionSummaryRow(
+                            icon: "mic.badge.plus",
+                            title: "Input Device",
+                            granted: false
+                        )
+                    }
+                    if !readiness.diagnostics.runtimeDirectoryWritable {
+                        permissionSummaryRow(
+                            icon: "folder.badge.gearshape",
+                            title: "Runtime Directory",
+                            granted: false
+                        )
+                    }
                 }
                 .padding(14)
                 .background(Color.primary.opacity(0.03))
@@ -842,8 +882,15 @@ struct OnboardingView: View {
 
     // MARK: - Actions
 
+    /// True when microphone access is explicitly denied or restricted. macOS
+    /// won't show the permission prompt again in these states, so we route the
+    /// user to System Settings instead of offering a no-op "Grant" button.
+    private var microphoneAccessDenied: Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        return status == .denied || status == .restricted
+    }
+
     private func requestMicrophoneAccess() {
-        microphoneRequested = true
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             DispatchQueue.main.async {
                 microphoneGranted = granted
@@ -853,38 +900,22 @@ struct OnboardingView: View {
     }
 
     private func openMicrophoneSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-            NSWorkspace.shared.open(url)
-        }
+        SystemSettingsLinks.openMicrophone()
     }
 
     private func triggerAccessibilityPromptIfNeeded() {
         guard !didTriggerAccessibilityPrompt && !accessibilityGranted else { return }
         didTriggerAccessibilityPrompt = true
-        cancelPendingAccessibilitySettingsOpen()
 
-        // This call adds "Superkeet" to the Accessibility list in System Settings
-        // and shows the macOS system prompt asking the user to open System Settings.
+        // Registers "Superkeet" in the Accessibility list and shows the native macOS
+        // prompt (which has its own "Open System Settings" button). We intentionally
+        // do NOT auto-open System Settings here — the user can read the on-screen
+        // steps and click "Open System Settings" when they're ready.
         hotkeyManager.checkAccessibility()
-
-        // After a short delay, open System Settings directly to the Accessibility pane
-        // so the user just needs to find Superkeet and toggle the switch.
-        let workItem = DispatchWorkItem {
-            openAccessibilitySettings()
-        }
-        pendingAccessibilitySettingsOpen = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
-    }
-
-    private func cancelPendingAccessibilitySettingsOpen() {
-        pendingAccessibilitySettingsOpen?.cancel()
-        pendingAccessibilitySettingsOpen = nil
     }
 
     private func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
+        SystemSettingsLinks.openAccessibility()
     }
 
     // MARK: - Accessibility Polling

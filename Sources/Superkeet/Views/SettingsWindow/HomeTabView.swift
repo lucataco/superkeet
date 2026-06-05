@@ -1,5 +1,4 @@
 import SwiftUI
-import Carbon
 import AVFoundation
 import AppKit
 import ServiceManagement
@@ -227,6 +226,7 @@ struct HomeTabView: View {
                 detail: loginItemError
                     ?? (settings.launchAtLoginEnabled ? "Starts automatically at login." : "Optional. Start at login."),
                 isComplete: settings.launchAtLoginEnabled,
+                isOptional: true,
                 buttonTitle: settings.launchAtLoginEnabled ? "Disable" : "Enable",
                 action: { toggleLaunchAtLogin() }
             )
@@ -236,9 +236,10 @@ struct HomeTabView: View {
     @ViewBuilder
     private var checklistSection: some View {
         let allChecks = checks
-        let incomplete = allChecks.filter { !$0.isComplete }
+        let requiredChecks = allChecks.filter { !$0.isOptional }
+        let incomplete = requiredChecks.filter { !$0.isComplete }
         let allComplete = incomplete.isEmpty
-        let hasCompleteItems = incomplete.count < allChecks.count
+        let hasCompleteItems = incomplete.count < requiredChecks.count
 
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -256,7 +257,7 @@ struct HomeTabView: View {
             }
 
             if allComplete {
-                ReadyRow(count: allChecks.count)
+                ReadyRow(count: requiredChecks.count)
                 if showAllChecks {
                     checkRows(allChecks)
                 }
@@ -291,7 +292,7 @@ struct HomeTabView: View {
             if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
                 return issue
             }
-            if readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled) {
+            if isReadyForSelectedConfiguration {
                 return "Run the daemon once to finish setup."
             }
             if configuredOutputBlocked {
@@ -304,6 +305,12 @@ struct HomeTabView: View {
         }
         if configuredOutputBlocked {
             return "\(selectedOutputModeName) needs Accessibility access."
+        }
+        if readiness.needsModelDownload {
+            return "Download the speech model to record."
+        }
+        if readiness.hasRecordingBlockingIssue {
+            return "Grant microphone access and pick an input device."
         }
         if readiness.isReadyForBasicRecording {
             return readiness.issues.contains(.accessibility)
@@ -323,21 +330,34 @@ struct HomeTabView: View {
         if configuredOutputBlocked {
             return "One step left"
         }
+        if !readiness.isReadyForDaemon {
+            return "Setup required"
+        }
+        if readiness.needsModelDownload || readiness.hasRecordingBlockingIssue {
+            return "Setup needs attention"
+        }
         return readiness.statusText
     }
 
     private var statusColor: Color {
         if !settings.hasVerifiedSetup {
-            return readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled) ? .orange : .red
+            return isReadyForSelectedConfiguration ? .orange : .red
         }
         if configuredOutputBlocked {
             return .orange
         }
-        return readiness.isReadyForDaemon ? .green : .orange
+        if !readiness.isReadyForDaemon {
+            return .red
+        }
+        return isReadyForSelectedConfiguration ? .green : .orange
     }
 
     private var configuredOutputBlocked: Bool {
         readiness.hasConfiguredOutputBlockingIssue(autoPasteEnabled: settings.autoPasteEnabled)
+    }
+
+    private var isReadyForSelectedConfiguration: Bool {
+        readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled)
     }
 
     private var selectedOutputModeName: String {
@@ -431,6 +451,7 @@ struct HomeTabView: View {
 
     private func refreshReadiness() {
         settings.syncLaunchAtLoginStatus()
+        modelProvisioning.refreshInstalledState()
         let refreshed = AppReadiness.current()
         readiness = refreshed
         syncAccessibilityState(isGranted: !refreshed.issues.contains(.accessibility))
@@ -553,17 +574,13 @@ struct HomeTabView: View {
         case .authorized:
             refreshReadiness()
         default:
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                NSWorkspace.shared.open(url)
-            }
+            SystemSettingsLinks.openMicrophone()
         }
     }
 
     private func openAccessibilitySettings() {
         _ = hotkeyManager.checkAccessibility()
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
+        SystemSettingsLinks.openAccessibility()
         let granted = hotkeyManager.checkAccessibilitySilently()
         hotkeyManager.accessibilityGranted = granted
         if granted {
@@ -652,6 +669,7 @@ private struct SetupCheck: Identifiable {
     let title: String
     let detail: String
     let isComplete: Bool
+    var isOptional: Bool = false
     let buttonTitle: String
     let action: () -> Void
 }
@@ -679,7 +697,7 @@ private struct ReadyRow: View {
 
 // MARK: - Hotkey Row
 
-struct HotkeyRow: View {
+private struct HotkeyRow: View {
     let title: String
     let description: String
     let displayName: String
@@ -707,7 +725,7 @@ struct HotkeyRow: View {
     }
 }
 
-struct HotkeyBadge: View {
+private struct HotkeyBadge: View {
     let displayName: String
     var isEditing: Bool = false
 
@@ -734,7 +752,7 @@ struct HotkeyBadge: View {
 
 // MARK: - Interactive Hotkey Recorder
 
-struct InteractiveHotkeyRecorder: View {
+private struct InteractiveHotkeyRecorder: View {
     @StateObject private var recorderState = RecorderState()
 
     let onRecord: (Int, Int, String) -> Void

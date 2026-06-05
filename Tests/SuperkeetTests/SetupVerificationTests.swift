@@ -41,17 +41,23 @@ final class SetupVerificationTests: XCTestCase {
         XCTAssertTrue(report.isReadyForDaemon)
     }
 
+    func testStatusTextDoesNotTreatRecordingBlockersAsReady() {
+        XCTAssertEqual(makeReport(issues: [.accessibility]).statusText, "Ready with limited automation")
+        XCTAssertEqual(makeReport(issues: [.model]).statusText, "Setup needs attention")
+        XCTAssertEqual(makeReport(issues: [.microphone]).statusText, "Setup needs attention")
+    }
+
     private func makeReport(issues: [AppReadinessIssue]) -> AppReadinessReport {
         AppReadinessReport(
             issues: issues,
             diagnostics: AppDiagnostics(
-                microphoneStatus: .authorized,
-                availableInputDeviceNames: ["Built-in Microphone"],
-                engineBinaryExists: true,
-                modelInstalled: true,
+                microphoneStatus: issues.contains(.microphone) ? .denied : .authorized,
+                availableInputDeviceNames: issues.contains(.inputDevice) ? [] : ["Built-in Microphone"],
+                engineBinaryExists: !issues.contains(.engine),
+                modelInstalled: !issues.contains(.model),
                 runtimeDirectory: URL(fileURLWithPath: "/tmp/superkeet-tests"),
-                runtimeDirectoryWritable: true,
-                configuredInputDeviceFound: true
+                runtimeDirectoryWritable: !issues.contains(.runtimeDirectory),
+                configuredInputDeviceFound: !issues.contains(.inputDevice)
             )
         )
     }

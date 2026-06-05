@@ -18,18 +18,26 @@ def main() -> int:
     sha256 = sys.argv[3]
 
     text = cask_path.read_text()
-    updated = re.sub(
+    updated, version_count = re.subn(
         r'(^\s*version\s+")([^"]+)(")',
         rf"\g<1>{version}\g<3>",
         text,
         flags=re.MULTILINE,
     )
-    updated = re.sub(
+    updated, sha_count = re.subn(
         r'(^\s*sha256\s+")([^"]+)(")',
         rf"\g<1>{sha256}\g<3>",
         updated,
         flags=re.MULTILINE,
     )
+
+    if version_count != 1 or sha_count != 1:
+        print(
+            f"failed to update {cask_path}: expected one version and one sha256 "
+            f"replacement, got version={version_count}, sha256={sha_count}",
+            file=sys.stderr,
+        )
+        return 1
 
     if updated == text:
         print(f"no changes needed for {cask_path}")

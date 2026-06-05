@@ -18,7 +18,12 @@ final class RecordingOverlayWindowController {
     private init() {}
 
     func show() {
-        guard window == nil else { return }
+        if let window {
+            if !window.isVisible {
+                window.orderFrontRegardless()
+            }
+            return
+        }
 
         // Don't show overlay if user chose "none"
         let style = AppSettings.shared.recordingOverlayStyle
@@ -43,6 +48,8 @@ final class RecordingOverlayWindowController {
         window.backgroundColor = .clear
         window.level = .floating
         window.hasShadow = false
+        window.hidesOnDeactivate = false
+        window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 

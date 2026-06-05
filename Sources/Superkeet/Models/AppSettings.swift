@@ -59,10 +59,6 @@ final class AppSettings: ObservableObject {
         return missingBundledBinaryPlaceholderPath
     }
 
-    var hasBundledParakeetBinary: Bool {
-        bundledBinaryPath != nil
-    }
-
     /// Directory the bundled engine reads model files from.
     ///
     /// When `modelDirectory` is set (Advanced settings), it wins. Otherwise we

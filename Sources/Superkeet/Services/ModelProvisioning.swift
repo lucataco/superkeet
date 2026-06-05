@@ -86,6 +86,15 @@ final class ModelProvisioning: ObservableObject {
         }
     }
 
+    /// Cancel an active download, if any. Used when startup is cancelled during
+    /// quit/stop so the app does not wait for a first-run model download to finish.
+    func cancelInFlightDownload() {
+        lock.lock()
+        let task = inFlight
+        lock.unlock()
+        task?.cancel()
+    }
+
     /// Ensure the model is present, downloading it if necessary. Coalesces with
     /// any in-flight download so onboarding and daemon-start never double-fetch.
     func ensureModelAvailable() async throws {
@@ -122,37 +131,52 @@ final class ModelProvisioning: ObservableObject {
     }
 
     private func runDownload() async throws {
-        setState(.checking)
+        do {
+            try Task.checkCancellation()
+            setState(.checking)
 
-        if let diskIssue = insufficientDiskSpaceMessage() {
-            fail(diskIssue)
-            throw ModelProvisioningError.message(diskIssue)
+            if let diskIssue = insufficientDiskSpaceMessage() {
+                fail(diskIssue)
+                throw ModelProvisioningError.message(diskIssue)
+            }
+
+            let binaryPath = settings.parakeetBinaryPath
+            guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
+                let message = "Superkeet couldn't find its bundled speech engine. Reinstall the app to restore it."
+                fail(message)
+                throw ModelProvisioningError.message(message)
+            }
+
+            let modelDir = settings.effectiveModelDirectory
+            try? FileManager.default.createDirectory(
+                atPath: modelDir,
+                withIntermediateDirectories: true
+            )
+
+            let outcome = try await runDownloadProcess(binaryPath: binaryPath, modelDir: modelDir)
+
+            try Task.checkCancellation()
+            guard outcome.exitCode == 0 else {
+                let detail = outcome.errorMessage
+                    ?? "The speech model download failed (exit code \(outcome.exitCode))."
+                fail(detail)
+                throw ModelProvisioningError.message(detail)
+            }
+
+            setState(.verifying)
+            try Task.checkCancellation()
+            guard isModelInstalled() else {
+                let detail = outcome.errorMessage
+                    ?? "The speech model download finished, but the files could not be verified. Please try again."
+                fail(detail)
+                throw ModelProvisioningError.message(detail)
+            }
+
+            setState(.installed)
+        } catch is CancellationError {
+            setState(isModelInstalled() ? .installed : .notInstalled)
+            throw CancellationError()
         }
-
-        let binaryPath = settings.parakeetBinaryPath
-        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-            let message = "Superkeet couldn't find its bundled speech engine. Reinstall the app to restore it."
-            fail(message)
-            throw ModelProvisioningError.message(message)
-        }
-
-        let modelDir = settings.effectiveModelDirectory
-        try? FileManager.default.createDirectory(
-            atPath: modelDir,
-            withIntermediateDirectories: true
-        )
-
-        let outcome = try await runDownloadProcess(binaryPath: binaryPath, modelDir: modelDir)
-
-        setState(.verifying)
-        guard isModelInstalled() else {
-            let detail = outcome.errorMessage
-                ?? "The speech model download finished, but the files could not be verified. Please try again."
-            fail(detail)
-            throw ModelProvisioningError.message(detail)
-        }
-
-        setState(.installed)
     }
 
     // MARK: - Subprocess + NDJSON parsing
@@ -189,40 +213,54 @@ final class ModelProvisioning: ObservableObject {
             collector.appendStderr(data)
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { [weak self] proc in
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
+        let cancellationState = DownloadCancellationState()
 
-                // Drain anything buffered after the last readability callback.
-                let remaining = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                if !remaining.isEmpty {
-                    for line in lineBuffer.consume(remaining) {
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { [weak self] proc in
+                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                    stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+                    // Drain anything buffered after the last readability callback.
+                    let remaining = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    if !remaining.isEmpty {
+                        for line in lineBuffer.consume(remaining) {
+                            self?.handleLine(line, collector: collector)
+                        }
+                    }
+                    if let line = lineBuffer.drainRemainder() {
                         self?.handleLine(line, collector: collector)
                     }
+
+                    let exitCode = proc.terminationStatus
+                    let message: String?
+                    if let reported = collector.errorMessage {
+                        message = reported
+                    } else if exitCode != 0 {
+                        message = collector.stderrExcerpt()
+                            ?? "The speech model download failed (exit code \(exitCode))."
+                    } else {
+                        message = nil
+                    }
+
+                    continuation.resume(returning: DownloadOutcome(exitCode: exitCode, errorMessage: message))
                 }
 
-                let exitCode = proc.terminationStatus
-                let message: String?
-                if let reported = collector.errorMessage {
-                    message = reported
-                } else if exitCode != 0 {
-                    message = collector.stderrExcerpt()
-                        ?? "The speech model download failed (exit code \(exitCode))."
-                } else {
-                    message = nil
+                do {
+                    let didRun = try cancellationState.runUnlessCancelled(process)
+                    if !didRun {
+                        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                        stderrPipe.fileHandleForReading.readabilityHandler = nil
+                        continuation.resume(throwing: CancellationError())
+                    }
+                } catch {
+                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                    stderrPipe.fileHandleForReading.readabilityHandler = nil
+                    continuation.resume(throwing: error)
                 }
-
-                continuation.resume(returning: DownloadOutcome(exitCode: exitCode, errorMessage: message))
             }
-
-            do {
-                try process.run()
-            } catch {
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-                continuation.resume(throwing: error)
-            }
+        } onCancel: {
+            cancellationState.cancel(process)
         }
     }
 
@@ -409,8 +447,6 @@ private struct DownloadEvent: Decodable {
     let downloaded: Int64?
     let status: String?
     let message: String?
-    let variant: String?
-    let modelDir: String?
 }
 
 /// Accumulates raw stdout bytes and splits them into complete NDJSON lines.
@@ -430,6 +466,16 @@ private final class NDJSONLineBuffer {
             buffer.removeSubrange(buffer.startIndex...newlineIndex)
         }
         return lines
+    }
+
+    func drainRemainder() -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !buffer.isEmpty else { return nil }
+        let line = buffer
+        buffer.removeAll(keepingCapacity: true)
+        return line
     }
 }
 
@@ -460,5 +506,30 @@ private final class DownloadCollector {
         let text = String(data: stderrData, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return text.isEmpty ? nil : text
+    }
+}
+
+private final class DownloadCancellationState {
+    private let lock = NSLock()
+    private var _isCancelled = false
+
+    func runUnlessCancelled(_ process: Process) throws -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !_isCancelled else { return false }
+        try process.run()
+        return true
+    }
+
+    func cancel(_ process: Process) {
+        lock.lock()
+        _isCancelled = true
+        let shouldTerminate = process.isRunning
+        lock.unlock()
+
+        if shouldTerminate {
+            process.terminate()
+        }
     }
 }

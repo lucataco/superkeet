@@ -103,6 +103,9 @@ struct RecordingTabView: View {
             refreshState.cancel()
             isLoadingDevices = false
         }
+        .onChange(of: settings.modelDirectory) {
+            ModelProvisioning.shared.refreshInstalledState()
+        }
     }
 
     private func refreshDevices() {

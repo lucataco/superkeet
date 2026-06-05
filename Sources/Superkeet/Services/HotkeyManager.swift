@@ -86,24 +86,23 @@ final class HotkeyManager: ObservableObject {
             (1 << CGEventType.keyUp.rawValue) |
             (1 << CGEventType.flagsChanged.rawValue)
 
+        let retained = Unmanaged.passRetained(self)
         let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: eventMask,
             callback: hotkeyCallback,
-            userInfo: { [self] in
-                let retained = Unmanaged.passRetained(self)
-                self.retainedSelf = retained
-                return retained.toOpaque()
-            }()
+            userInfo: retained.toOpaque()
         )
 
         guard let tap = tap else {
+            retained.release()
             hotkeyLog.error("Failed to create event tap. CGEvent.tapCreate returned nil.")
             return
         }
 
+        self.retainedSelf = retained
         self.eventTap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         self.runLoopSource = source

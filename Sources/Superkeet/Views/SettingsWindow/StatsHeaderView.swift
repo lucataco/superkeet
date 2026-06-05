@@ -30,7 +30,7 @@ struct StatsHeaderView: View {
 
 // MARK: - Stat Tile
 
-struct StatTile: View {
+private struct StatTile: View {
     let value: String
     let label: String
     var unit: String? = nil

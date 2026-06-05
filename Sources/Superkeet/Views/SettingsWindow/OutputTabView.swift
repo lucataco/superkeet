@@ -254,7 +254,7 @@ struct OutputTabView: View {
 
 // MARK: - Visualization Option Card
 
-struct VisualizationOption: View {
+private struct VisualizationOption: View {
     let title: String
     let description: String
     let icon: String

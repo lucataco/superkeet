@@ -10,26 +10,20 @@ final class PasteService {
     private init() {}
 
     /// Routes text to the configured output destinations.
-    func deliverText(_ text: String) {
-        let settings = AppSettings.shared
-        let decision = OutputRouting.decision(
-            clipboardCopyEnabled: settings.clipboardCopyEnabled,
-            autoPasteEnabled: settings.autoPasteEnabled,
-            saveHistoryEnabled: settings.saveHistoryEnabled
-        )
-
+    func deliverText(_ text: String, decision: OutputRoutingDecision, targetProcessIdentifier: pid_t? = nil) {
         if decision.shouldAutoPaste {
             guard AXIsProcessTrusted() else {
                 copyToClipboard(text)
                 DispatchQueue.main.async {
-                    settings.runtimeIssue = "Paste Automatically needs Accessibility access. Copied to clipboard instead."
+                    AppSettings.shared.runtimeIssue = "Paste Automatically needs Accessibility access. Copied to clipboard instead."
                 }
                 return
             }
 
             // Save current clipboard, set transcription, paste, then restore original clipboard
             let savedClipboard = snapshotClipboard()
-            copyToClipboard(text)
+            let transcriptChangeCount = copyToClipboard(text)
+            reactivateTargetApplication(processIdentifier: targetProcessIdentifier)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.simulatePaste()
@@ -37,7 +31,7 @@ final class PasteService {
                 // (unless user also wants clipboard copy, in which case keep the transcription)
                 if !decision.shouldKeepClipboardAfterPaste {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        self.restoreClipboard(savedClipboard)
+                        self.restoreClipboard(savedClipboard, ifCurrentChangeCount: transcriptChangeCount)
                     }
                 }
             }
@@ -46,11 +40,26 @@ final class PasteService {
         }
     }
 
+    /// Bring the app that was active when recording started back to the front so
+    /// auto-paste goes where the user initiated dictation, not wherever focus
+    /// happened to land while the transcription was finishing.
+    private func reactivateTargetApplication(processIdentifier: pid_t?) {
+        guard let processIdentifier,
+              let app = NSRunningApplication(processIdentifier: processIdentifier),
+              !app.isTerminated else {
+            return
+        }
+
+        app.activate(options: [])
+    }
+
     /// Copy text to system clipboard
-    func copyToClipboard(_ text: String) {
+    @discardableResult
+    func copyToClipboard(_ text: String) -> Int {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        return pasteboard.changeCount
     }
 
     // MARK: - Clipboard Snapshot & Restore
@@ -70,8 +79,10 @@ final class PasteService {
     }
 
     /// Restore previously saved clipboard contents.
-    private func restoreClipboard(_ items: [[NSPasteboard.PasteboardType: Data]]) {
+    private func restoreClipboard(_ items: [[NSPasteboard.PasteboardType: Data]], ifCurrentChangeCount expectedChangeCount: Int) {
         let pb = NSPasteboard.general
+        guard pb.changeCount == expectedChangeCount else { return }
+
         pb.clearContents()
 
         guard !items.isEmpty else { return }

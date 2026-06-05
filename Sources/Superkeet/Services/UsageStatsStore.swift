@@ -24,6 +24,7 @@ final class UsageStatsStore: ObservableObject {
     private let fileURL: URL
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let persistenceQueue = DispatchQueue(label: "com.superkeet.usage-stats-store", qos: .utility)
     private var saveDebounceTask: DispatchWorkItem?
 
     private let dayFormatter: DateFormatter = {
@@ -35,14 +36,7 @@ final class UsageStatsStore: ObservableObject {
     }()
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let superkeetDir = appSupport.appendingPathComponent("Superkeet", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: superkeetDir,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        self.fileURL = superkeetDir.appendingPathComponent("usage-stats.json")
+        self.fileURL = AppPaths.applicationSupportDirectory.appendingPathComponent("usage-stats.json")
         load()
     }
 
@@ -68,7 +62,10 @@ final class UsageStatsStore: ObservableObject {
     func flushPendingSave() {
         saveDebounceTask?.cancel()
         saveDebounceTask = nil
-        writeBuckets(buckets)
+        let snapshot = buckets
+        persistenceQueue.sync {
+            writeBuckets(snapshot)
+        }
     }
 
     // MARK: - Derived stats (all-time)
@@ -126,7 +123,7 @@ final class UsageStatsStore: ObservableObject {
     }
 
     private func performSave(_ snapshot: [String: DayBucket]) {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        persistenceQueue.async { [weak self] in
             guard let self = self else { return }
             self.writeBuckets(snapshot)
         }

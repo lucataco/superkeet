@@ -82,6 +82,7 @@ resolve_parakeet_binary() {
 
 build_parakeet_if_needed() {
     if [[ -n "$PARAKEET_SOURCE_DIR" && ! -x "${PARAKEET_SOURCE_DIR}/target/release/parakeet" ]]; then
+        require_command cargo
         printf '==> Building bundled parakeet from %s...\n' "$PARAKEET_SOURCE_DIR"
         cargo build --release --bin parakeet --manifest-path "${PARAKEET_SOURCE_DIR}/Cargo.toml"
     fi
@@ -93,17 +94,18 @@ zip_app() {
     ditto -c -k --sequesterRsrc --keepParent "$BUNDLE_DIR" "$zip_path"
 }
 
+notarization_enabled() {
+    [[ -n "$NOTARY_APPLE_ID" && -n "$NOTARY_TEAM_ID" && -n "$NOTARY_PASSWORD" && "$CODESIGN_IDENTITY" != "-" ]]
+}
+
 notarize_and_staple() {
     local zip_path="$1"
-    local notarization_enabled=false
-
-    if [[ -n "$NOTARY_APPLE_ID" && -n "$NOTARY_TEAM_ID" && -n "$NOTARY_PASSWORD" && "$CODESIGN_IDENTITY" != "-" ]]; then
-        notarization_enabled=true
-    fi
-
-    if [[ "$notarization_enabled" != true ]]; then
+    if ! notarization_enabled; then
         return 0
     fi
+
+    require_command xcrun
+    require_command spctl
 
     printf '==> Submitting artifact for notarization...\n'
     xcrun notarytool submit "$zip_path" \
@@ -128,13 +130,10 @@ verify_audio_entitlement() {
 }
 
 require_command swift
-require_command cargo
 require_command codesign
 require_command ditto
 require_command grep
 require_command shasum
-require_command spctl
-require_command xcrun
 require_command /usr/libexec/PlistBuddy
 
 validate_release_prerequisites
@@ -195,7 +194,7 @@ printf '==> Creating release archive...\n'
 zip_app "$ZIP_PATH"
 notarize_and_staple "$ZIP_PATH"
 
-if [[ -n "$NOTARY_APPLE_ID" && -n "$NOTARY_TEAM_ID" && -n "$NOTARY_PASSWORD" && "$CODESIGN_IDENTITY" != "-" ]]; then
+if notarization_enabled; then
     printf '==> Repacking notarized app...\n'
     zip_app "$ZIP_PATH"
 fi

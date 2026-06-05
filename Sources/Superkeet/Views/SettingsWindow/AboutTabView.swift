@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 /// About tab showing app version and credits
 struct AboutTabView: View {
@@ -15,15 +14,7 @@ struct AboutTabView: View {
         VStack(spacing: 24) {
             Spacer()
 
-            // App icon
-            if let appIcon = NSImage(named: "AppIcon") ?? NSApp.applicationIconImage {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 96, height: 96)
-                    .cornerRadius(20)
-                    .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
-            }
+            AppIconView()
 
             // App name and version
             VStack(spacing: 4) {
@@ -52,7 +43,7 @@ struct AboutTabView: View {
                     .foregroundColor(.secondary)
 
                 VStack(spacing: 4) {
-                    creditRow("Speech Engine", "Parakeet TDT 0.6B v2 (ONNX)")
+                    creditRow("Speech Engine", "Parakeet TDT 0.6B v3 (ONNX)")
                     creditRow("Voice Detection", "Silero VAD v5")
                     creditRow("Inference", "ONNX Runtime with CoreML")
                     creditRow("Framework", "SwiftUI + AppKit")

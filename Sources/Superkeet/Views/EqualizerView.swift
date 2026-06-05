@@ -1,6 +1,30 @@
 import SwiftUI
 
-/// Animated equalizer bars that respond to audio levels (expanded mode)
+/// Shared "hot" color ramp + gain used by the recording equalizers so the dot
+/// (mini) and bar (classic) styles stay visually consistent: dim cyan when
+/// silent → bright green/yellow → hot red when the mic hears loud audio.
+private enum EqualizerPalette {
+    /// Extra gain applied to incoming levels so normal speech reads strongly.
+    static let displayGain: CGFloat = 1.6
+
+    /// Normalize + gain-boost a raw level into the 0...1 display range.
+    static func boostedLevel(_ raw: CGFloat) -> CGFloat {
+        min(1, max(0, raw * displayGain))
+    }
+
+    /// Heat-map color that exaggerates with level.
+    static func color(for level: CGFloat) -> Color {
+        let clamped = min(max(level, 0), 1)
+        let hue = 0.5 - 0.5 * clamped        // 0.5 cyan -> 0.0 red
+        let saturation = 0.85 + 0.15 * clamped
+        let brightness = 0.9 + 0.1 * clamped
+        let opacity = 0.35 + 0.65 * clamped  // faint when silent, vivid when loud
+        return Color(hue: hue, saturation: saturation, brightness: brightness, opacity: opacity)
+    }
+}
+
+/// Animated equalizer bars that respond to audio levels (expanded mode).
+/// Shares the same hot color ramp and gain as the mini dot equalizer.
 struct EqualizerView: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
 
@@ -13,29 +37,32 @@ struct EqualizerView: View {
     var body: some View {
         HStack(spacing: barSpacing) {
             ForEach(0..<barCount, id: \.self) { index in
+                let level = EqualizerPalette.boostedLevel(CGFloat(audioMonitor.levels[index]))
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(barGradient(for: index))
+                    .fill(barGradient(for: level))
                     .frame(
                         width: barWidth,
-                        height: max(4, CGFloat(audioMonitor.levels[index]) * maxHeight)
+                        height: max(4, level * maxHeight)
+                    )
+                    .shadow(
+                        color: EqualizerPalette.color(for: level).opacity(Double(level) * 0.8),
+                        radius: level * 3
                     )
                     .animation(
-                        .easeInOut(duration: 0.08),
-                        value: audioMonitor.levels[index]
+                        .easeOut(duration: 0.08),
+                        value: level
                     )
             }
         }
         .frame(height: maxHeight)
     }
 
-    private func barGradient(for index: Int) -> LinearGradient {
-        let level = CGFloat(audioMonitor.levels[index])
-        let baseColor: Color = level > 0.7 ? .orange : level > 0.4 ? .green : .cyan
-
+    private func barGradient(for level: CGFloat) -> LinearGradient {
+        // Slightly cooler/dimmer at the base, vivid at the tip.
         return LinearGradient(
             gradient: Gradient(colors: [
-                baseColor.opacity(0.6),
-                baseColor
+                EqualizerPalette.color(for: level * 0.65),
+                EqualizerPalette.color(for: level)
             ]),
             startPoint: .bottom,
             endPoint: .top
@@ -43,74 +70,54 @@ struct EqualizerView: View {
     }
 }
 
-/// Dot-style equalizer for compact recording overlay — small circles that
-/// pulse in size and opacity based on audio levels, matching the Superwhisper style.
-/// Uses a fixed width so the layout never collapses when levels are low.
+/// Dot-style equalizer for compact recording overlay — capsules that sit as
+/// small dots when idle and stretch tall while shifting through a hot color
+/// ramp as soon as the mic picks up the user's voice. The exaggerated height
+/// and color make it obvious that audio is being heard.
 struct DotEqualizerView: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
 
     let dotCount = 7
     let dotSpacing: CGFloat = 3
-    let dotSize: CGFloat = 5
+    /// Width of each capsule (also the diameter of the resting dot).
+    let dotWidth: CGFloat = 5
+    /// Resting height — a round dot when there's no audio.
+    private var minHeight: CGFloat { dotWidth }
+    /// Fully stretched height when the mic hears loud audio.
+    let maxHeight: CGFloat = 18
 
     var body: some View {
         HStack(spacing: dotSpacing) {
             ForEach(0..<dotCount, id: \.self) { index in
                 let level = audioLevel(for: index)
-                Circle()
-                    .fill(dotColor(for: level))
-                    .frame(width: dotSize, height: dotSize)
-                    .scaleEffect(0.7 + 0.6 * level)
+                Capsule()
+                    .fill(EqualizerPalette.color(for: level))
+                    .frame(width: dotWidth, height: dotHeight(for: level))
+                    .shadow(
+                        color: EqualizerPalette.color(for: level).opacity(Double(level) * 0.9),
+                        radius: level * 4
+                    )
                     .animation(
-                        .easeInOut(duration: 0.1),
+                        .easeOut(duration: 0.1),
                         value: level
                     )
             }
         }
-        // Fixed width prevents the HStack from collapsing when dots are small
-        .frame(width: CGFloat(dotCount) * dotSize + CGFloat(dotCount - 1) * dotSpacing, height: dotSize * 1.3)
+        // Fixed size keeps the pill layout stable as capsules grow/shrink.
+        .frame(
+            width: CGFloat(dotCount) * dotWidth + CGFloat(dotCount - 1) * dotSpacing,
+            height: maxHeight
+        )
     }
 
+    /// Normalized, gain-boosted level (0...1) for a given dot.
     private func audioLevel(for index: Int) -> CGFloat {
         let mappedIndex = min(index, audioMonitor.levels.count - 1)
-        return CGFloat(audioMonitor.levels[mappedIndex])
+        return EqualizerPalette.boostedLevel(CGFloat(audioMonitor.levels[mappedIndex]))
     }
 
-    private func dotColor(for level: CGFloat) -> Color {
-        if level > 0.6 {
-            return .cyan
-        } else if level > 0.3 {
-            return .cyan.opacity(0.8)
-        } else {
-            return .cyan.opacity(0.5)
-        }
-    }
-}
-
-/// Compact equalizer for the menu bar status area
-struct MiniEqualizerView: View {
-    @ObservedObject var audioMonitor: AudioLevelMonitor
-
-    let barCount = 4
-    let barSpacing: CGFloat = 1.5
-    let barWidth: CGFloat = 2
-    let maxHeight: CGFloat = 12
-
-    var body: some View {
-        HStack(spacing: barSpacing) {
-            ForEach(0..<barCount, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.white)
-                    .frame(
-                        width: barWidth,
-                        height: max(2, CGFloat(audioMonitor.levels[index * 2]) * maxHeight)
-                    )
-                    .animation(
-                        .easeInOut(duration: 0.08),
-                        value: audioMonitor.levels[index * 2]
-                    )
-            }
-        }
-        .frame(height: maxHeight)
+    /// Stretches from a small resting dot up to a tall pill with the level.
+    private func dotHeight(for level: CGFloat) -> CGFloat {
+        minHeight + (maxHeight - minHeight) * level
     }
 }

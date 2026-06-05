@@ -300,9 +300,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @objc private func openAccessibilitySettings() {
         _ = hotkeyManager.checkAccessibility()
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
+        SystemSettingsLinks.openAccessibility()
         hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
     }
 
