@@ -30,8 +30,9 @@ This repo is still in active development. The app now favors a simpler setup-fir
 
 - macOS 14.0+
 - Apple Silicon Mac
+- ~1.3 GB free disk space and a network connection for the one-time speech-model download on first run
 - Full Xcode recommended for `swift run`
-- A runnable `parakeet` binary available at install time so `./install.sh` can embed it in the app bundle
+- For building from source: a runnable `parakeet` binary available at build time so `./install.sh` can embed it in the app bundle (end users installing a release do **not** need this — the engine is bundled and the model is downloaded automatically)
 
 ### Permissions
 
@@ -103,7 +104,9 @@ swift build -c release
 
 ### First launch behavior
 
-On startup, Superkeet attempts to start the bundled Parakeet daemon in the background. The app waits for the daemon to finish model loading instead of failing immediately after a fixed half-second delay. If startup still fails, the Setup tab shows the latest diagnostics and daemon stderr excerpt.
+On first launch, Superkeet downloads the on-device speech model (~670 MB, INT8) once via the bundled engine's `parakeet download --progress json`. Onboarding shows a live progress step for this download, and the daemon start path provisions the model automatically if it is still missing (for example, if onboarding was skipped). The model is stored at `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3/` and verified by SHA-256, so subsequent launches reuse it and require no network.
+
+After the model is present, Superkeet starts the bundled Parakeet daemon in the background and waits for it to finish loading instead of failing after a fixed delay. If startup fails, the Setup tab shows the latest diagnostics and daemon stderr excerpt, and the Speech Model check offers a retry/re-download.
 
 ## Usage
 
@@ -167,7 +170,7 @@ This keeps the default flow safer and simpler. Auto-paste is available, but it d
 | Runtime directory | `~/Library/Caches/com.superkeet.app/Runtime/` |
 | Daemon socket | `~/Library/Caches/com.superkeet.app/Runtime/parakeet.sock` |
 | Daemon PID file | `~/Library/Caches/com.superkeet.app/Runtime/parakeet.pid` |
-| Model files | `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v2/` |
+| Model files | `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3/` |
 
 ## Architecture
 

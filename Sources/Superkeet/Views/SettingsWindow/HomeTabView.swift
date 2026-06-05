@@ -9,6 +9,7 @@ struct HomeTabView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var parakeetService = ParakeetService.shared
     @ObservedObject var hotkeyManager = HotkeyManager.shared
+    @ObservedObject var modelProvisioning = ModelProvisioning.shared
 
     @State private var editingHotkey: EditingHotkey? = nil
     @State private var readiness = AppReadiness.current()
@@ -161,6 +162,9 @@ struct HomeTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshReadiness()
         }
+        .onChange(of: modelProvisioning.state) {
+            refreshReadiness()
+        }
     }
 
     // MARK: - Checklist
@@ -189,6 +193,13 @@ struct HomeTabView: View {
                 isComplete: !readiness.issues.contains(.engine),
                 buttonTitle: "Refresh",
                 action: { refreshReadiness() }
+            ),
+            SetupCheck(
+                title: "Speech model",
+                detail: modelCheckDetail,
+                isComplete: !readiness.issues.contains(.model),
+                buttonTitle: modelCheckButtonTitle,
+                action: { downloadModel() }
             ),
             SetupCheck(
                 title: "Input device",
@@ -380,6 +391,42 @@ struct HomeTabView: View {
         readiness.diagnostics.runtimeDirectoryWritable
             ? "Writable."
             : "Not writable: \(readiness.diagnostics.runtimeDirectory.path)"
+    }
+
+    private var modelCheckDetail: String {
+        switch modelProvisioning.state {
+        case .installed:
+            return "On-device model downloaded."
+        case .downloading(let progress):
+            return "Downloading… \(Int((progress.overallFraction * 100).rounded()))%"
+        case .verifying:
+            return "Verifying download…"
+        case .checking:
+            return "Checking…"
+        case .failed(let message):
+            return message
+        case .notInstalled, .unknown:
+            return "About 670 MB, one-time download."
+        }
+    }
+
+    private var modelCheckButtonTitle: String {
+        switch modelProvisioning.state {
+        case .installed:
+            return "Re-download"
+        case .downloading, .verifying, .checking:
+            return "Downloading…"
+        default:
+            return "Download"
+        }
+    }
+
+    private func downloadModel() {
+        if modelProvisioning.state.isInstalled {
+            modelProvisioning.redownload()
+        } else {
+            modelProvisioning.startDownloadIfNeeded()
+        }
     }
 
     private func refreshReadiness() {

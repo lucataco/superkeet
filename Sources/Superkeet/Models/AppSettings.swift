@@ -63,6 +63,28 @@ final class AppSettings: ObservableObject {
         bundledBinaryPath != nil
     }
 
+    /// Directory the bundled engine reads model files from.
+    ///
+    /// When `modelDirectory` is set (Advanced settings), it wins. Otherwise we
+    /// use the same default `parakeet-cli` computes for itself, and always pass
+    /// it explicitly to both `download` and `serve` so the two never drift.
+    var effectiveModelDirectory: String {
+        if !modelDirectory.isEmpty {
+            return modelDirectory
+        }
+        return Self.defaultModelDirectory.path
+    }
+
+    /// Default on-device model location, matching `parakeet-cli`'s
+    /// `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3`.
+    static var defaultModelDirectory: URL {
+        let base = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("parakeet/models/parakeet-tdt-0.6b-v3", isDirectory: true)
+    }
+
     var socketPath: String {
         AppReadiness.runtimeFilesDirectory().appendingPathComponent("parakeet.sock").path
     }

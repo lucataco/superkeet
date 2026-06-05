@@ -6,6 +6,7 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
     case microphone
     case inputDevice
     case engine
+    case model
     case runtimeDirectory
     case accessibility
 
@@ -19,6 +20,8 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
             return "Audio Input Device"
         case .engine:
             return "Speech Engine"
+        case .model:
+            return "Speech Model"
         case .runtimeDirectory:
             return "Runtime Directory"
         case .accessibility:
@@ -34,6 +37,8 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
             return "Connect or enable a microphone so Parakeet has an input device to record from."
         case .engine:
             return "Point Superkeet at a working Parakeet engine build before recording."
+        case .model:
+            return "Download the on-device speech model so Superkeet can transcribe locally."
         case .runtimeDirectory:
             return "Superkeet needs a writable runtime directory for its local socket and PID file."
         case .accessibility:
@@ -46,6 +51,7 @@ struct AppDiagnostics {
     let microphoneStatus: AVAuthorizationStatus
     let availableInputDeviceNames: [String]
     let engineBinaryExists: Bool
+    let modelInstalled: Bool
     let runtimeDirectory: URL
     let runtimeDirectoryWritable: Bool
     let configuredInputDeviceFound: Bool
@@ -59,6 +65,9 @@ struct AppReadinessReport {
     let issues: [AppReadinessIssue]
     let diagnostics: AppDiagnostics
 
+    /// Issues that mean a fresh app install is genuinely broken (missing engine
+    /// binary or no writable runtime dir). A missing *model* is intentionally
+    /// excluded — that's a recoverable first-run download, not a broken install.
     var hasDaemonBlockingIssue: Bool {
         issues.contains(.engine) || issues.contains(.runtimeDirectory)
     }
@@ -67,12 +76,17 @@ struct AppReadinessReport {
         issues.contains(.microphone) || issues.contains(.inputDevice)
     }
 
+    /// The on-device model still needs to be downloaded before recording works.
+    var needsModelDownload: Bool {
+        issues.contains(.model)
+    }
+
     var isReadyForDaemon: Bool {
         !hasDaemonBlockingIssue
     }
 
     var isReadyForBasicRecording: Bool {
-        !hasDaemonBlockingIssue && !hasRecordingBlockingIssue
+        !hasDaemonBlockingIssue && !needsModelDownload && !hasRecordingBlockingIssue
     }
 
     func hasConfiguredOutputBlockingIssue(autoPasteEnabled: Bool) -> Bool {
@@ -111,6 +125,10 @@ enum AppReadiness {
             issues.append(.engine)
         }
 
+        if !diagnostics.modelInstalled {
+            issues.append(.model)
+        }
+
         if !diagnostics.hasInputDevice || !diagnostics.configuredInputDeviceFound {
             issues.append(.inputDevice)
         }
@@ -137,10 +155,13 @@ enum AppReadiness {
         let configuredInputDeviceFound = settings.audioInputDevice.isEmpty ||
             availableInputDeviceNames.contains { $0.localizedCaseInsensitiveContains(settings.audioInputDevice) }
 
+        let modelDirectory = URL(fileURLWithPath: settings.effectiveModelDirectory, isDirectory: true)
+
         return AppDiagnostics(
             microphoneStatus: AVCaptureDevice.authorizationStatus(for: .audio),
             availableInputDeviceNames: availableInputDeviceNames,
             engineBinaryExists: FileManager.default.isExecutableFile(atPath: settings.parakeetBinaryPath),
+            modelInstalled: ModelProvisioning.modelExists(at: modelDirectory),
             runtimeDirectory: runtimeDirectory,
             runtimeDirectoryWritable: validateRuntimeDirectory(runtimeDirectory),
             configuredInputDeviceFound: configuredInputDeviceFound

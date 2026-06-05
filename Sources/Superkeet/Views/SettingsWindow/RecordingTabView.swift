@@ -66,7 +66,7 @@ struct RecordingTabView: View {
                         }
                     }
 
-                    Text("Leave empty to use the default model directory (~~/Library/Application Support/parakeet/models/). Changes take effect after restarting the daemon.")
+                    Text("Leave empty to use the default location (~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3). Superkeet downloads the model here automatically on first run. Changes take effect after restarting the daemon.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

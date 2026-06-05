@@ -20,7 +20,9 @@ permissions:
 
 env:
   PARAKEET_REPOSITORY: lucataco/parakeet-cli
-  PARAKEET_REF: v0.1.4
+  # Must be >= v0.1.5: the app drives first-run model provisioning via
+  # `parakeet download --progress json`, which was added in v0.1.5.
+  PARAKEET_REF: v0.1.5
   HOMEBREW_TAP_REPOSITORY: lucataco/homebrew-tap
 
 jobs:

@@ -8,6 +8,7 @@ import Combine
 struct OnboardingView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var hotkeyManager = HotkeyManager.shared
+    @ObservedObject var modelProvisioning = ModelProvisioning.shared
     @State private var currentStep: Int = 0
     @State private var readiness = AppReadiness.current()
 
@@ -24,7 +25,10 @@ struct OnboardingView: View {
     /// Called when the user completes onboarding
     var onComplete: () -> Void
 
-    private let totalSteps = 4
+    private let totalSteps = 5
+
+    /// Step index for the accessibility step (used to drive permission polling).
+    private let accessibilityStepIndex = 3
 
     private enum OnboardingOutputMode {
         case clipboard
@@ -38,8 +42,9 @@ struct OnboardingView: View {
                 switch currentStep {
                 case 0: welcomeStep
                 case 1: microphoneStep
-                case 2: accessibilityStep
-                case 3: readyStep
+                case 2: modelStep
+                case 3: accessibilityStep
+                case 4: readyStep
                 default: welcomeStep
                 }
             }
@@ -88,6 +93,11 @@ struct OnboardingView: View {
         }
         .onChange(of: currentStep) {
             if currentStep == 2 {
+                // Kick off the model download as soon as the user reaches it, so
+                // it runs in the background while they finish the rest of setup.
+                modelProvisioning.startDownloadIfNeeded()
+            }
+            if currentStep == accessibilityStepIndex {
                 startAccessibilityPolling()
             } else {
                 stopAccessibilityPolling()
@@ -103,6 +113,10 @@ struct OnboardingView: View {
             microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
             syncAccessibilityState(accessibilityGranted)
+        }
+        .onChange(of: modelProvisioning.state) {
+            // Keep the readiness summary in sync as the model download completes.
+            readiness = AppReadiness.current()
         }
     }
 
@@ -252,7 +266,188 @@ struct OnboardingView: View {
         .padding(24)
     }
 
-    // MARK: - Step 2: Accessibility
+    // MARK: - Step 2: Speech Model
+
+    private var modelStep: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 24) {
+                ZStack {
+                    Circle()
+                        .fill(modelStepIconBackground)
+                        .frame(width: 80, height: 80)
+                    Image(systemName: modelStepIconName)
+                        .font(.system(size: 44))
+                        .foregroundColor(modelStepIconColor)
+                }
+
+                VStack(spacing: 8) {
+                    Text(modelStepTitle)
+                        .font(.title)
+                        .fontWeight(.bold)
+
+                    Text(modelStepSubtitle)
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                modelStepStatusContent
+                    .frame(maxWidth: 340)
+            }
+
+            Spacer()
+
+            Text("The model runs entirely on your Mac. This download happens only once.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 8)
+        }
+        .padding(24)
+        .onAppear {
+            modelProvisioning.startDownloadIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private var modelStepStatusContent: some View {
+        switch modelProvisioning.state {
+        case .installed:
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                Text("Speech model ready")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.green)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(Color.green.opacity(0.08))
+            .cornerRadius(10)
+
+        case .downloading(let progress):
+            VStack(spacing: 12) {
+                ProgressView(value: progress.overallFraction)
+                    .progressViewStyle(.linear)
+
+                HStack {
+                    Text("Downloading \(progress.currentFileName)")
+                    Spacer()
+                    Text("\(Int((progress.overallFraction * 100).rounded()))%")
+                        .monospacedDigit()
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+                Text(modelStepDetailLine(progress))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+        case .failed(let message):
+            VStack(spacing: 12) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Button {
+                    modelProvisioning.startDownloadIfNeeded()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Try Again")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(14)
+            .background(Color.orange.opacity(0.06))
+            .cornerRadius(10)
+
+        case .verifying:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Verifying download…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+        case .checking, .notInstalled, .unknown:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Preparing download…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private func modelStepDetailLine(_ progress: ModelDownloadProgress) -> String {
+        let filePosition = "file \(min(progress.fileIndex + 1, progress.totalFiles)) of \(progress.totalFiles)"
+        guard progress.totalBytes > 0 else { return filePosition }
+        let downloaded = Self.byteFormatter.string(fromByteCount: progress.downloadedBytes)
+        let total = Self.byteFormatter.string(fromByteCount: progress.totalBytes)
+        return "\(downloaded) of \(total) · \(filePosition)"
+    }
+
+    private var modelStepTitle: String {
+        switch modelProvisioning.state {
+        case .installed: return "Speech Model Ready"
+        case .failed: return "Download Needs Attention"
+        default: return "Setting Up the Speech Engine"
+        }
+    }
+
+    private var modelStepSubtitle: String {
+        switch modelProvisioning.state {
+        case .installed:
+            return "Everything you need to transcribe now lives on your Mac."
+        case .failed:
+            return "Superkeet needs the on-device speech model before it can transcribe. You can retry now or later from Settings."
+        default:
+            return "Downloading the local speech model (about 670 MB).\nThis runs once — then transcription is fully offline."
+        }
+    }
+
+    private var modelStepIconName: String {
+        switch modelProvisioning.state {
+        case .installed: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        default: return "arrow.down.circle.fill"
+        }
+    }
+
+    private var modelStepIconColor: Color {
+        switch modelProvisioning.state {
+        case .installed: return .green
+        case .failed: return .orange
+        default: return .blue
+        }
+    }
+
+    private var modelStepIconBackground: Color {
+        switch modelProvisioning.state {
+        case .installed: return Color.green.opacity(0.12)
+        case .failed: return Color.orange.opacity(0.12)
+        default: return Color.blue.opacity(0.12)
+        }
+    }
+
+    private static let byteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter
+    }()
+
+    // MARK: - Step 3: Accessibility
 
     private var accessibilityStep: some View {
         VStack(spacing: 0) {
@@ -366,7 +561,7 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Step 3: Ready
+    // MARK: - Step 4: Ready
 
     private var readyStep: some View {
         VStack(spacing: 0) {
@@ -477,6 +672,24 @@ struct OnboardingView: View {
                     .cornerRadius(10)
                 }
 
+                // Model still downloading in the background
+                if modelProvisioning.state.isBusy {
+                    HStack(alignment: .center, spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Finishing speech model download")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("You can start using Superkeet as soon as this completes.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color.blue.opacity(0.06))
+                    .cornerRadius(10)
+                }
+
                 // Permission summary
                 VStack(spacing: 8) {
                     permissionSummaryRow(
@@ -493,6 +706,11 @@ struct OnboardingView: View {
                         icon: "waveform",
                         title: "Speech Engine",
                         granted: readiness.diagnostics.engineBinaryExists
+                    )
+                    permissionSummaryRow(
+                        icon: "arrow.down.circle",
+                        title: "Speech Model",
+                        granted: modelProvisioning.state.isInstalled
                     )
                     permissionSummaryRow(
                         icon: "mic.badge.plus",

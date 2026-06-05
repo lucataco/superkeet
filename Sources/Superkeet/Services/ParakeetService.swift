@@ -115,6 +115,20 @@ final class ParakeetService: ObservableObject {
             ])
         }
 
+        // Provision the on-device model before launching `serve` (the engine
+        // refuses to start without it). If onboarding already downloaded it this
+        // returns immediately; otherwise it downloads now and surfaces progress.
+        if !ModelProvisioning.shared.isModelInstalled() {
+            await MainActor.run { self.startupStatusDetail = "Downloading speech model" }
+            do {
+                try await ModelProvisioning.shared.ensureModelAvailable()
+            } catch {
+                let detail = "Superkeet could not download the on-device speech model. \(error.localizedDescription)"
+                await publishStartupFailure(detail, diagnostics: diagnosticSummary(readiness: readiness))
+                throw error
+            }
+        }
+
         await MainActor.run { daemonState = .starting }
 
         let process = Process()
@@ -130,9 +144,9 @@ final class ParakeetService: ObservableObject {
             args.append(contentsOf: ["--device", settings.audioInputDevice])
         }
 
-        if !settings.modelDirectory.isEmpty {
-            args.append(contentsOf: ["--model-dir", settings.modelDirectory])
-        }
+        // Always pass an explicit model directory so `serve` and `download`
+        // resolve to the same location regardless of CLI defaults.
+        args.append(contentsOf: ["--model-dir", settings.effectiveModelDirectory])
 
         process.arguments = args
 
@@ -919,6 +933,7 @@ final class ParakeetService: ObservableObject {
         Diagnostics:
         - Microphone: \(microphoneStatus)
         - Engine binary: \(diagnostics.engineBinaryExists ? "found" : "missing")
+        - Speech model: \(diagnostics.modelInstalled ? "installed" : "not downloaded") at \(settings.effectiveModelDirectory)
         - Runtime directory: \(diagnostics.runtimeDirectoryWritable ? "writable" : "not writable") at \(diagnostics.runtimeDirectory.path)
         - Available input devices: \(deviceSummary)
         """

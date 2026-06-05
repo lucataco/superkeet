@@ -24,6 +24,23 @@ final class SetupVerificationTests: XCTestCase {
         XCTAssertFalse(report.passesSetupSmokeTest(daemonStarted: true, autoPasteEnabled: true))
     }
 
+    func testSetupSmokeTestFailsWhenModelMissing() {
+        let report = makeReport(issues: [.model])
+
+        XCTAssertTrue(report.needsModelDownload)
+        XCTAssertFalse(report.isReadyForBasicRecording)
+        XCTAssertFalse(report.passesSetupSmokeTest(daemonStarted: true))
+    }
+
+    func testMissingModelIsNotADaemonBlockingIssue() {
+        // A missing model is a recoverable first-run download, not a broken
+        // install — it must not trip the "reinstall the app" error path.
+        let report = makeReport(issues: [.model])
+
+        XCTAssertFalse(report.hasDaemonBlockingIssue)
+        XCTAssertTrue(report.isReadyForDaemon)
+    }
+
     private func makeReport(issues: [AppReadinessIssue]) -> AppReadinessReport {
         AppReadinessReport(
             issues: issues,
@@ -31,6 +48,7 @@ final class SetupVerificationTests: XCTestCase {
                 microphoneStatus: .authorized,
                 availableInputDeviceNames: ["Built-in Microphone"],
                 engineBinaryExists: true,
+                modelInstalled: true,
                 runtimeDirectory: URL(fileURLWithPath: "/tmp/superkeet-tests"),
                 runtimeDirectoryWritable: true,
                 configuredInputDeviceFound: true
