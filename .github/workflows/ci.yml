@@ -32,7 +32,7 @@ jobs:
           fi
 
       - name: Lint
-        run: swiftlint lint --strict --reporter github-logging
+        run: swiftlint lint --strict
 
       - name: Build app
         run: swift build
