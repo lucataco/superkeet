@@ -1,6 +1,9 @@
 import Foundation
 import AppKit
 import Darwin
+import os.log
+
+private let parakeetLog = Logger(subsystem: "com.superkeet.app", category: "ParakeetService")
 
 /// Manages the parakeet serve daemon subprocess and communicates via Unix socket
 final class ParakeetService: ObservableObject {
@@ -179,7 +182,7 @@ final class ParakeetService: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.appendStderr(text)
             }
-            print("[parakeet stderr] \(text)", terminator: "")
+            parakeetLog.info("parakeet stderr: \(text, privacy: .public)")
         }
 
         process.terminationHandler = { [weak self] proc in
@@ -197,7 +200,7 @@ final class ParakeetService: ObservableObject {
                 } else if previousState == .idle || previousState == .recording {
                     // Unexpected crash — notify user and attempt auto-restart
                     let message = "Speech engine exited unexpectedly (code \(proc.terminationStatus)). Restarting..."
-                    print("[ParakeetService] \(message)")
+                    parakeetLog.warning("\(message, privacy: .public)")
                     self.settings.runtimeIssue = message
                 }
 
@@ -367,7 +370,7 @@ final class ParakeetService: ObservableObject {
         if let pidString = try? String(contentsOfFile: pidPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            let pid = Int32(pidString), pid > 0 {
             if isExpectedParakeetProcess(pid: pid) {
-                print("[ParakeetService] Found stale validated PID file (pid: \(pid)), killing...")
+                parakeetLog.info("Found stale validated PID file (pid: \(pid)), killing...")
                 await terminateProcess(pid: pid)
             }
         }
@@ -484,7 +487,7 @@ final class ParakeetService: ObservableObject {
 
         let task = DispatchWorkItem { [weak self] in
             guard let self = self, self.daemonState == .idle else { return }
-            print("[ParakeetService] Idle timeout reached (\(timeoutMinutes) min), stopping daemon to reclaim resources")
+            parakeetLog.info("Idle timeout reached (\(timeoutMinutes) min), stopping daemon to reclaim resources")
             self.stopDaemon()
         }
         idleShutdownTask = task
@@ -561,7 +564,7 @@ final class ParakeetService: ObservableObject {
     ) -> SocketCommandResult {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            print("[ParakeetService] Failed to create socket")
+            parakeetLog.error("Failed to create socket")
             return SocketCommandResult(response: nil, runtimeIssue: nil)
         }
         defer { close(fd) }
@@ -577,7 +580,7 @@ final class ParakeetService: ObservableObject {
 
         guard let addr = unixSocketAddress(for: socketPath) else {
             let message = "Superkeet's runtime socket path is too long for macOS Unix sockets. Move the app/runtime directory to a shorter path."
-            print("[ParakeetService] \(message) Path: \(socketPath)")
+            parakeetLog.error("\(message, privacy: .public) Path: \(socketPath, privacy: .public)")
             return SocketCommandResult(response: nil, runtimeIssue: message)
         }
 
@@ -590,13 +593,13 @@ final class ParakeetService: ObservableObject {
         }
 
         guard connectResult == 0 else {
-            print("[ParakeetService] Failed to connect to socket at \(socketPath): \(errno)")
+            parakeetLog.error("Failed to connect to socket at \(socketPath, privacy: .public): \(errno)")
             return SocketCommandResult(response: nil, runtimeIssue: "Superkeet could not reach the speech engine. Try relaunching the app.")
         }
 
         guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command)),
               var json = String(data: jsonData, encoding: .utf8) else {
-            print("[ParakeetService] Failed to encode socket command")
+            parakeetLog.error("Failed to encode socket command")
             return SocketCommandResult(response: nil, runtimeIssue: nil)
         }
         json.append("\n")
@@ -607,7 +610,7 @@ final class ParakeetService: ObservableObject {
         }
 
         guard sentAllBytes else {
-            print("[ParakeetService] Failed to send socket command '\(command)' to daemon")
+            parakeetLog.error("Failed to send socket command '\(command, privacy: .public)' to daemon")
             return SocketCommandResult(response: nil, runtimeIssue: nil)
         }
 
@@ -615,11 +618,11 @@ final class ParakeetService: ObservableObject {
         let bytesRead = recv(fd, &buffer, buffer.count - 1, 0)
         if bytesRead > 0 {
             let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
-            print("[ParakeetService] Response: \(response)")
+            parakeetLog.debug("Response: \(response, privacy: .public)")
             return SocketCommandResult(response: response, runtimeIssue: nil)
         }
 
-        print("[ParakeetService] recv returned \(bytesRead) (timeout or error)")
+        parakeetLog.debug("recv returned \(bytesRead) (timeout or error)")
         return SocketCommandResult(response: nil, runtimeIssue: nil)
     }
 
@@ -748,7 +751,7 @@ final class ParakeetService: ObservableObject {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             let probeURL = directory.appendingPathComponent(".runtime-probe")
-            try "ok".data(using: .utf8)?.write(to: probeURL)
+            try Data("ok".utf8).write(to: probeURL)
             try? fileManager.removeItem(at: probeURL)
         } catch {
             let detail = "Superkeet could not prepare its runtime directory at \(directory.path). \(error.localizedDescription)"
@@ -893,7 +896,7 @@ final class ParakeetService: ObservableObject {
         }
 
         let message = "Speech engine exited unexpectedly (code \(process.terminationStatus)). Restarting in \(Int(delay))s..."
-        print("[ParakeetService] \(message)")
+        parakeetLog.info("\(message, privacy: .public)")
         settings.runtimeIssue = message
 
         autoRestartTask?.cancel()

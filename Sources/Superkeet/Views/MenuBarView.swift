@@ -1,5 +1,8 @@
 import SwiftUI
 import AppKit
+import os.log
+
+private let menuBarLog = Logger(subsystem: "com.superkeet.app", category: "MenuBar")
 
 /// Manages the NSMenu displayed from the menu bar status item
 final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
@@ -131,7 +134,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 try await parakeetService.startDaemon()
             }
         } catch {
-            print("[MenuBar] Failed to restart daemon for recording: \(error)")
+            menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription)")
             resetRecordingUI()
             return
         }

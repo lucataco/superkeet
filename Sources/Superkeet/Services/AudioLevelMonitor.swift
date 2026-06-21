@@ -1,5 +1,8 @@
 import Foundation
 import AVFoundation
+import os.log
+
+private let audioLevelLog = Logger(subsystem: "com.superkeet.app", category: "AudioLevelMonitor")
 
 /// Monitors microphone audio levels for the equalizer visualization.
 /// Uses AVAudioEngine with an input tap, separate from Parakeet's mic capture.
@@ -31,19 +34,23 @@ final class AudioLevelMonitor: ObservableObject {
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
-        // Install a tap on the input node
+        do {
+            try engine.start()
+        } catch {
+            audioLevelLog.error("Failed to start audio engine: \(error.localizedDescription)")
+            return
+        }
+
+        // Install the tap only after the engine has started successfully, so a
+        // failed start doesn't leave an orphaned tap on the input node (which
+        // `stopMonitoring()` cannot remove because `self.audioEngine` is nil).
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             self?.processAudioBuffer(buffer)
         }
 
-        do {
-            try engine.start()
-            self.audioEngine = engine
-            DispatchQueue.main.async {
-                self.isMonitoring = true
-            }
-        } catch {
-            print("[AudioLevelMonitor] Failed to start audio engine: \(error)")
+        self.audioEngine = engine
+        DispatchQueue.main.async {
+            self.isMonitoring = true
         }
     }
 

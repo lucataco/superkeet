@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+import os
 import pathlib
 import re
 import sys
+import tempfile
 
 
 def main() -> int:
@@ -43,9 +45,30 @@ def main() -> int:
         print(f"no changes needed for {cask_path}")
         return 0
 
-    cask_path.write_text(updated)
+    write_atomic(cask_path, updated)
     print(f"updated {cask_path} to {version}")
     return 0
+
+
+def write_atomic(path: pathlib.Path, content: str) -> None:
+    """Write content to path via a temp file in the same directory, then rename.
+
+    A direct write that is interrupted mid-flight would leave a corrupt cask
+    file that breaks `brew install` for every tap user. `os.replace` is atomic
+    on the same filesystem, so the temp file is created alongside the target.
+    """
+    dir_path = path.parent
+    fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix=".update-", suffix=".rb")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 if __name__ == "__main__":

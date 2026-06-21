@@ -2,6 +2,9 @@ import SwiftUI
 import AVFoundation
 import AppKit
 import ServiceManagement
+import os.log
+
+private let homeTabLog = Logger(subsystem: "com.superkeet.app", category: "HomeTab")
 
 /// Setup tab focused on first-run clarity and the single primary shortcut.
 struct HomeTabView: View {
@@ -10,7 +13,7 @@ struct HomeTabView: View {
     @ObservedObject var hotkeyManager = HotkeyManager.shared
     @ObservedObject var modelProvisioning = ModelProvisioning.shared
 
-    @State private var editingHotkey: EditingHotkey? = nil
+    @State private var editingHotkey: EditingHotkey?
     @State private var readiness = AppReadiness.current()
     @State private var loginItemError: String?
     @State private var shortcutError: String?
@@ -123,7 +126,7 @@ struct HomeTabView: View {
                                         try await parakeetService.startDaemon()
                                     }
                                 } catch {
-                                    print("[HomeTab] Failed to start/restart daemon: \(error)")
+                                    homeTabLog.error("Failed to start/restart daemon: \(error.localizedDescription)")
                                 }
                                 refreshReadiness()
                             }
@@ -543,7 +546,7 @@ struct HomeTabView: View {
             settings.syncLaunchAtLoginStatus()
             loginItemError = nil
         } catch {
-            print("[HomeTab] Failed to update login item: \(error)")
+            homeTabLog.error("Failed to update login item: \(error.localizedDescription)")
             loginItemError = "Failed to update login item. Make sure you're running the installed .app bundle."
         }
     }
@@ -557,7 +560,7 @@ struct HomeTabView: View {
                     try await parakeetService.startDaemon()
                 }
             } catch {
-                print("[HomeTab] Failed to verify setup: \(error)")
+                homeTabLog.error("Failed to verify setup: \(error.localizedDescription)")
             }
             refreshReadiness()
         }
@@ -758,7 +761,7 @@ private struct InteractiveHotkeyRecorder: View {
     let onRecord: (Int, Int, String) -> Void
     let onCancel: () -> Void
 
-    @State private var capturedName: String? = nil
+    @State private var capturedName: String?
 
     var body: some View {
         VStack(spacing: 10) {

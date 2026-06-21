@@ -25,6 +25,11 @@ final class PasteService {
             let transcriptChangeCount = copyToClipboard(text)
             reactivateTargetApplication(processIdentifier: targetProcessIdentifier)
 
+            // Load-bearing timing: the 150ms delay gives the target app time to
+            // reactivate before Cmd+V is posted. The 300ms delay lets the paste
+            // complete before we restore the original clipboard. If the target
+            // app is slow to activate, the paste may land in the wrong focus —
+            // there is no synchronous "paste completed" event from CGEvent.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.simulatePaste()
                 // Restore original clipboard after paste completes

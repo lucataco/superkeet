@@ -26,7 +26,9 @@ struct TranscriptionRecord: Identifiable, Codable {
         self.text = text
         self.timestamp = timestamp
         self.durationSeconds = durationSeconds
-        self.wordCount = text.split(separator: " ").count
+        // Split on any whitespace (tabs, newlines, NBSP, runs of spaces) so
+        // tabs-pasted text and multi-line transcriptions count words correctly.
+        self.wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
         self.activeAppName = activeAppName
         self.activeAppBundleId = activeAppBundleId
     }

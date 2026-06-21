@@ -33,7 +33,7 @@ struct StatsHeaderView: View {
 private struct StatTile: View {
     let value: String
     let label: String
-    var unit: String? = nil
+    var unit: String?
     let systemImage: String
 
     var body: some View {

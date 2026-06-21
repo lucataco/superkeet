@@ -1,5 +1,8 @@
 import SwiftUI
 import Darwin
+import os.log
+
+private let recordingTabLog = Logger(subsystem: "com.superkeet.app", category: "RecordingTab")
 
 /// Recording settings: audio device, model directory
 struct RecordingTabView: View {
@@ -136,7 +139,7 @@ struct RecordingTabView: View {
                     !refreshState.shouldRun(process: process, generation: generation)
                 }
                 if !wasCancelled {
-                    print("[RecordingTab] Failed to list devices: \(error)")
+                    recordingTabLog.error("Failed to list devices: \(error.localizedDescription)")
                 }
             }
 

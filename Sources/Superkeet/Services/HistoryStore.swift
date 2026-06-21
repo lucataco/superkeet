@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let historyLog = Logger(subsystem: "com.superkeet.app", category: "HistoryStore")
 
 /// Persists transcription history to a JSON file on disk
 final class HistoryStore: ObservableObject {
@@ -13,8 +16,9 @@ final class HistoryStore: ObservableObject {
     private let persistenceQueue = DispatchQueue(label: "com.superkeet.history-store", qos: .utility)
     private var saveDebounceTask: DispatchWorkItem?
 
-    private init() {
-        self.fileURL = AppPaths.applicationSupportDirectory.appendingPathComponent("history.json")
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL
+            ?? AppPaths.applicationSupportDirectory.appendingPathComponent("history.json")
 
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = .prettyPrinted
@@ -26,7 +30,6 @@ final class HistoryStore: ObservableObject {
     // MARK: - CRUD
 
     func addRecord(_ record: TranscriptionRecord) {
-        guard AppSettings.shared.saveHistoryEnabled else { return }
         records.insert(record, at: 0)
         if records.count > Self.maxRecords {
             records = Array(records.prefix(Self.maxRecords))
@@ -66,7 +69,7 @@ final class HistoryStore: ObservableObject {
                 saveRecords()
             }
         } catch {
-            print("[HistoryStore] Failed to load history: \(error)")
+            historyLog.error("Failed to load history: \(error.localizedDescription)")
         }
     }
 
@@ -94,7 +97,7 @@ final class HistoryStore: ObservableObject {
             try data.write(to: fileURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         } catch {
-            print("[HistoryStore] Failed to save history: \(error)")
+            historyLog.error("Failed to save history: \(error.localizedDescription)")
         }
     }
 }

@@ -450,7 +450,7 @@ private struct DownloadEvent: Decodable {
 }
 
 /// Accumulates raw stdout bytes and splits them into complete NDJSON lines.
-private final class NDJSONLineBuffer {
+final class NDJSONLineBuffer {
     private var buffer = Data()
     private let lock = NSLock()
 
@@ -480,7 +480,7 @@ private final class NDJSONLineBuffer {
 }
 
 /// Thread-safe sink for the error message and stderr captured during a download.
-private final class DownloadCollector {
+final class DownloadCollector {
     private let lock = NSLock()
     private var _errorMessage: String?
     private var stderrData = Data()

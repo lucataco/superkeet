@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let usageStatsLog = Logger(subsystem: "com.superkeet.app", category: "UsageStatsStore")
 
 /// Privacy-safe aggregate usage metrics.
 ///
@@ -35,8 +38,9 @@ final class UsageStatsStore: ObservableObject {
         return formatter
     }()
 
-    private init() {
-        self.fileURL = AppPaths.applicationSupportDirectory.appendingPathComponent("usage-stats.json")
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL
+            ?? AppPaths.applicationSupportDirectory.appendingPathComponent("usage-stats.json")
         load()
     }
 
@@ -108,7 +112,7 @@ final class UsageStatsStore: ObservableObject {
             let data = try Data(contentsOf: fileURL)
             buckets = try decoder.decode([String: DayBucket].self, from: data)
         } catch {
-            print("[UsageStatsStore] Failed to load stats: \(error)")
+            usageStatsLog.error("Failed to load stats: \(error.localizedDescription)")
         }
     }
 
@@ -135,7 +139,7 @@ final class UsageStatsStore: ObservableObject {
             try data.write(to: fileURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         } catch {
-            print("[UsageStatsStore] Failed to save stats: \(error)")
+            usageStatsLog.error("Failed to save stats: \(error.localizedDescription)")
         }
     }
 }

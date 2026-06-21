@@ -9,6 +9,7 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
     case model
     case runtimeDirectory
     case accessibility
+    case architecture
 
     var id: String { rawValue }
 
@@ -26,6 +27,8 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
             return "Runtime Directory"
         case .accessibility:
             return "Accessibility Access"
+        case .architecture:
+            return "Apple Silicon Mac"
         }
     }
 
@@ -43,6 +46,8 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
             return "Superkeet needs a writable runtime directory for its local socket and PID file."
         case .accessibility:
             return "Accessibility enables global shortcuts and automatic paste."
+        case .architecture:
+            return "Superkeet's bundled speech engine is built for Apple Silicon. An Intel Mac cannot run it."
         }
     }
 }
@@ -55,6 +60,7 @@ struct AppDiagnostics {
     let runtimeDirectory: URL
     let runtimeDirectoryWritable: Bool
     let configuredInputDeviceFound: Bool
+    let hostIsAppleSilicon: Bool
 
     var hasInputDevice: Bool {
         !availableInputDeviceNames.isEmpty
@@ -66,10 +72,11 @@ struct AppReadinessReport {
     let diagnostics: AppDiagnostics
 
     /// Issues that mean a fresh app install is genuinely broken (missing engine
-    /// binary or no writable runtime dir). A missing *model* is intentionally
-    /// excluded — that's a recoverable first-run download, not a broken install.
+    /// binary, unsupported architecture, or no writable runtime dir). A missing
+    /// *model* is intentionally excluded — that's a recoverable first-run
+    /// download, not a broken install.
     var hasDaemonBlockingIssue: Bool {
-        issues.contains(.engine) || issues.contains(.runtimeDirectory)
+        issues.contains(.engine) || issues.contains(.runtimeDirectory) || issues.contains(.architecture)
     }
 
     var hasRecordingBlockingIssue: Bool {
@@ -124,6 +131,10 @@ enum AppReadiness {
             issues.append(.microphone)
         }
 
+        if !diagnostics.hostIsAppleSilicon {
+            issues.append(.architecture)
+        }
+
         if !diagnostics.engineBinaryExists {
             issues.append(.engine)
         }
@@ -167,12 +178,22 @@ enum AppReadiness {
             modelInstalled: ModelProvisioning.modelExists(at: modelDirectory),
             runtimeDirectory: runtimeDirectory,
             runtimeDirectoryWritable: validateRuntimeDirectory(runtimeDirectory),
-            configuredInputDeviceFound: configuredInputDeviceFound
+            configuredInputDeviceFound: configuredInputDeviceFound,
+            hostIsAppleSilicon: Self.hostIsAppleSilicon
         )
     }
 
     static func runtimeFilesDirectory() -> URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        cachedRuntimeFilesDirectory
+    }
+
+    /// Resolved once on first access and memoized. `runtimeFilesDirectory()` was
+    /// previously called on every read of `settings.socketPath` /
+    /// `settings.pidFilePath` (15+ times per daemon lifecycle), each call
+    /// issuing a `FileManager.createDirectory`. Caching drops that to one call.
+    private static let cachedRuntimeFilesDirectory: URL = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches")
         let directory = base.appendingPathComponent("com.superkeet.app/Runtime", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: directory,
@@ -180,7 +201,7 @@ enum AppReadiness {
             attributes: [.posixPermissions: 0o700]
         )
         return directory
-    }
+    }()
 
     private static func validateRuntimeDirectory(_ directory: URL) -> Bool {
         let fileManager = FileManager.default
@@ -188,11 +209,26 @@ enum AppReadiness {
 
         let probeURL = directory.appendingPathComponent(".write-test-\(UUID().uuidString)")
         do {
-            try "ok".data(using: .utf8)?.write(to: probeURL)
+            try Data("ok".utf8).write(to: probeURL)
             try fileManager.removeItem(at: probeURL)
             return true
         } catch {
             return false
         }
+    }
+
+    /// True when the host CPU is Apple Silicon (arm64 / arm64e).
+    /// Used to refuse startup on Intel Macs, where the bundled engine binary
+    /// cannot run and would produce a confusing launch failure.
+    private static var hostIsAppleSilicon: Bool {
+        var sysinfo = utsname()
+        guard uname(&sysinfo) == 0 else { return true }  // fail open
+        let machineSize = MemoryLayout.size(ofValue: sysinfo.machine)
+        let machine = withUnsafePointer(to: &sysinfo.machine) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: machineSize) {
+                String(cString: $0)
+            }
+        }
+        return machine.hasPrefix("arm64")
     }
 }

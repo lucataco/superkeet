@@ -57,7 +57,8 @@ final class SetupVerificationTests: XCTestCase {
                 modelInstalled: !issues.contains(.model),
                 runtimeDirectory: URL(fileURLWithPath: "/tmp/superkeet-tests"),
                 runtimeDirectoryWritable: !issues.contains(.runtimeDirectory),
-                configuredInputDeviceFound: !issues.contains(.inputDevice)
+                configuredInputDeviceFound: !issues.contains(.inputDevice),
+                hostIsAppleSilicon: true
             )
         )
     }

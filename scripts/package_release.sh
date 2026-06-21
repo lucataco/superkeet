@@ -129,6 +129,23 @@ verify_audio_entitlement() {
     fi
 }
 
+verify_parakeet_architecture() {
+    local binary="$1"
+    local host_arch
+    host_arch="$(uname -m)"
+    local binary_archs
+    binary_archs="$(lipo -archs "$binary" 2>/dev/null || true)"
+    if [[ -z "$binary_archs" ]]; then
+        printf 'Could not inspect architectures of `%s` (is lipo available?).\n' "$binary" >&2
+        exit 1
+    fi
+    if [[ " $binary_archs " != *" $host_arch "* ]]; then
+        printf 'Parakeet binary (%s) does not match host architecture (%s).\n' "$binary_archs" "$host_arch" >&2
+        printf 'Rebuild parakeet for %s before packaging.\n' "$host_arch" >&2
+        exit 1
+    fi
+}
+
 require_command swift
 require_command codesign
 require_command ditto
@@ -159,6 +176,8 @@ Set one of:
 EOF
     exit 1
 fi
+
+verify_parakeet_architecture "$PARAKEET_BINARY"
 
 printf '==> Building %s (release)...\n' "$APP_NAME"
 swift build -c release --package-path "$REPO_DIR"

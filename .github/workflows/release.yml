@@ -90,6 +90,11 @@ jobs:
           ref: ${{ steps.vars.outputs.parakeet_ref }}
           path: .release/parakeet-cli
 
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ".release/parakeet-cli"
+
       - name: Resolve signing mode
         id: signing
         env:
@@ -157,6 +162,17 @@ jobs:
           chmod +x ./scripts/package_release.sh
           ./scripts/package_release.sh
 
+      - name: Clean up signing keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/superkeet-build.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+            echo "Keychain deleted."
+          else
+            echo "No keychain to clean up."
+          fi
+
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -204,10 +220,11 @@ jobs:
             "$VERSION" \
             "$SHA256"
 
-      - name: Commit Homebrew tap update
+      - name: Create Homebrew tap pull request
         if: steps.tap.outputs.enabled == 'true'
         env:
           TAG: ${{ steps.vars.outputs.tag }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           if git -C .release/homebrew-tap diff --quiet; then
             echo "Homebrew tap already up to date"
@@ -215,11 +232,25 @@ jobs:
           fi
 
           VERSION="${TAG#v}"
-          git -C .release/homebrew-tap config user.name "github-actions[bot]"
-          git -C .release/homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C .release/homebrew-tap add Casks/superkeet.rb
-          git -C .release/homebrew-tap commit -m "Update superkeet to v${VERSION}"
-          git -C .release/homebrew-tap push
+          BRANCH="update-superkeet-${VERSION}"
+          cd .release/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add Casks/superkeet.rb
+          git commit -m "Update superkeet to v${VERSION}"
+          git push origin "$BRANCH"
+
+          PR_TITLE="Update superkeet to v${VERSION}"
+          PR_BODY="Automated cask update for Superkeet v${VERSION}.
+
+          SHA256 and version bumped by the release workflow."
+          gh pr create \
+            --title "$PR_TITLE" \
+            --body "$PR_BODY" \
+            --base main \
+            --head "$BRANCH" \
+            --repo "${{ env.HOMEBREW_TAP_REPOSITORY }}"
 
       - name: Warn when tap sync is disabled
         if: steps.tap.outputs.enabled != 'true'

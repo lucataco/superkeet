@@ -4,7 +4,8 @@ enum AppPaths {
     static var applicationSupportDirectory: URL {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first!
+            .first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let directory = base.appendingPathComponent("Superkeet", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: directory,

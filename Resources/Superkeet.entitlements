@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+      The app is NOT sandboxed (no com.apple.security.app-sandbox key).
+      Sandboxing is incompatible with the global CGEvent hotkey tap and the
+      CGEvent-based auto-paste feature. The only entitlement declared is
+      microphone access, which is required for audio capture.
+    -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
 </dict>

@@ -68,6 +68,7 @@ final class HotkeyManager: ObservableObject {
     // MARK: - Start / Stop
 
     func startListening() {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard eventTap == nil else {
             hotkeyLog.info("Already listening, skipping startListening()")
             return
@@ -117,6 +118,7 @@ final class HotkeyManager: ObservableObject {
     }
 
     func stopListening() {
+        dispatchPrecondition(condition: .onQueue(.main))
         stopRetryTimer()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -254,7 +256,7 @@ final class HotkeyManager: ObservableObject {
         let significant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
         if required == 0 {
             // No modifiers required — match if no significant modifiers are pressed
-            return eventFlags.intersection(significant).isEmpty
+            return eventFlags.isDisjoint(with: significant)
         }
         let requiredFlags = CGEventFlags(rawValue: UInt64(required))
         return eventFlags.intersection(significant) == requiredFlags.intersection(significant)

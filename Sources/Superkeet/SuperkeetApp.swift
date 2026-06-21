@@ -131,11 +131,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startDaemonWithErrorHandling() {
         Task {
             do {
-                print("[Superkeet] Starting Parakeet daemon...")
+                appLog.info("Starting Parakeet daemon...")
                 try await parakeetService.startDaemon()
-                print("[Superkeet] Parakeet daemon started successfully")
+                appLog.info("Parakeet daemon started successfully")
             } catch {
-                print("[Superkeet] Failed to start daemon: \(error)")
+                appLog.error("Failed to start daemon: \(error.localizedDescription)")
                 // Show an alert to the user
                 await MainActor.run {
                     let alert = NSAlert()
@@ -186,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let sigintSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigintSrc.setEventHandler { [weak self] in
-            print("\n[Superkeet] Received SIGINT, cleaning up...")
+            appLog.info("Received SIGINT, cleaning up...")
             Task { @MainActor [weak self] in
                 await self?.performShutdownCleanup()
                 exit(0)
@@ -197,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let sigtermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigtermSrc.setEventHandler { [weak self] in
-            print("[Superkeet] Received SIGTERM, cleaning up...")
+            appLog.info("Received SIGTERM, cleaning up...")
             Task { @MainActor [weak self] in
                 await self?.performShutdownCleanup()
                 exit(0)

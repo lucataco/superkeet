@@ -53,11 +53,17 @@ final class FillerWordCleanerTests: XCTestCase {
 
     func testAllFillerVariants() {
         // Test each recognized filler word individually
-        let fillers = ["uh", "uhh", "um", "umm", "er", "err", "hmm", "hmmm", "ah", "ahh", "ugh"]
+        // "ugh" is intentionally not in this list — it is a legitimate interjection.
+        let fillers = ["uh", "uhh", "um", "umm", "er", "err", "hmm", "hmmm", "ah", "ahh"]
         for filler in fillers {
             let result = FillerWordCleaner.clean("yes \(filler) okay")
             XCTAssertEqual(result, "yes okay", "Failed to remove filler: \(filler)")
         }
+    }
+
+    func testUghIsPreserved() {
+        // "ugh" is a legitimate interjection, not a filler word to strip.
+        XCTAssertEqual(FillerWordCleaner.clean("ugh this is broken"), "ugh this is broken")
     }
 
     func testDoesNotRemovePartialMatches() {
