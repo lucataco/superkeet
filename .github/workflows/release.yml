@@ -222,6 +222,7 @@ jobs:
 
       - name: Create Homebrew tap pull request
         if: steps.tap.outputs.enabled == 'true'
+        continue-on-error: true
         env:
           TAG: ${{ steps.vars.outputs.tag }}
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -245,12 +246,18 @@ jobs:
           PR_BODY="Automated cask update for Superkeet v${VERSION}.
 
           SHA256 and version bumped by the release workflow."
-          gh pr create \
+          if gh pr create \
             --title "$PR_TITLE" \
             --body "$PR_BODY" \
             --base main \
             --head "$BRANCH" \
-            --repo "${{ env.HOMEBREW_TAP_REPOSITORY }}"
+            --repo "${{ env.HOMEBREW_TAP_REPOSITORY }}"; then
+            echo "Pull request created."
+          else
+            echo "::warning::Could not create PR with the current token (needs pull_requests:write scope on the tap repo)."
+            echo "::warning::The branch '$BRANCH' was pushed — open the PR manually:"
+            echo "::warning::https://github.com/${{ env.HOMEBREW_TAP_REPOSITORY }}/compare/main...$BRANCH"
+          fi
 
       - name: Warn when tap sync is disabled
         if: steps.tap.outputs.enabled != 'true'
