@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import ServiceManagement
 import SwiftUI
@@ -32,6 +33,9 @@ final class AppSettings: ObservableObject {
     /// Recording overlay style: "classic" (expanded bars), "mini" (compact dots), "none" (hidden)
     @AppStorage("recordingOverlayStyle") var recordingOverlayStyle: String = "mini"
 
+    /// App-wide theme. Defaults to `.system` to honor the macOS appearance setting.
+    @AppStorage("appearancePreference") var appearancePreference: AppearancePreference = .system
+
     // MARK: - Output
     @AppStorage("autoPasteEnabled") var autoPasteEnabled: Bool = false
     @AppStorage("clipboardCopyEnabled") var clipboardCopyEnabled: Bool = true
@@ -43,9 +47,9 @@ final class AppSettings: ObservableObject {
     @Published var isDaemonRunning: Bool = false
     @Published var runtimeIssue: String?
 
-    /// Resolved path to the bundled speech engine binary.
-    /// Public app bundles only use the embedded engine. Local development
-    /// can still fall back to well-known host paths.
+    /// Resolved path to the speech engine binary. Public app bundles only use
+    /// the embedded engine; local development can use explicit overrides or
+    /// well-known host paths.
     var parakeetBinaryPath: String {
         if let bundledPath = bundledBinaryPath {
             return bundledPath
@@ -57,6 +61,29 @@ final class AppSettings: ObservableObject {
             return resolved
         }
         return missingBundledBinaryPlaceholderPath
+    }
+
+    var missingParakeetBinaryMessage: String {
+        if isRunningFromAppBundle {
+            return "Superkeet could not find the embedded Parakeet engine at \(parakeetBinaryPath). Reinstall the app to restore the bundled engine."
+        }
+
+        return "Superkeet could not find or build a local Parakeet engine for swift run. Install git and Rust/Cargo, or build parakeet-cli and set PARAKEET_CLI_PATH=/absolute/path/to/parakeet.\n\nLast checked: \(parakeetBinaryPath)"
+    }
+
+    var canBootstrapDevelopmentParakeet: Bool {
+        !isRunningFromAppBundle
+    }
+
+    var developmentParakeetSourceDirectory: URL {
+        Self.developmentParakeetSourceDirectory()
+    }
+
+    static func developmentParakeetSourceDirectory(
+        currentDirectory: String = FileManager.default.currentDirectoryPath
+    ) -> URL {
+        URL(fileURLWithPath: currentDirectory)
+            .appendingPathComponent(".build/parakeet-cli", isDirectory: true)
     }
 
     /// Directory the bundled engine reads model files from.
@@ -95,6 +122,19 @@ final class AppSettings: ObservableObject {
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
     }
 
+    /// Applies the saved appearance preference to the running app. Safe to call
+    /// from any thread; the actual `NSApp` mutation is forced onto the main queue.
+    func applyAppearancePreference() {
+        let appearance = appearancePreference.nsAppearance
+        if Thread.isMainThread {
+            NSApp.appearance = appearance
+        } else {
+            DispatchQueue.main.async {
+                NSApp.appearance = appearance
+            }
+        }
+    }
+
     // MARK: - Binary Discovery
 
     private var isRunningFromAppBundle: Bool {
@@ -118,16 +158,58 @@ final class AppSettings: ObservableObject {
 
     /// Searches for the development parakeet binary in well-known local paths.
     private var resolvedDevelopmentBinaryPath: String? {
-        let fm = FileManager.default
-        let home = NSHomeDirectory()
+        Self.resolveDevelopmentBinaryPath()
+    }
 
-        let candidates = [
+    static func resolveDevelopmentBinaryPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: String = NSHomeDirectory(),
+        currentDirectory: String = FileManager.default.currentDirectoryPath,
+        systemSearchPaths: [String] = [
+            "/opt/homebrew/bin/parakeet",
+            "/usr/local/bin/parakeet"
+        ],
+        fileManager: FileManager = .default
+    ) -> String? {
+        var candidates: [String] = []
+        let home = homeDirectory
+
+        for key in ["PARAKEET_BINARY_PATH", "PARAKEET_CLI_PATH"] {
+            if let path = environment[key], !path.isEmpty {
+                candidates.append(path)
+            }
+        }
+
+        if let sourceDirectory = environment["PARAKEET_SOURCE_DIR"], !sourceDirectory.isEmpty {
+            candidates.append("\(sourceDirectory)/target/release/parakeet")
+            candidates.append("\(sourceDirectory)/target/debug/parakeet")
+        }
+
+        candidates.append(contentsOf: [
+            "\(currentDirectory)/.build/parakeet-cli/target/release/parakeet",
+            "\(currentDirectory)/.build/parakeet-cli/target/debug/parakeet",
+            "\(currentDirectory)/../parakeet-cli/target/release/parakeet",
+            "\(currentDirectory)/../parakeet-cli/target/debug/parakeet",
             "\(home)/Code/CLIs/parakeet-cli/target/release/parakeet",
+            "\(home)/Code/CLIs/parakeet-cli/target/debug/parakeet",
             "\(home)/.cargo/bin/parakeet",
-            "/usr/local/bin/parakeet",
-            "/opt/homebrew/bin/parakeet"
-        ]
+        ] + systemSearchPaths)
 
-        return candidates.first { fm.isExecutableFile(atPath: $0) }
+        candidates.append(contentsOf: pathCandidates(environment: environment))
+
+        return candidates
+            .map { expandTilde($0, homeDirectory: homeDirectory) }
+            .map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+            .first { fileManager.isExecutableFile(atPath: $0) }
+    }
+
+    private static func pathCandidates(environment: [String: String]) -> [String] {
+        guard let path = environment["PATH"], !path.isEmpty else { return [] }
+        return path.split(separator: ":").map { "\($0)/parakeet" }
+    }
+
+    private static func expandTilde(_ path: String, homeDirectory: String) -> String {
+        guard path == "~" || path.hasPrefix("~/") else { return path }
+        return homeDirectory + path.dropFirst().description
     }
 }

@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Install signal handlers so cleanup runs even on Ctrl-C / kill
         installSignalHandlers()
 
+        // Apply the saved theme before any windows appear.
+        settings.applyAppearancePreference()
+
         settings.syncLaunchAtLoginStatus()
 
         // Setup menu bar

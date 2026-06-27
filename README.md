@@ -50,7 +50,7 @@ cd superkeet
 open ~/Applications/Superkeet.app
 ```
 
-`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`.
+`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`. If no local `parakeet` binary is found, it clones `lucataco/parakeet-cli` into `.build/parakeet-cli` and builds it with Cargo first. Source installs therefore require `git` and Rust/Cargo.
 
 By default, local installs are ad-hoc signed. To keep the same macOS privacy identity across local installs, pass a Developer ID identity:
 
@@ -85,6 +85,14 @@ If you use `swift run` during development, make sure the active developer direct
 
 ```bash
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+`swift run` also needs a local `parakeet` binary because the release app bundle is not assembled. If none is found, Superkeet automatically clones `lucataco/parakeet-cli` into `.build/parakeet-cli` and runs `cargo build --release --bin parakeet` on first startup. This requires `git` and Rust/Cargo.
+
+If you already have a local engine, you can still point Superkeet at it directly:
+
+```bash
+PARAKEET_CLI_PATH=/absolute/path/to/parakeet swift run
 ```
 
 Useful verification commands:

@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// Main settings window with vertical sidebar tabs
+/// Main settings window. Uses a `NavigationSplitView` so the sidebar inherits
+/// the system's translucent (Liquid Glass) material and selection styling on
+/// macOS 26 while degrading gracefully on macOS 14.
 struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .home
 
     enum SettingsTab: String, CaseIterable, Identifiable {
-        case home = "Setup"
+        case home = "General"
         case output = "Output & Privacy"
         case recording = "Advanced"
         case about = "About"
@@ -14,39 +16,92 @@ struct SettingsView: View {
 
         var icon: String {
             switch self {
-            case .home: return "checklist"
+            case .home: return "gearshape"
+            case .output: return "arrow.right.doc.on.clipboard"
             case .recording: return "slider.horizontal.3"
-            case .output: return "text.cursor"
-            case .about: return "info.circle.fill"
+            case .about: return "info.circle"
             }
         }
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            List(SettingsTab.allCases, id: \.id, selection: $selectedTab) { tab in
+        NavigationSplitView {
+            List(SettingsTab.allCases, selection: $selectedTab) { tab in
                 Label(tab.rawValue, systemImage: tab.icon)
                     .tag(tab)
             }
-            .listStyle(.sidebar)
-            .frame(minWidth: 150, idealWidth: 170, maxWidth: 200)
-
-            Divider()
-
-            Group {
-                switch selectedTab {
-                case .home:
-                    HomeTabView()
-                case .recording:
-                    RecordingTabView()
-                case .output:
-                    OutputTabView()
-                case .about:
-                    AboutTabView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationSplitViewColumnWidth(min: 210, ideal: 220, max: 260)
+            .safeAreaInset(edge: .top, spacing: 0) { sidebarHeader }
+            .safeAreaInset(edge: .bottom, spacing: 0) { sidebarFooter }
+        } detail: {
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 550, idealWidth: 650, minHeight: 400, idealHeight: 480)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 720, idealWidth: 800, minHeight: 540, idealHeight: 620)
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        switch selectedTab {
+        case .home:
+            HomeTabView()
+        case .recording:
+            RecordingTabView()
+        case .output:
+            OutputTabView()
+        case .about:
+            AboutTabView()
+        }
+    }
+
+    private var sidebarHeader: some View {
+        HStack(spacing: 8) {
+            AppIconView(size: 24, cornerRadius: 6)
+            Text("Superkeet")
+                .font(.headline)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+    }
+
+    private var sidebarFooter: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+            Text("Version \(Self.appVersion)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+        }
+    }
+
+    private static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    }
+}
+
+// MARK: - Shared tab header
+
+/// Large title + subtitle shown at the top of each settings detail pane,
+/// matching the native macOS Settings layout above grouped form sections.
+struct SettingsTabHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.largeTitle.weight(.bold))
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 2)
     }
 }

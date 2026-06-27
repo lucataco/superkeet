@@ -8,8 +8,13 @@ INSTALL_DIR="$HOME/Applications"
 BUILD_DIR="${SCRIPT_DIR}/.build/release"
 BUNDLE_DIR="${SCRIPT_DIR}/${BUNDLE_NAME}"
 ENTITLEMENTS_PATH="${SCRIPT_DIR}/Resources/Superkeet.entitlements"
+PARAKEET_BINARY_PATH="${PARAKEET_BINARY_PATH:-}"
+PARAKEET_SOURCE_DIR="${PARAKEET_SOURCE_DIR:-}"
 PARAKEET_OVERRIDE="${PARAKEET_CLI_PATH:-}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+PARAKEET_REPOSITORY_URL="https://github.com/lucataco/parakeet-cli.git"
+PARAKEET_REF="${PARAKEET_REF:-v0.1.5}"
+LOCAL_PARAKEET_SOURCE_DIR="${SCRIPT_DIR}/.build/parakeet-cli"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -21,13 +26,28 @@ require_command() {
 resolve_parakeet_binary() {
     local candidates=()
 
+    if [[ -n "$PARAKEET_BINARY_PATH" ]]; then
+        candidates+=("$PARAKEET_BINARY_PATH")
+    fi
+
     if [[ -n "$PARAKEET_OVERRIDE" ]]; then
         candidates+=("$PARAKEET_OVERRIDE")
     fi
 
+    if [[ -n "$PARAKEET_SOURCE_DIR" ]]; then
+        candidates+=(
+            "${PARAKEET_SOURCE_DIR}/target/release/parakeet"
+            "${PARAKEET_SOURCE_DIR}/target/debug/parakeet"
+        )
+    fi
+
     candidates+=(
+        "${LOCAL_PARAKEET_SOURCE_DIR}/target/release/parakeet"
+        "${LOCAL_PARAKEET_SOURCE_DIR}/target/debug/parakeet"
         "${SCRIPT_DIR}/../parakeet-cli/target/release/parakeet"
+        "${SCRIPT_DIR}/../parakeet-cli/target/debug/parakeet"
         "$HOME/Code/CLIs/parakeet-cli/target/release/parakeet"
+        "$HOME/Code/CLIs/parakeet-cli/target/debug/parakeet"
         "$HOME/.cargo/bin/parakeet"
         "/opt/homebrew/bin/parakeet"
         "/usr/local/bin/parakeet"
@@ -42,6 +62,30 @@ resolve_parakeet_binary() {
     done
 
     return 1
+}
+
+build_parakeet_source_dir() {
+    local source_dir="$1"
+    require_command cargo
+    printf '==> Building parakeet from %s...\n' "$source_dir"
+    cargo build --release --bin parakeet --manifest-path "${source_dir}/Cargo.toml"
+}
+
+bootstrap_local_parakeet_cli() {
+    require_command git
+    require_command cargo
+
+    printf '==> Preparing parakeet-cli %s in %s...\n' "$PARAKEET_REF" "$LOCAL_PARAKEET_SOURCE_DIR"
+    if [[ -d "${LOCAL_PARAKEET_SOURCE_DIR}/.git" ]]; then
+        git -C "$LOCAL_PARAKEET_SOURCE_DIR" fetch --depth 1 origin "$PARAKEET_REF"
+        git -C "$LOCAL_PARAKEET_SOURCE_DIR" checkout --force FETCH_HEAD
+    else
+        rm -rf "$LOCAL_PARAKEET_SOURCE_DIR"
+        mkdir -p "$(dirname "$LOCAL_PARAKEET_SOURCE_DIR")"
+        git clone --depth 1 --branch "$PARAKEET_REF" "$PARAKEET_REPOSITORY_URL" "$LOCAL_PARAKEET_SOURCE_DIR"
+    fi
+
+    build_parakeet_source_dir "$LOCAL_PARAKEET_SOURCE_DIR"
 }
 
 verify_parakeet_architecture() {
@@ -65,17 +109,19 @@ verify_parakeet_architecture() {
 require_command swift
 require_command codesign
 
+if [[ -n "$PARAKEET_SOURCE_DIR" && ! -x "${PARAKEET_SOURCE_DIR}/target/release/parakeet" ]]; then
+    build_parakeet_source_dir "$PARAKEET_SOURCE_DIR"
+fi
+
 PARAKEET_BINARY="$(resolve_parakeet_binary || true)"
 if [[ -z "$PARAKEET_BINARY" ]]; then
-    cat >&2 <<'EOF'
-Unable to find a runnable `parakeet` binary to bundle.
+    bootstrap_local_parakeet_cli
+    PARAKEET_BINARY="$(resolve_parakeet_binary || true)"
+fi
 
-Set `PARAKEET_CLI_PATH=/absolute/path/to/parakeet` or install/build it in one of:
-  ~/Code/CLIs/parakeet-cli/target/release/parakeet
-  ~/.cargo/bin/parakeet
-  /opt/homebrew/bin/parakeet
-  /usr/local/bin/parakeet
-EOF
+if [[ -z "$PARAKEET_BINARY" ]]; then
+    printf 'Unable to find or build a runnable `parakeet` binary to bundle.\n\n' >&2
+    printf 'Install git and Rust/Cargo, set `PARAKEET_CLI_PATH=/absolute/path/to/parakeet`, or set `PARAKEET_SOURCE_DIR=/absolute/path/to/parakeet-cli`.\n' >&2
     exit 1
 fi
 

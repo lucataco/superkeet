@@ -231,10 +231,15 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         let hostingController = NSHostingController(rootView: SettingsView())
         let window = NSWindow(contentViewController: hostingController)
-        window.setContentSize(NSSize(width: 650, height: 480))
+        window.setContentSize(NSSize(width: 800, height: 620))
         window.styleMask = [.titled, .closable, .resizable]
-        window.title = "Superkeet - Settings"
-        window.minSize = NSSize(width: 550, height: 400)
+        // Empty title keeps the transparent titlebar clean; the in-content large
+        // titles and sidebar identity provide context. `titleVisibility` alone is
+        // unreliable here because NavigationSplitView's toolbar re-asserts the title.
+        window.title = ""
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.minSize = NSSize(width: 720, height: 540)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

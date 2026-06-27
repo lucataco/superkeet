@@ -140,9 +140,14 @@ final class ModelProvisioning: ObservableObject {
                 throw ModelProvisioningError.message(diskIssue)
             }
 
+            if !FileManager.default.isExecutableFile(atPath: settings.parakeetBinaryPath),
+               settings.canBootstrapDevelopmentParakeet {
+                _ = try await DevelopmentParakeetBootstrap.ensureAvailable(settings: settings)
+            }
+
             let binaryPath = settings.parakeetBinaryPath
             guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-                let message = "Superkeet couldn't find its bundled speech engine. Reinstall the app to restore it."
+                let message = settings.missingParakeetBinaryMessage
                 fail(message)
                 throw ModelProvisioningError.message(message)
             }

@@ -12,53 +12,37 @@ struct RecordingTabView: View {
     @State private var isLoadingDevices: Bool = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Advanced")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    Text("Fine-tune audio input, model location, and engine behavior.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
+        VStack(spacing: 0) {
+            SettingsTabHeader(
+                title: "Advanced",
+                subtitle: "Fine-tune audio input, model location, and engine behavior."
+            )
 
-                // Audio Input Device
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Audio Input Device", systemImage: "mic.fill")
-                        .font(.headline)
-
-                    HStack {
-                        Picker("", selection: $settings.audioInputDevice) {
-                            Text("System Default").tag("")
-                            ForEach(availableDevices, id: \.self) { device in
-                                Text(device).tag(device)
-                            }
+            Form {
+                Section {
+                    Picker("Microphone", selection: $settings.audioInputDevice) {
+                        Text("System Default").tag("")
+                        ForEach(availableDevices, id: \.self) { device in
+                            Text(device).tag(device)
                         }
-                        .labelsHidden()
-
-                        Button(action: refreshDevices) {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .disabled(isLoadingDevices)
                     }
-
-                    Text("Select the microphone to use for recording. Leave as System Default to use your Mac's default input device. Changes take effect after restarting the daemon.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Button {
+                        refreshDevices()
+                    } label: {
+                        Label("Refresh Devices", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isLoadingDevices)
+                } header: {
+                    Text("Audio Input")
+                } footer: {
+                    Text("Leave as System Default to use your Mac's default input device. Changes take effect after restarting the daemon.")
                 }
 
-                Divider()
-
-                // Model Directory
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Model Directory", systemImage: "folder.fill")
-                        .font(.headline)
-
+                Section {
                     HStack {
                         TextField("Default", text: $settings.modelDirectory)
                             .textFieldStyle(.roundedBorder)
-                        Button("Browse...") {
+                        Button("Browse…") {
                             let panel = NSOpenPanel()
                             panel.canChooseDirectories = true
                             panel.canChooseFiles = false
@@ -68,36 +52,27 @@ struct RecordingTabView: View {
                             }
                         }
                     }
-
-                    Text("Leave empty to use the default location (~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3). Superkeet downloads the model here automatically on first run. Changes take effect after restarting the daemon.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                } header: {
+                    Text("Model Directory")
+                } footer: {
+                    Text("Leave empty to use the default location (~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3). Superkeet downloads the model here automatically on first run.")
                 }
 
-                Divider()
-
-                // Idle Daemon Timeout
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Idle Daemon Timeout", systemImage: "moon.zzz")
-                        .font(.headline)
-
-                    Picker("Stop daemon after inactivity:", selection: $settings.idleTimeoutMinutes) {
+                Section {
+                    Picker("Stop daemon after inactivity", selection: $settings.idleTimeoutMinutes) {
                         Text("Disabled").tag(0)
                         Text("5 minutes").tag(5)
                         Text("15 minutes").tag(15)
                         Text("30 minutes").tag(30)
                         Text("60 minutes").tag(60)
                     }
-                    .pickerStyle(.menu)
-
-                    Text("Automatically stop the speech engine after a period of inactivity to reclaim memory. The engine restarts automatically when you start recording.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                } header: {
+                    Text("Engine")
+                } footer: {
+                    Text("Automatically stop the speech engine after a period of inactivity to reclaim memory. It restarts automatically when you start recording.")
                 }
-
-                Spacer()
             }
-            .padding(24)
+            .formStyle(.grouped)
         }
         .onAppear {
             refreshDevices()

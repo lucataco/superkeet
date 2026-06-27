@@ -100,10 +100,23 @@ final class ParakeetService: ObservableObject {
         try ensureRuntimeDirectory()
         try Task.checkCancellation()
 
+        if !FileManager.default.isExecutableFile(atPath: settings.parakeetBinaryPath),
+           settings.canBootstrapDevelopmentParakeet {
+            await MainActor.run { self.startupStatusDetail = "Preparing development speech engine" }
+            do {
+                _ = try await DevelopmentParakeetBootstrap.ensureAvailable(settings: settings)
+            } catch {
+                let readiness = AppReadiness.current(settings: settings)
+                let detail = error.localizedDescription
+                await publishStartupFailure(detail, diagnostics: diagnosticSummary(readiness: readiness))
+                throw error
+            }
+        }
+
         let readiness = AppReadiness.current(settings: settings)
         if readiness.hasDaemonBlockingIssue {
             let detail = readiness.issues.contains(.engine)
-                ? "Superkeet could not find the embedded Parakeet engine at \(settings.parakeetBinaryPath). Reinstall the app to restore the bundled engine."
+                ? settings.missingParakeetBinaryMessage
                 : "Superkeet could not prepare its runtime directory at \(readiness.diagnostics.runtimeDirectory.path)."
             await publishStartupFailure(detail, diagnostics: diagnosticSummary(readiness: readiness))
             throw NSError(domain: "ParakeetService", code: 3, userInfo: [
@@ -113,7 +126,7 @@ final class ParakeetService: ObservableObject {
 
         let binaryPath = settings.parakeetBinaryPath
         if !FileManager.default.isExecutableFile(atPath: binaryPath) {
-            let message = "Superkeet could not find a runnable bundled speech engine at \(binaryPath). Reinstall the app to restore the embedded engine."
+            let message = settings.missingParakeetBinaryMessage
             await publishStartupFailure(message, diagnostics: diagnosticSummary(readiness: readiness))
             throw NSError(domain: "ParakeetService", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: message

@@ -25,138 +25,72 @@ struct HomeTabView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                StatsHeaderView()
+        VStack(spacing: 0) {
+            SettingsTabHeader(
+                title: "General",
+                subtitle: "Set up Superkeet, choose how it looks, and pick your shortcuts."
+            )
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Setup")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    Text("Confirm the app is ready and pick your shortcuts.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+            Form {
+                Section {
+                    StatsHeaderView()
+                        .padding(.vertical, 4)
+                } header: {
+                    Text("Your Dictation")
                 }
 
-                StatusCard(
-                    title: statusTitle,
-                    detail: statusDetail,
-                    color: statusColor
-                )
+                Section {
+                    Picker(selection: $settings.appearancePreference) {
+                        ForEach(AppearancePreference.allCases) { preference in
+                            Text(preference.label).tag(preference)
+                        }
+                    } label: {
+                        rowLabel("Appearance", "Match the system, or force light or dark")
+                    }
+                    .onChange(of: settings.appearancePreference) {
+                        settings.applyAppearancePreference()
+                    }
 
-                checklistSection
+                    Toggle(isOn: launchAtLoginBinding) {
+                        rowLabel(
+                            "Launch at Login",
+                            loginItemError ?? "Start Superkeet automatically when you sign in"
+                        )
+                    }
+                } header: {
+                    Text("Appearance & Behavior")
+                }
 
-                Divider()
+                Section {
+                    StatusCard(
+                        title: statusTitle,
+                        detail: statusDetail,
+                        color: statusColor
+                    )
+                    .padding(.vertical, 2)
 
-                VStack(alignment: .leading, spacing: 16) {
+                    checklistContent
+                } header: {
+                    checklistHeader
+                }
+
+                Section {
+                    shortcutsContent
+                } header: {
                     Text("Shortcuts")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-
+                } footer: {
                     if let shortcutError {
-                        Text(shortcutError)
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-
-                    HotkeyRow(
-                        title: "Toggle Recording",
-                        description: "Press once to start, press again to stop",
-                        displayName: settings.toggleHotkeyDisplayName,
-                        isEditing: editingHotkey == .toggle,
-                        onClickBadge: {
-                            editingHotkey = editingHotkey == .toggle ? nil : .toggle
-                        }
-                    )
-
-                    if editingHotkey == .toggle {
-                        InteractiveHotkeyRecorder(
-                            onRecord: { keyCode, modifiers, name in
-                                assignToggleHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
-                            },
-                            onCancel: { editingHotkey = nil }
-                        )
-                    }
-
-                    HotkeyRow(
-                        title: "Push to Talk",
-                        description: "Hold to record, release to stop",
-                        displayName: settings.pttHotkeyDisplayName,
-                        isEditing: editingHotkey == .pushToTalk,
-                        onClickBadge: {
-                            editingHotkey = editingHotkey == .pushToTalk ? nil : .pushToTalk
-                        }
-                    )
-
-                    if editingHotkey == .pushToTalk {
-                        InteractiveHotkeyRecorder(
-                            onRecord: { keyCode, modifiers, name in
-                                assignPushToTalkHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
-                            },
-                            onCancel: { editingHotkey = nil }
-                        )
+                        Text(shortcutError).foregroundStyle(.orange)
                     }
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 12) {
+                Section {
+                    diagnosticsContent
+                } header: {
                     Text("Diagnostics")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-
-                    HStack(spacing: 12) {
-                        Button("Refresh Status") {
-                            refreshReadiness()
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("Run Diagnostics") {
-                            parakeetService.refreshDiagnostics()
-                            refreshReadiness()
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button(settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon") {
-                            Task {
-                                do {
-                                    if settings.isDaemonRunning {
-                                        try await parakeetService.restartDaemon()
-                                    } else {
-                                        try await parakeetService.startDaemon()
-                                    }
-                                } catch {
-                                    homeTabLog.error("Failed to start/restart daemon: \(error.localizedDescription)")
-                                }
-                                refreshReadiness()
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
-                        Text(issue)
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-
-                    if let startupStatus = parakeetService.startupStatusDetail {
-                        Text("Daemon status: \(startupStatus)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    if let diagnostics = parakeetService.lastDiagnosticsSummary {
-                        Text(diagnostics)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .cardStyle(padding: 10)
-                    }
                 }
             }
-            .padding(24)
+            .formStyle(.grouped)
         }
         .onAppear {
             refreshReadiness()
@@ -223,50 +157,167 @@ struct HomeTabView: View {
                 isComplete: !readiness.issues.contains(.accessibility),
                 buttonTitle: "Open Settings",
                 action: { openAccessibilitySettings() }
-            ),
-            SetupCheck(
-                title: "Launch at Login",
-                detail: loginItemError
-                    ?? (settings.launchAtLoginEnabled ? "Starts automatically at login." : "Optional. Start at login."),
-                isComplete: settings.launchAtLoginEnabled,
-                isOptional: true,
-                buttonTitle: settings.launchAtLoginEnabled ? "Disable" : "Enable",
-                action: { toggleLaunchAtLogin() }
             )
         ]
     }
 
+    // MARK: - Derived checklist state
+
+    private var requiredChecks: [SetupCheck] {
+        checks.filter { !$0.isOptional }
+    }
+
+    private var incompleteRequiredChecks: [SetupCheck] {
+        requiredChecks.filter { !$0.isComplete }
+    }
+
+    private var allChecksComplete: Bool {
+        incompleteRequiredChecks.isEmpty
+    }
+
     @ViewBuilder
-    private var checklistSection: some View {
-        let allChecks = checks
-        let requiredChecks = allChecks.filter { !$0.isOptional }
-        let incomplete = requiredChecks.filter { !$0.isComplete }
-        let allComplete = incomplete.isEmpty
-        let hasCompleteItems = incomplete.count < requiredChecks.count
+    private var checklistHeader: some View {
+        let canToggle = allChecksComplete || incompleteRequiredChecks.count < requiredChecks.count
+        HStack {
+            Text("Setup Checklist")
+            Spacer()
+            if canToggle {
+                Button(checklistToggleLabel(allComplete: allChecksComplete)) {
+                    withAnimation(.easeInOut(duration: 0.15)) { showAllChecks.toggle() }
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .textCase(nil)
+            }
+        }
+    }
 
+    @ViewBuilder
+    private var checklistContent: some View {
+        if allChecksComplete {
+            ReadyRow(count: requiredChecks.count)
+            if showAllChecks {
+                checkRows(checks)
+            }
+        } else {
+            checkRows(showAllChecks ? checks : incompleteRequiredChecks)
+        }
+    }
+
+    @ViewBuilder
+    private var shortcutsContent: some View {
+        HotkeyRow(
+            title: "Toggle Recording",
+            description: "Press once to start, press again to stop",
+            displayName: settings.toggleHotkeyDisplayName,
+            isEditing: editingHotkey == .toggle,
+            onClickBadge: {
+                editingHotkey = editingHotkey == .toggle ? nil : .toggle
+            }
+        )
+
+        if editingHotkey == .toggle {
+            InteractiveHotkeyRecorder(
+                onRecord: { keyCode, modifiers, name in
+                    assignToggleHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
+                },
+                onCancel: { editingHotkey = nil }
+            )
+        }
+
+        HotkeyRow(
+            title: "Push to Talk",
+            description: "Hold to record, release to stop",
+            displayName: settings.pttHotkeyDisplayName,
+            isEditing: editingHotkey == .pushToTalk,
+            onClickBadge: {
+                editingHotkey = editingHotkey == .pushToTalk ? nil : .pushToTalk
+            }
+        )
+
+        if editingHotkey == .pushToTalk {
+            InteractiveHotkeyRecorder(
+                onRecord: { keyCode, modifiers, name in
+                    assignPushToTalkHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
+                },
+                onCancel: { editingHotkey = nil }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var diagnosticsContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Checklist")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                Spacer()
-                if allComplete || hasCompleteItems {
-                    Button(checklistToggleLabel(allComplete: allComplete)) {
-                        withAnimation(.easeInOut(duration: 0.15)) { showAllChecks.toggle() }
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
+            HStack(spacing: 10) {
+                Button("Refresh Status") {
+                    refreshReadiness()
                 }
+
+                Button("Run Diagnostics") {
+                    parakeetService.refreshDiagnostics()
+                    refreshReadiness()
+                }
+
+                Button(settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon") {
+                    Task {
+                        do {
+                            if settings.isDaemonRunning {
+                                try await parakeetService.restartDaemon()
+                            } else {
+                                try await parakeetService.startDaemon()
+                            }
+                        } catch {
+                            homeTabLog.error("Failed to start/restart daemon: \(error.localizedDescription)")
+                        }
+                        refreshReadiness()
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
+                Text(issue)
+                    .font(.caption)
+                    .foregroundColor(.orange)
             }
 
-            if allComplete {
-                ReadyRow(count: requiredChecks.count)
-                if showAllChecks {
-                    checkRows(allChecks)
+            DisclosureGroup("Diagnostic details") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let startupStatus = parakeetService.startupStatusDetail {
+                        Text("Daemon status: \(startupStatus)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    if let diagnostics = parakeetService.lastDiagnosticsSummary {
+                        Text(diagnostics)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-            } else {
-                checkRows(showAllChecks ? allChecks : incomplete)
+                .padding(.top, 6)
             }
+            .font(.caption)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { settings.launchAtLoginEnabled },
+            set: { setLaunchAtLogin(enabled: $0) }
+        )
+    }
+
+    private func rowLabel(_ title: String, _ subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -534,11 +585,9 @@ struct HomeTabView: View {
         return true
     }
 
-    private func toggleLaunchAtLogin() {
-        settings.syncLaunchAtLoginStatus()
-        let newValue = SMAppService.mainApp.status != .enabled
+    private func setLaunchAtLogin(enabled: Bool) {
         do {
-            if newValue {
+            if enabled {
                 try SMAppService.mainApp.register()
             } else {
                 try SMAppService.mainApp.unregister()
@@ -548,6 +597,7 @@ struct HomeTabView: View {
         } catch {
             homeTabLog.error("Failed to update login item: \(error.localizedDescription)")
             loginItemError = "Failed to update login item. Make sure you're running the installed .app bundle."
+            settings.syncLaunchAtLoginStatus()
         }
     }
 
@@ -661,7 +711,6 @@ private struct SetupRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
-        .cardStyle()
     }
 }
 
@@ -694,7 +743,6 @@ private struct ReadyRow: View {
             }
             Spacer()
         }
-        .cardStyle()
     }
 }
 
@@ -724,7 +772,6 @@ private struct HotkeyRow: View {
             }
             .buttonStyle(.plain)
         }
-        .cardStyle()
     }
 }
 
