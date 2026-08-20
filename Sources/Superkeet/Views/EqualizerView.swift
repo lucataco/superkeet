@@ -1,38 +1,72 @@
 import SwiftUI
 
-/// Shared "hot" color ramp + gain used by the recording equalizers so the dot
-/// (mini) and bar (classic) styles stay visually consistent: dim cyan when
-/// silent → bright green/yellow → hot red when the mic hears loud audio.
-private enum EqualizerPalette {
+/// Shared "hot" color ramp + gain used by the recording equalizers so every
+/// overlay style stays visually consistent: dim cyan when silent → bright
+/// green/yellow → hot red when the mic hears loud audio. Colors are
+/// precomputed into a lookup table — at 15 Hz × 8 bars per overlay the
+/// alternative (computed HSB + two `Color` allocations per band) allocates
+/// over 1,900 objects per second purely for rendering.
+enum EqualizerPalette {
     /// Extra gain applied to incoming levels so normal speech reads strongly.
     static let displayGain: CGFloat = 1.6
+
+    /// Quantization steps for the color ramp lookup.
+    private static let rampResolution = 32
+    private static let colorRamp: [Color] = (0..<rampResolution).map { step in
+        let level = CGFloat(step) / CGFloat(rampResolution - 1)
+        return makeColor(for: level, withOpacity: true)
+    }
+    private static let colorRampOpaque: [Color] = (0..<rampResolution).map { step in
+        let level = CGFloat(step) / CGFloat(rampResolution - 1)
+        return makeColor(for: level, withOpacity: false)
+    }
 
     /// Normalize + gain-boost a raw level into the 0...1 display range.
     static func boostedLevel(_ raw: CGFloat) -> CGFloat {
         min(1, max(0, raw * displayGain))
     }
 
-    /// Heat-map color that exaggerates with level.
+    /// Heat-map color for a boosted level. Cheap quantized lookup.
     static func color(for level: CGFloat) -> Color {
         let clamped = min(max(level, 0), 1)
-        let hue = 0.5 - 0.5 * clamped        // 0.5 cyan -> 0.0 red
-        let saturation = 0.85 + 0.15 * clamped
-        let brightness = 0.9 + 0.1 * clamped
-        let opacity = 0.35 + 0.65 * clamped  // faint when silent, vivid when loud
+        return colorRamp[Int(clamped * CGFloat(rampResolution - 1))]
+    }
+
+    /// Shadow color for the same level (opaque — no fade). Lookup-only.
+    static func shadowColor(for level: CGFloat) -> Color {
+        let clamped = min(max(level, 0), 1)
+        return colorRampOpaque[Int(clamped * CGFloat(rampResolution - 1))]
+    }
+
+    /// Aggregate level across bands — the "how loud" metric for reactive orbs.
+    static func aggregateLevel(_ levels: [Float]) -> CGFloat {
+        guard !levels.isEmpty else { return 0 }
+        let sum = levels.reduce(0) { $0 + $1 }
+        return boostedLevel(CGFloat(sum) / CGFloat(levels.count))
+    }
+
+    // MARK: - Ramp construction (called once)
+
+    private static func makeColor(for level: CGFloat, withOpacity: Bool) -> Color {
+        let hue = 0.5 - 0.5 * level        // 0.5 cyan -> 0.0 red
+        let saturation = 0.85 + 0.15 * level
+        let brightness = 0.9 + 0.1 * level
+        let opacity = withOpacity ? 0.35 + 0.65 * level : 1.0
         return Color(hue: hue, saturation: saturation, brightness: brightness, opacity: opacity)
     }
 }
 
-/// Animated equalizer bars that respond to audio levels (expanded mode).
+/// Animated equalizer bars that respond to audio levels.
 /// Shares the same hot color ramp and gain as the mini dot equalizer.
+/// Sizing parameters let slimmer overlay styles reuse the same rendering.
 struct EqualizerView: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
 
-    let barCount = 8
-    let barSpacing: CGFloat = 3
-    let barWidth: CGFloat = 4
-    let maxHeight: CGFloat = 32
-    let cornerRadius: CGFloat = 2
+    var barCount = 8
+    var barSpacing: CGFloat = 3
+    var barWidth: CGFloat = 4
+    var maxHeight: CGFloat = 32
+    var cornerRadius: CGFloat = 2
 
     var body: some View {
         HStack(spacing: barSpacing) {
@@ -45,8 +79,8 @@ struct EqualizerView: View {
                         height: max(4, level * maxHeight)
                     )
                     .shadow(
-                        color: EqualizerPalette.color(for: level).opacity(Double(level) * 0.8),
-                        radius: level * 3
+                        color: level > 0.2 ? EqualizerPalette.shadowColor(for: level) : .clear,
+                        radius: level > 0.2 ? level * 3 : 0
                     )
                     .animation(
                         .easeOut(duration: 0.08),
@@ -94,8 +128,8 @@ struct DotEqualizerView: View {
                     .fill(EqualizerPalette.color(for: level))
                     .frame(width: dotWidth, height: dotHeight(for: level))
                     .shadow(
-                        color: EqualizerPalette.color(for: level).opacity(Double(level) * 0.9),
-                        radius: level * 4
+                        color: level > 0.2 ? EqualizerPalette.shadowColor(for: level) : .clear,
+                        radius: level > 0.2 ? level * 4 : 0
                     )
                     .animation(
                         .easeOut(duration: 0.1),

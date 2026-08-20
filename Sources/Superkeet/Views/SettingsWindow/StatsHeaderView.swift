@@ -24,6 +24,11 @@ struct StatsHeaderView: View {
                 label: "Time Saved",
                 systemImage: "clock.arrow.circlepath"
             )
+            StatTile(
+                value: stats.hasData ? "\(stats.currentStreak)" : "—",
+                label: "Day Streak",
+                systemImage: "flame"
+            )
         }
     }
 }

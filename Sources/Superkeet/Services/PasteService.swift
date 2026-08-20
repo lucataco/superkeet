@@ -20,8 +20,13 @@ final class PasteService {
                 return
             }
 
-            // Save current clipboard, set transcription, paste, then restore original clipboard
-            let savedClipboard = snapshotClipboard()
+            // Only snapshot the clipboard when we will actually restore it —
+            // when "Copy to Clipboard" is enabled the transcript stays, so a
+            // full snapshot (which eagerly copies every item's data, including
+            // large image payloads) would be wasted work per recording.
+            let savedClipboard = decision.shouldKeepClipboardAfterPaste
+                ? []
+                : snapshotClipboard()
             let transcriptChangeCount = copyToClipboard(text)
             reactivateTargetApplication(processIdentifier: targetProcessIdentifier)
 

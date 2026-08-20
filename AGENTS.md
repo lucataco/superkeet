@@ -22,7 +22,8 @@ Sources/Superkeet/
 ├── Models/                 # Value types: settings, readiness, routing, records
 ├── Services/               # Singletons: ParakeetService, HotkeyManager, stores
 └── Views/                  # SwiftUI views + AppKit menu bar / overlay windows
-    └── SettingsWindow/     # Tabbed settings UI
+    ├── SettingsWindow/     # Tabbed settings UI
+    └── OverlayStyles/      # Per-style recording overlays + placement geometry
 Tests/SuperkeetTests/       # XCTest suite
 Resources/                  # Info.plist, entitlements, app icon
 scripts/                    # Release packaging + Homebrew cask update

@@ -153,9 +153,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         updateMenuBarIcon(recording: true)
+        CaptureSoundPlayer.play(.start)
 
-        let style = settings.recordingOverlayStyle
-        if style != "none" {
+        let style = settings.overlayAnimationStyle
+        if style.showsOverlay {
             AudioLevelMonitor.shared.startMonitoring()
             RecordingOverlayWindowController.shared.show()
         }
@@ -173,6 +174,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func stopRecording() {
         recordingRequested = false
         parakeetService.stopRecording()
+        CaptureSoundPlayer.play(.stop)
         updateMenuBarIcon(recording: false)
         AudioLevelMonitor.shared.stopMonitoring()
         RecordingOverlayWindowController.shared.hide()
@@ -182,6 +184,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func cancelRecording() {
         recordingRequested = false
         parakeetService.cancelRecording()
+        CaptureSoundPlayer.play(.stop)
         updateMenuBarIcon(recording: false)
         AudioLevelMonitor.shared.stopMonitoring()
         RecordingOverlayWindowController.shared.hide()

@@ -5,47 +5,57 @@ import SwiftUI
 struct RecordingOverlayView: View {
     @ObservedObject var audioMonitor = AudioLevelMonitor.shared
     @ObservedObject var settings = AppSettings.shared
-    @State private var elapsedTime: TimeInterval = 0
-    @State private var startTime: Date?
-    @State private var timer: Timer?
+    @State private var startTime = Date()
 
     var body: some View {
-        Group {
-            switch settings.recordingOverlayStyle {
-            case "classic":
-                ExpandedRecordingOverlay(
-                    audioMonitor: audioMonitor,
-                    elapsedTime: elapsedTime,
-                    isRecording: settings.isRecording,
-                    onStop: stopRecording,
-                    onToggleMode: toggleMode
-                )
-            case "none":
-                EmptyView()
-            default: // "mini" or any other value
-                CompactRecordingOverlay(
-                    audioMonitor: audioMonitor,
-                    elapsedTime: elapsedTime,
-                    isRecording: settings.isRecording,
-                    onStop: stopRecording,
-                    onToggleMode: toggleMode
-                )
+        TimelineView(.periodic(from: startTime, by: 1.0)) { context in
+            let elapsedTime = context.date.timeIntervalSince(startTime)
+            Group {
+                switch settings.overlayAnimationStyle {
+                case .classic:
+                    ExpandedRecordingOverlay(
+                        audioMonitor: audioMonitor,
+                        elapsedTime: elapsedTime,
+                        isRecording: settings.isRecording,
+                        onStop: stopRecording,
+                        onToggleMode: toggleMode
+                    )
+                case .none:
+                    EmptyView()
+                case .cursorWaveform:
+                    CursorWaveformOverlay(
+                        audioMonitor: audioMonitor,
+                        elapsedTime: elapsedTime,
+                        isRecording: settings.isRecording,
+                        onStop: stopRecording
+                    )
+                case .gradientIsland:
+                    GradientIslandOverlay(
+                        audioMonitor: audioMonitor,
+                        elapsedTime: elapsedTime,
+                        isRecording: settings.isRecording,
+                        onStop: stopRecording
+                    )
+                case .notchShelf:
+                    NotchShelfOverlay(
+                        audioMonitor: audioMonitor,
+                        elapsedTime: elapsedTime,
+                        isRecording: settings.isRecording,
+                        onStop: stopRecording
+                    )
+                case .mini:
+                    CompactRecordingOverlay(
+                        audioMonitor: audioMonitor,
+                        elapsedTime: elapsedTime,
+                        isRecording: settings.isRecording,
+                        onStop: stopRecording,
+                        onToggleMode: toggleMode
+                    )
+                }
             }
-        }
-        .onAppear {
-            let start = Date()
-            startTime = start
-            elapsedTime = 0
-            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                elapsedTime = Date().timeIntervalSince(start)
+            .onChange(of: settings.recordingOverlayStyle) { _, _ in
+                RecordingOverlayWindowController.shared.resizeForCurrentMode()
             }
-        }
-        .onDisappear {
-            timer?.invalidate()
-            timer = nil
-        }
-        .onChange(of: settings.recordingOverlayStyle) { _, _ in
-            RecordingOverlayWindowController.shared.resizeForCurrentMode()
         }
     }
 
@@ -55,7 +65,8 @@ struct RecordingOverlayView: View {
 
     private func toggleMode() {
         withAnimation(.easeInOut(duration: 0.2)) {
-            settings.recordingOverlayStyle = settings.recordingOverlayStyle == "mini" ? "classic" : "mini"
+            let next: OverlayAnimationStyle = settings.overlayAnimationStyle == .mini ? .classic : .mini
+            settings.recordingOverlayStyle = next.rawValue
         }
         RecordingOverlayWindowController.shared.resizeForCurrentMode()
     }
@@ -128,8 +139,7 @@ struct CompactRecordingOverlay: View {
     private func formatTimeCompact(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
-        let tenths = Int((time * 10).truncatingRemainder(dividingBy: 10))
-        return String(format: "%d:%02d.%d", minutes, seconds, tenths)
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 
@@ -219,8 +229,7 @@ struct ExpandedRecordingOverlay: View {
     private func formatTimeExpanded(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
-        let tenths = Int((time * 10).truncatingRemainder(dividingBy: 10))
-        return String(format: "%d:%02d.%d", minutes, seconds, tenths)
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

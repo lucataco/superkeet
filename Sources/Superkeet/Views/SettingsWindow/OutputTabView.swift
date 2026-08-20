@@ -17,32 +17,21 @@ struct OutputTabView: View {
 
             Form {
                 Section {
-                    HStack(spacing: 12) {
-                        VisualizationOption(
-                            title: "Classic",
-                            description: "Expanded bar equalizer",
-                            icon: "waveform.path",
-                            isSelected: settings.recordingOverlayStyle == "classic"
-                        ) {
-                            settings.recordingOverlayStyle = "classic"
-                        }
-
-                        VisualizationOption(
-                            title: "Mini",
-                            description: "Compact dot pill",
-                            icon: "ellipsis",
-                            isSelected: settings.recordingOverlayStyle == "mini"
-                        ) {
-                            settings.recordingOverlayStyle = "mini"
-                        }
-
-                        VisualizationOption(
-                            title: "None",
-                            description: "No overlay",
-                            icon: "eye.slash",
-                            isSelected: settings.recordingOverlayStyle == "none"
-                        ) {
-                            settings.recordingOverlayStyle = "none"
+                    LazyVGrid(
+                        columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
+                        alignment: .leading,
+                        spacing: 12
+                    ) {
+                        ForEach(OverlayAnimationStyle.allCases) { style in
+                            VisualizationOption(
+                                title: style.title,
+                                description: style.subtitle,
+                                icon: style.symbolName,
+                                location: style.locationLabel,
+                                isSelected: settings.overlayAnimationStyle == style
+                            ) {
+                                settings.recordingOverlayStyle = style.rawValue
+                            }
                         }
                     }
                     .padding(.vertical, 4)
@@ -50,6 +39,18 @@ struct OutputTabView: View {
                     Text("Recording Overlay")
                 } footer: {
                     Text("Choose how the recording overlay appears while you're speaking.")
+                }
+
+                Section {
+                    Picker(selection: $settings.captureSoundStyle) {
+                        ForEach(CaptureSoundStyle.allCases) { style in
+                            Label(style.title, systemImage: style.symbolName).tag(style.rawValue)
+                        }
+                    } label: {
+                        rowLabel("Recording Sounds", "Start and stop cues while recording")
+                    }
+                } header: {
+                    Text("Sound Cues")
                 }
 
                 Section {
@@ -205,6 +206,7 @@ private struct VisualizationOption: View {
     let title: String
     let description: String
     let icon: String
+    var location: String?
     let isSelected: Bool
     let action: () -> Void
 
@@ -225,6 +227,16 @@ private struct VisualizationOption: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
+
+                if let location {
+                    Text(location.uppercased())
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Capsule())
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)

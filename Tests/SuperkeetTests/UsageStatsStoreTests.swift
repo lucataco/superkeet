@@ -123,4 +123,67 @@ final class UsageStatsStoreTests: XCTestCase {
         let reloaded = UsageStatsStore(fileURL: path)
         XCTAssertFalse(reloaded.hasData)
     }
+
+    // MARK: - Streaks
+
+    func testStreakIsZeroWithNoData() {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(store.currentStreak, 0)
+    }
+
+    func testStreakCountsThroughToday() throws {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let dayBefore = try XCTUnwrap(calendar.date(byAdding: .day, value: -2, to: today))
+
+        store.record(wordCount: 5, durationSeconds: 5, on: dayBefore)
+        store.record(wordCount: 5, durationSeconds: 5, on: yesterday)
+        store.record(wordCount: 5, durationSeconds: 5, on: today)
+
+        XCTAssertEqual(store.currentStreak, 3)
+    }
+
+    func testStreakRollsBackToYesterdayWhenTodayHasNoActivity() throws {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let dayBefore = try XCTUnwrap(calendar.date(byAdding: .day, value: -2, to: today))
+
+        store.record(wordCount: 5, durationSeconds: 5, on: dayBefore)
+        store.record(wordCount: 5, durationSeconds: 5, on: yesterday)
+
+        XCTAssertEqual(store.currentStreak, 2)
+    }
+
+    func testStreakBreaksAfterAFullInactiveDay() throws {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.startOfDay(for: Date())
+        let threeDaysAgo = try XCTUnwrap(calendar.date(byAdding: .day, value: -3, to: today))
+
+        store.record(wordCount: 5, durationSeconds: 5, on: threeDaysAgo)
+
+        XCTAssertEqual(store.currentStreak, 0)
+    }
+
+    func testStreakDoesNotBridgeGaps() throws {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.startOfDay(for: Date())
+        let dayBefore = try XCTUnwrap(calendar.date(byAdding: .day, value: -2, to: today))
+        let threeDaysAgo = try XCTUnwrap(calendar.date(byAdding: .day, value: -3, to: today))
+
+        store.record(wordCount: 5, durationSeconds: 5, on: threeDaysAgo)
+        store.record(wordCount: 5, durationSeconds: 5, on: dayBefore)
+
+        XCTAssertEqual(store.currentStreak, 0)
+    }
 }

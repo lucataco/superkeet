@@ -30,8 +30,21 @@ final class AppSettings: ObservableObject {
     @AppStorage("idleTimeoutMinutes") var idleTimeoutMinutes: Int = 0  // 0 = disabled
 
     // MARK: - Appearance
-    /// Recording overlay style: "classic" (expanded bars), "mini" (compact dots), "none" (hidden)
-    @AppStorage("recordingOverlayStyle") var recordingOverlayStyle: String = "mini"
+    /// Recording overlay style: persisted as a raw `OverlayAnimationStyle` string.
+    @AppStorage("recordingOverlayStyle") var recordingOverlayStyle: String = OverlayAnimationStyle.mini.rawValue
+
+    /// Resolved overlay style; unknown legacy values fall back to mini.
+    var overlayAnimationStyle: OverlayAnimationStyle {
+        OverlayAnimationStyle.resolve(recordingOverlayStyle)
+    }
+
+    /// Capture sound cues, persisted as a raw `CaptureSoundStyle` string.
+    @AppStorage("captureSoundStyle") var captureSoundStyle: String = CaptureSoundStyle.systemCue.rawValue
+
+    /// Resolved capture-sound style; unknown values fall back to the system cue.
+    var captureSoundStyleResolved: CaptureSoundStyle {
+        CaptureSoundStyle(rawValue: captureSoundStyle) ?? .systemCue
+    }
 
     /// App-wide theme. Defaults to `.system` to honor the macOS appearance setting.
     @AppStorage("appearancePreference") var appearancePreference: AppearancePreference = .system

@@ -30,7 +30,7 @@ final class UsageStatsStore: ObservableObject {
     private let persistenceQueue = DispatchQueue(label: "com.superkeet.usage-stats-store", qos: .utility)
     private var saveDebounceTask: DispatchWorkItem?
 
-    private let dayFormatter: DateFormatter = {
+    private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
@@ -48,8 +48,13 @@ final class UsageStatsStore: ObservableObject {
 
     /// Record a completed transcription. Stores only counts, never text.
     func record(wordCount: Int, durationSeconds: Double) {
+        record(wordCount: wordCount, durationSeconds: durationSeconds, on: Date())
+    }
+
+    /// Internal overload with an explicit day, so streak logic is testable.
+    func record(wordCount: Int, durationSeconds: Double, on date: Date) {
         guard wordCount > 0 || durationSeconds > 0 else { return }
-        let key = dayFormatter.string(from: Date())
+        let key = Self.dayFormatter.string(from: date)
         var bucket = buckets[key] ?? DayBucket(words: 0, seconds: 0, sessions: 0)
         bucket.words += wordCount
         bucket.seconds += durationSeconds
@@ -102,6 +107,35 @@ final class UsageStatsStore: ObservableObject {
         let typingMinutes = Double(totalWords) / Self.assumedTypingWPM
         let speakingMinutes = totalSeconds / 60.0
         return max(0, typingMinutes - speakingMinutes)
+    }
+
+    /// Consecutive active-day streak, counting back from today. If today has
+    /// no activity yet, the streak counts from yesterday (Nativ's rule), so a
+    /// streak only breaks after a full inactive day.
+    var currentStreak: Int {
+        Self.currentStreak(in: buckets, calendar: Self.dayFormatter.calendar, now: Date())
+    }
+
+    /// Pure streak computation over day-keyed activity. Internal for tests.
+    static func currentStreak(in buckets: [String: DayBucket], calendar: Calendar, now: Date) -> Int {
+        let activeDays = Set(buckets.keys)
+        guard !activeDays.isEmpty else { return 0 }
+
+        var date = calendar.startOfDay(for: now)
+        let todayKey = Self.dayFormatter.string(from: date)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: date)
+        let yesterdayKey = yesterday.map { Self.dayFormatter.string(from: $0) }
+        if !activeDays.contains(todayKey), let yesterdayKey, activeDays.contains(yesterdayKey), let yesterday {
+            date = yesterday
+        }
+
+        var streak = 0
+        while activeDays.contains(Self.dayFormatter.string(from: date)) {
+            streak += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: date) else { break }
+            date = previous
+        }
+        return streak
     }
 
     // MARK: - Persistence
