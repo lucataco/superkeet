@@ -7,8 +7,13 @@ private let pointerTrackingInterval: TimeInterval = 1.0 / 15.0
 /// Manages the floating recording overlay window.
 /// Sizes and anchors resolve from the active `OverlayAnimationStyle`;
 /// the cursor-waveform style additionally tracks the pointer.
-final class RecordingOverlayWindowController {
+final class RecordingOverlayWindowController: ObservableObject {
     static let shared = RecordingOverlayWindowController()
+
+    /// Transparent gap the notch-shelf view leaves over the physical camera
+    /// notch. Published so the SwiftUI view can react when the shelf moves
+    /// between screens with different notch widths.
+    @Published private(set) var notchGapWidth: CGFloat = 0
 
     private var window: NSWindow?
     private var hostingView: NSHostingView<RecordingOverlayView>?
@@ -36,6 +41,18 @@ final class RecordingOverlayWindowController {
         }
     }
 
+    /// Notch-adjacent styles draw in the menu-bar band, which sits above the
+    /// standard `.floating` level — they must be raised to `.statusBar` or the
+    /// menu bar occludes them entirely.
+    static func windowLevel(for style: OverlayAnimationStyle) -> NSWindow.Level {
+        switch style {
+        case .gradientIsland, .notchShelf:
+            return .statusBar
+        case .mini, .classic, .cursorWaveform, .none:
+            return .floating
+        }
+    }
+
     // MARK: - Show / Hide
 
     func show() {
@@ -49,11 +66,11 @@ final class RecordingOverlayWindowController {
         // have changed) and re-order it — NSPanel + NSHostingView + the
         // SwiftUI tree are expensive to rebuild per recording.
             window.isMovableByWindowBackground = style != .cursorWaveform
+            window.level = Self.windowLevel(for: style)
+            let layout = layoutForCurrentScreen(style: style)
+            notchGapWidth = layout.gapWidth
+            window.setFrame(layout.frame, display: true)
             if !window.isVisible {
-                window.setFrame(
-                    NSRect(origin: anchorOrigin(for: style, size: Self.size(for: style)), size: Self.size(for: style)),
-                    display: true
-                )
                 window.orderFrontRegardless()
             }
             stopPointerTracking()
@@ -66,11 +83,12 @@ final class RecordingOverlayWindowController {
         let hosting = NSHostingView(rootView: overlayView)
         self.hostingView = hosting
 
-        let size = Self.size(for: style)
-        hosting.frame = NSRect(origin: .zero, size: size)
+        let layout = layoutForCurrentScreen(style: style)
+        notchGapWidth = layout.gapWidth
+        hosting.frame = NSRect(origin: .zero, size: layout.frame.size)
 
         let window = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: layout.frame,
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
@@ -79,14 +97,12 @@ final class RecordingOverlayWindowController {
         window.contentView = hosting
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.level = .floating
+        window.level = Self.windowLevel(for: style)
         window.hasShadow = false
         window.hidesOnDeactivate = false
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = style != .cursorWaveform
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-
-        positionWindow(window, style: style, size: size)
 
         window.orderFrontRegardless()
         self.window = window
@@ -136,53 +152,77 @@ final class RecordingOverlayWindowController {
         stopPointerTracking()
         startPointerTrackingIfNeeded(for: style)
 
-        let newSize = Self.size(for: style)
-        let origin = anchorOrigin(for: style, size: newSize)
-        let newFrame = NSRect(origin: origin, size: newSize)
-        window.setFrame(newFrame, display: true, animate: true)
+        window.isMovableByWindowBackground = style != .cursorWaveform
+        window.level = Self.windowLevel(for: style)
+        let layout = layoutForCurrentScreen(style: style)
+        notchGapWidth = layout.gapWidth
+        window.setFrame(layout.frame, display: true, animate: true)
     }
 
     // MARK: - Positioning
 
-    private func positionWindow(_ window: NSWindow, style: OverlayAnimationStyle, size: NSSize) {
-        let origin = anchorOrigin(for: style, size: size)
-        window.setFrameOrigin(origin)
-    }
-
-    /// Anchor origin for a style, resolved against the screen under the mouse.
-    private func anchorOrigin(for style: OverlayAnimationStyle, size: NSSize) -> NSPoint {
+    /// Full layout (frame + notch gap) for the style, resolved against the
+    /// screen under the pointer — including the screen's real safe-area
+    /// insets and auxiliary notch areas.
+    private func layoutForCurrentScreen(style: OverlayAnimationStyle) -> (frame: NSRect, gapWidth: CGFloat) {
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
         guard let screen else {
-            return .zero
+            return (NSRect(origin: .zero, size: Self.size(for: style)), 0)
         }
         let frame = screen.frame
         let visibleFrame = screen.visibleFrame
+        let size = Self.size(for: style)
+        let metrics = OverlayGeometry.notchMetrics(
+            screenFrame: frame,
+            visibleFrame: visibleFrame,
+            topSafeInset: screen.safeAreaInsets.top,
+            auxiliaryTopLeft: screen.auxiliaryTopLeftArea,
+            auxiliaryTopRight: screen.auxiliaryTopRightArea
+        )
 
         switch style {
-        case .mini, .classic:
-            return OverlayGeometry.bottomCenterOrigin(visibleFrame: visibleFrame, size: size)
+        case .mini, .classic, .none:
+            return (
+                NSRect(origin: OverlayGeometry.bottomCenterOrigin(visibleFrame: visibleFrame, size: size), size: size),
+                0
+            )
         case .cursorWaveform:
-            return OverlayGeometry.pointerFollowingOrigin(
-                pointer: pointer,
-                size: size,
-                screenFrame: frame,
-                visibleFrame: visibleFrame
+            return (
+                NSRect(
+                    origin: OverlayGeometry.pointerFollowingOrigin(
+                        pointer: pointer,
+                        size: size,
+                        screenFrame: frame,
+                        visibleFrame: visibleFrame
+                    ),
+                    size: size
+                ),
+                0
             )
         case .gradientIsland:
-            return OverlayGeometry.islandOrigin(
-                size: size,
-                screenFrame: frame,
-                visibleFrame: visibleFrame
+            let notchRightEdge = metrics.notchWidth > 0
+                ? metrics.notchCenterX + metrics.notchWidth / 2
+                : nil
+            return (
+                NSRect(
+                    origin: OverlayGeometry.islandOrigin(
+                        size: size,
+                        screenFrame: frame,
+                        visibleFrame: visibleFrame,
+                        notchRightEdge: notchRightEdge
+                    ),
+                    size: size
+                ),
+                0
             )
         case .notchShelf:
-            return OverlayGeometry.notchShelfOrigin(
+            return OverlayGeometry.notchShelfLayout(
                 size: size,
                 screenFrame: frame,
-                visibleFrame: visibleFrame
+                visibleFrame: visibleFrame,
+                metrics: metrics
             )
-        case .none:
-            return OverlayGeometry.bottomCenterOrigin(visibleFrame: visibleFrame, size: size)
         }
     }
 

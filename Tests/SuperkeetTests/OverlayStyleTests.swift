@@ -70,23 +70,62 @@ final class OverlayStyleTests: XCTestCase {
         )
         XCTAssertFalse(plain)
 
-        let notchedFlag = OverlayGeometry.hasCameraNotch(
-            screenFrame: NSRect(x: 0, y: 0, width: 1728, height: 1117),
-            visibleFrame: NSRect(x: 0, y: 0, width: 1728, height: 1079)
+        // safeAreaInsets.top > 0 is the authoritative notch signal.
+        let notchedByInset = OverlayGeometry.hasCameraNotch(
+            screenFrame: NSRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1512, height: 945),
+            topSafeInset: 37
         )
-        XCTAssertTrue(notchedFlag)
+        XCTAssertTrue(notchedByInset)
+    }
+
+    func testNotchMetricsFromAuxiliaryAreas() {
+        // 14" MacBook Pro: 1512x982 logical, ~184pt notch centered.
+        let frame = NSRect(x: 0, y: 0, width: 1512, height: 982)
+        let visible = NSRect(x: 0, y: 0, width: 1512, height: 945)
+        let auxLeft = NSRect(x: 0, y: 945, width: 664, height: 37)
+        let auxRight = NSRect(x: 848, y: 945, width: 664, height: 37)
+
+        let metrics = OverlayGeometry.notchMetrics(
+            screenFrame: frame,
+            visibleFrame: visible,
+            topSafeInset: 37,
+            auxiliaryTopLeft: auxLeft,
+            auxiliaryTopRight: auxRight
+        )
+        XCTAssertTrue(metrics.hasNotch)
+        XCTAssertEqual(metrics.bandHeight, 37)
+        XCTAssertEqual(metrics.notchWidth, 184, accuracy: 0.001)
+        XCTAssertEqual(metrics.notchCenterX, 756, accuracy: 0.001)
+    }
+
+    func testNotchMetricsWithoutNotch() {
+        let frame = NSRect(x: 0, y: 0, width: 1920, height: 1080)
+        let visible = NSRect(x: 0, y: 0, width: 1920, height: 1056)
+        let metrics = OverlayGeometry.notchMetrics(
+            screenFrame: frame,
+            visibleFrame: visible,
+            topSafeInset: 0,
+            auxiliaryTopLeft: nil,
+            auxiliaryTopRight: nil
+        )
+        XCTAssertFalse(metrics.hasNotch)
+        XCTAssertEqual(metrics.notchWidth, 0)
     }
 
     func testIslandOriginWithinNotchBand() {
-        let frame = NSRect(x: 0, y: 0, width: 1728, height: 1117)
-        let visible = NSRect(x: 0, y: 0, width: 1728, height: 1079)
+        let frame = NSRect(x: 0, y: 0, width: 1512, height: 982)
+        let visible = NSRect(x: 0, y: 0, width: 1512, height: 945)
         let size = NSSize(width: 200, height: 40)
-        let origin = OverlayGeometry.islandOrigin(size: size, screenFrame: frame, visibleFrame: visible)
-        // Vertically centered on the menu band (window overlaps the band),
-        // and offset right of the notch.
-        XCTAssertGreaterThan(origin.y + size.height, visible.maxY)
-        XCTAssertLessThan(origin.y, frame.maxY)
-        XCTAssertGreaterThan(origin.x, frame.midX)
+        let origin = OverlayGeometry.islandOrigin(
+            size: size,
+            screenFrame: frame,
+            visibleFrame: visible,
+            notchRightEdge: 940
+        )
+        // Just right of the notch's right edge, vertically centered in the band.
+        XCTAssertEqual(origin.x, 952)
+        XCTAssertEqual(origin.y + size.height / 2, frame.maxY - 37 / 2, accuracy: 0.001)
     }
 
     func testIslandOriginFallsBackBelowMenuOnPlainScreen() {
@@ -98,14 +137,60 @@ final class OverlayStyleTests: XCTestCase {
         XCTAssertEqual(origin.x, (1920 - 200) / 2)
     }
 
-    func testNotchShelfOriginSpansBandOnNotchedScreen() {
-        let frame = NSRect(x: 0, y: 0, width: 1728, height: 1117)
-        let visible = NSRect(x: 0, y: 0, width: 1728, height: 1079)
-        let size = NSSize(width: 560, height: 32)
-        let origin = OverlayGeometry.notchShelfOrigin(size: size, screenFrame: frame, visibleFrame: visible)
-        // Anchored at the bottom of the menu band, centered.
-        XCTAssertEqual(origin.y, frame.maxY - 38, accuracy: 0.001)
-        XCTAssertEqual(origin.x, (1728 - 560) / 2)
+    func testNotchShelfLayoutSpansNotchBand() {
+        let frame = NSRect(x: 0, y: 0, width: 1512, height: 982)
+        let visible = NSRect(x: 0, y: 0, width: 1512, height: 945)
+        let auxLeft = NSRect(x: 0, y: 945, width: 664, height: 37)
+        let auxRight = NSRect(x: 848, y: 945, width: 664, height: 37)
+        let metrics = OverlayGeometry.notchMetrics(
+            screenFrame: frame,
+            visibleFrame: visible,
+            topSafeInset: 37,
+            auxiliaryTopLeft: auxLeft,
+            auxiliaryTopRight: auxRight
+        )
+        let layout = OverlayGeometry.notchShelfLayout(
+            size: NSSize(width: 560, height: 32),
+            screenFrame: frame,
+            visibleFrame: visible,
+            metrics: metrics
+        )
+        // Centered on the notch, vertically inside the band, gap covers the notch.
+        XCTAssertEqual(layout.frame.midX, 756, accuracy: 0.001)
+        XCTAssertEqual(layout.frame.midY, frame.maxY - 37 / 2, accuracy: 0.001)
+        XCTAssertEqual(layout.gapWidth, 208, accuracy: 0.001) // 184 notch + 24 padding
+        XCTAssertGreaterThan(layout.frame.width, layout.gapWidth)
+    }
+
+    func testNotchShelfLayoutOnPlainScreenHasNoGap() {
+        let frame = NSRect(x: 0, y: 0, width: 1920, height: 1080)
+        let visible = NSRect(x: 0, y: 0, width: 1920, height: 1056)
+        let metrics = OverlayGeometry.notchMetrics(
+            screenFrame: frame,
+            visibleFrame: visible,
+            topSafeInset: 0,
+            auxiliaryTopLeft: nil,
+            auxiliaryTopRight: nil
+        )
+        let layout = OverlayGeometry.notchShelfLayout(
+            size: NSSize(width: 560, height: 32),
+            screenFrame: frame,
+            visibleFrame: visible,
+            metrics: metrics
+        )
+        XCTAssertEqual(layout.gapWidth, 0)
+        XCTAssertLessThan(layout.frame.maxY, visible.maxY)
+    }
+
+    // MARK: - Window level gating
+
+    func testNotchStylesDrawAboveMenuBar() {
+        XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .notchShelf), .statusBar)
+        XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .gradientIsland), .statusBar)
+        XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .mini), .floating)
+        XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .classic), .floating)
+        XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .cursorWaveform), .floating)
+        XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .none), .floating)
     }
 
     // MARK: - Pointer tracking gating
