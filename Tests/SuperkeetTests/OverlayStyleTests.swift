@@ -107,4 +107,16 @@ final class OverlayStyleTests: XCTestCase {
         XCTAssertEqual(origin.y, frame.maxY - 38, accuracy: 0.001)
         XCTAssertEqual(origin.x, (1728 - 560) / 2)
     }
+
+    // MARK: - Pointer tracking gating
+
+    func testOnlyCursorWaveformTracksPointer() {
+        XCTAssertTrue(RecordingOverlayWindowController.shouldTrackPointer(for: .cursorWaveform))
+        for style in OverlayAnimationStyle.allCases where style != .cursorWaveform {
+            XCTAssertFalse(
+                RecordingOverlayWindowController.shouldTrackPointer(for: style),
+                "\(style) must not track the pointer"
+            )
+        }
+    }
 }

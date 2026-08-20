@@ -56,6 +56,7 @@ final class RecordingOverlayWindowController {
                 )
                 window.orderFrontRegardless()
             }
+            stopPointerTracking()
             startPointerTrackingIfNeeded(for: style)
             subscribeRecordingAutoHide()
             return
@@ -187,11 +188,24 @@ final class RecordingOverlayWindowController {
 
     // MARK: - Pointer Tracking
 
+    /// Whether a pointer-tracking timer should be active for the style.
+    /// Internal for tests — the tracker self-invalidates when this goes false.
+    static func shouldTrackPointer(for style: OverlayAnimationStyle) -> Bool {
+        style == .cursorWaveform
+    }
+
     private func startPointerTrackingIfNeeded(for style: OverlayAnimationStyle) {
-        guard style == .cursorWaveform else { return }
+        guard Self.shouldTrackPointer(for: style) else { return }
         let size = Self.size(for: style)
-        pointerTracker = Timer.scheduledTimer(withTimeInterval: pointerTrackingInterval, repeats: true) { [weak self] _ in
+        pointerTracker = Timer.scheduledTimer(withTimeInterval: pointerTrackingInterval, repeats: true) { [weak self] timer in
             guard let self = self, let window = self.window else { return }
+            // Self-invalidate if the style changed to a non-cursor style —
+            // stops runaway tracking when the user switches styles mid-recording.
+            guard Self.shouldTrackPointer(for: AppSettings.shared.overlayAnimationStyle) else {
+                timer.invalidate()
+                self.pointerTracker = nil
+                return
+            }
             let pointer = NSEvent.mouseLocation
             let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
             guard let screen else { return }
