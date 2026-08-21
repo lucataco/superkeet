@@ -12,11 +12,16 @@ struct NotchShelfOverlay: View {
     let onStop: () -> Void
 
     var body: some View {
-        if layout.notchGapWidth > 0 {
-            twoPillBody(gap: layout.notchGapWidth)
-        } else {
-            singlePillBody
+        // The window is the full menu-band height; center content so the pills
+        // align vertically with the menu text and the notch.
+        Group {
+            if layout.notchGapWidth > 0 {
+                twoPillBody(gap: layout.notchGapWidth)
+            } else {
+                singlePillBody
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Notched: two pills flanking the camera

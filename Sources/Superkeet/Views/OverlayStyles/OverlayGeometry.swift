@@ -123,6 +123,8 @@ enum OverlayGeometry {
     /// Frame for the wide-notch shelf: spans centered on the notch inside the
     /// menu band so the content flanks the camera. Returns the frame and the
     /// gap width the view should leave transparent over the physical notch.
+    /// The window takes the full menu-band height so the pills vertically
+    /// align with the menu text and the notch.
     static func notchShelfLayout(
         size: NSSize,
         screenFrame: NSRect,
@@ -142,8 +144,10 @@ enum OverlayGeometry {
         }
         let gapWidth = metrics.notchWidth > 0 ? metrics.notchWidth + 24 : 0
         let width = max(size.width, gapWidth + 240)
-        let height = min(size.height, metrics.bandHeight)
-        let y = screenFrame.maxY - metrics.bandHeight + (metrics.bandHeight - height) / 2
+        // Full band height, anchored to the band's bottom edge (which equals
+        // visibleFrame.maxY on a notched screen).
+        let height = metrics.bandHeight
+        let y = screenFrame.maxY - height
         let x = clampedX(metrics.notchCenterX - width / 2, width: width, screenFrame: screenFrame)
         return (frame: NSRect(x: x, y: y, width: width, height: height), gapWidth: gapWidth)
     }

@@ -155,9 +155,11 @@ final class OverlayStyleTests: XCTestCase {
             visibleFrame: visible,
             metrics: metrics
         )
-        // Centered on the notch, vertically inside the band, gap covers the notch.
+        // Window spans the full menu band height, bottom-anchored to the band.
+        XCTAssertEqual(layout.frame.minY, frame.maxY - metrics.bandHeight, accuracy: 0.001)
+        XCTAssertEqual(layout.frame.height, metrics.bandHeight, accuracy: 0.001)
+        // Centered on the notch, gap covers the notch.
         XCTAssertEqual(layout.frame.midX, 756, accuracy: 0.001)
-        XCTAssertEqual(layout.frame.midY, frame.maxY - 37 / 2, accuracy: 0.001)
         XCTAssertEqual(layout.gapWidth, 208, accuracy: 0.001) // 184 notch + 24 padding
         XCTAssertGreaterThan(layout.frame.width, layout.gapWidth)
     }
