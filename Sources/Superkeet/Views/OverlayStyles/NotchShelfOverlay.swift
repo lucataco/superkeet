@@ -26,19 +26,37 @@ struct NotchShelfOverlay: View {
 
     // MARK: - Notched: two pills flanking the camera
 
+    /// The window is centered on the notch. Position the two pills so the
+    /// transparent gap between them is exactly centered on the camera,
+    /// regardless of each pill's content width: left pill's trailing edge at
+    /// `center - gap/2`, right pill's leading edge at `center + gap/2`.
     private func twoPillBody(gap: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            pill {
-                levelBars
-            }
-            Spacer()
-                .frame(width: gap)
-            pill {
-                HStack(spacing: 10) {
-                    timerLabel
-                    levelBars
-                    stopButton
+        GeometryReader { geo in
+            let center = geo.size.width / 2
+            HStack(spacing: 0) {
+                // Left pill, trailing-aligned to the gap's left edge.
+                HStack {
+                    Spacer(minLength: 0)
+                    pill { levelBars }
                 }
+                .frame(width: center - gap / 2)
+
+                // Transparent gap over the camera notch.
+                Spacer()
+                    .frame(width: gap)
+
+                // Right pill, leading-aligned to the gap's right edge.
+                HStack {
+                    pill {
+                        HStack(spacing: 10) {
+                            timerLabel
+                            levelBars
+                            stopButton
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(width: center - gap / 2)
             }
         }
     }
