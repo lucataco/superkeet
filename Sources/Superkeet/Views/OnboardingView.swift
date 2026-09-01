@@ -938,7 +938,7 @@ struct OnboardingView: View {
 
     private func syncAccessibilityState(_ granted: Bool) {
         hotkeyManager.accessibilityGranted = granted
-        guard granted else { return }
+        guard granted, settings.hasCompletedOnboarding else { return }
         hotkeyManager.startListening()
         if !hotkeyManager.isListening {
             hotkeyManager.startRetryTimer()

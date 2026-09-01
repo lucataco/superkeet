@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.onPushToTalkEnded = { [weak self] in
             DispatchQueue.main.async {
                 appLog.info("PTT end callback fired — stopping recording")
-                self?.menuBarManager.stopRecordingOnly()
+                self?.menuBarManager.stopPushToTalk()
             }
         }
         hotkeyManager.onEscapePressed = { [weak self] in

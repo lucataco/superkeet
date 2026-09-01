@@ -6,7 +6,7 @@ import os.log
 
 private let homeTabLog = Logger(subsystem: "com.superkeet.app", category: "HomeTab")
 
-/// Setup tab focused on first-run clarity and the single primary shortcut.
+/// Setup tab focused on first-run clarity and recording shortcuts.
 struct HomeTabView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var parakeetService = ParakeetService.shared
@@ -857,6 +857,7 @@ private struct InteractiveHotkeyRecorder: View {
         .cornerRadius(10)
         .onAppear {
             recorderState.isActive = true
+            HotkeyManager.shared.beginHotkeyCapture()
             startListening()
         }
         .onDisappear {
@@ -926,10 +927,12 @@ private struct InteractiveHotkeyRecorder: View {
     }
 
     private func teardown() {
+        guard recorderState.isActive else { return }
         recorderState.isActive = false
         recorderState.pendingRecord?.cancel()
         recorderState.pendingRecord = nil
         stopListening()
+        HotkeyManager.shared.endHotkeyCapture()
     }
 
     private func modifierFlagsToInt(_ flags: NSEvent.ModifierFlags) -> Int {

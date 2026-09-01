@@ -53,6 +53,12 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
     }
 
+    /// Notch-band overlays sit over menu extras; clicks must fall through to
+    /// the menu bar. Stop via the hotkey or Escape.
+    static func ignoresMouseEvents(for style: OverlayAnimationStyle) -> Bool {
+        style == .gradientIsland || style == .notchShelf
+    }
+
     // MARK: - Show / Hide
 
     func show() {
@@ -62,14 +68,11 @@ final class RecordingOverlayWindowController: ObservableObject {
         guard style.showsOverlay else { return }
 
         if let window {
-        // Reuse the panel: re-anchor it for the current session (screen may
-        // have changed) and re-order it — NSPanel + NSHostingView + the
-        // SwiftUI tree are expensive to rebuild per recording.
-            window.isMovableByWindowBackground = style != .cursorWaveform
-            window.level = Self.windowLevel(for: style)
-            let layout = layoutForCurrentScreen(style: style)
-            notchGapWidth = layout.gapWidth
-            window.setFrame(layout.frame, display: true)
+            // Reuse the panel (NSPanel is expensive) but replace the SwiftUI
+            // root so session-scoped state — elapsed clock, island morph-in —
+            // starts fresh. orderOut does not destroy the hosting view.
+            hostingView?.rootView = RecordingOverlayView(sessionStart: Date())
+            applyChrome(window, style: style)
             if !window.isVisible {
                 window.orderFrontRegardless()
             }
@@ -79,16 +82,12 @@ final class RecordingOverlayWindowController: ObservableObject {
             return
         }
 
-        let overlayView = RecordingOverlayView()
+        let overlayView = RecordingOverlayView(sessionStart: Date())
         let hosting = NSHostingView(rootView: overlayView)
         self.hostingView = hosting
 
-        let layout = layoutForCurrentScreen(style: style)
-        notchGapWidth = layout.gapWidth
-        hosting.frame = NSRect(origin: .zero, size: layout.frame.size)
-
         let window = NSPanel(
-            contentRect: layout.frame,
+            contentRect: .zero,
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
@@ -97,12 +96,11 @@ final class RecordingOverlayWindowController: ObservableObject {
         window.contentView = hosting
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.level = Self.windowLevel(for: style)
         window.hasShadow = false
         window.hidesOnDeactivate = false
         window.isReleasedWhenClosed = false
-        window.isMovableByWindowBackground = style != .cursorWaveform
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        applyChrome(window, style: style)
 
         window.orderFrontRegardless()
         self.window = window
@@ -116,8 +114,8 @@ final class RecordingOverlayWindowController: ObservableObject {
         stopPointerTracking()
         recordingCancellable?.cancel()
         recordingCancellable = nil
-        // Keep the panel alive — just order it out. The next show() re-anchors
-        // and re-orders without rebuilding the SwiftUI hierarchy.
+        // Keep the panel alive — just order it out. The next show() re-anchors,
+        // replaces the SwiftUI root, and re-orders.
         window?.orderOut(nil)
     }
 
@@ -125,7 +123,6 @@ final class RecordingOverlayWindowController: ObservableObject {
 
     private func subscribeRecordingAutoHide() {
         guard recordingCancellable == nil else { return }
-        // Auto-hide if recording stops unexpectedly (e.g., daemon crash)
         recordingCancellable = AppSettings.shared.$isRecording
             .receive(on: DispatchQueue.main)
             .dropFirst()
@@ -151,12 +148,17 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
         stopPointerTracking()
         startPointerTrackingIfNeeded(for: style)
+        applyChrome(window, style: style, animate: true)
+    }
 
+    private func applyChrome(_ window: NSWindow, style: OverlayAnimationStyle, animate: Bool = false) {
         window.isMovableByWindowBackground = style != .cursorWaveform
         window.level = Self.windowLevel(for: style)
+        window.ignoresMouseEvents = Self.ignoresMouseEvents(for: style)
         let layout = layoutForCurrentScreen(style: style)
         notchGapWidth = layout.gapWidth
-        window.setFrame(layout.frame, display: true, animate: true)
+        hostingView?.frame = NSRect(origin: .zero, size: layout.frame.size)
+        window.setFrame(layout.frame, display: true, animate: animate)
     }
 
     // MARK: - Positioning

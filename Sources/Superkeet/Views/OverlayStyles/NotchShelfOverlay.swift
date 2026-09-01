@@ -8,8 +8,6 @@ struct NotchShelfOverlay: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     @ObservedObject private var layout = RecordingOverlayWindowController.shared
     let elapsedTime: TimeInterval
-    let isRecording: Bool
-    let onStop: () -> Void
 
     var body: some View {
         // The window is the full menu-band height; center content so the pills
@@ -51,7 +49,6 @@ struct NotchShelfOverlay: View {
                         HStack(spacing: 10) {
                             timerLabel
                             levelBars
-                            stopButton
                         }
                     }
                     Spacer(minLength: 0)
@@ -69,7 +66,6 @@ struct NotchShelfOverlay: View {
                 levelBars
                 timerLabel
                 levelBars
-                stopButton
             }
         }
     }
@@ -88,22 +84,10 @@ struct NotchShelfOverlay: View {
     }
 
     private var timerLabel: some View {
-        Text(formatTime(elapsedTime))
+        Text(OverlayElapsedClock.formatted(elapsedTime))
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundColor(.secondary)
             .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private var stopButton: some View {
-        Button(action: onStop) {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 9))
-                .foregroundColor(.white)
-                .frame(width: 20, height: 20)
-                .background(Color.primary.opacity(0.3))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
     }
 
     private func pill<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -119,11 +103,5 @@ struct NotchShelfOverlay: View {
                     .stroke(Color.white.opacity(0.12), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
-    }
-
-    private func formatTime(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%d:%02d", minutes, seconds)
     }
 }

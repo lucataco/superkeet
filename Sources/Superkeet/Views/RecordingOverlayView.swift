@@ -1,15 +1,18 @@
 import SwiftUI
 
-/// Floating pill-shaped overlay window shown during recording.
-/// Supports compact (dot equalizer) and expanded (bar equalizer) modes.
+/// Recording overlay; style is chosen by `AppSettings.overlayAnimationStyle`.
 struct RecordingOverlayView: View {
+    let sessionStart: Date
     @ObservedObject var audioMonitor = AudioLevelMonitor.shared
     @ObservedObject var settings = AppSettings.shared
-    @State private var startTime = Date()
 
     var body: some View {
-        TimelineView(.periodic(from: startTime, by: 1.0)) { context in
-            let elapsedTime = context.date.timeIntervalSince(startTime)
+        TimelineView(.periodic(from: sessionStart, by: 1.0)) { context in
+            let elapsedTime = OverlayElapsedClock.elapsed(
+                now: context.date,
+                start: sessionStart,
+                isRecording: settings.isRecording
+            )
             Group {
                 switch settings.overlayAnimationStyle {
                 case .classic:
@@ -33,15 +36,12 @@ struct RecordingOverlayView: View {
                     GradientIslandOverlay(
                         audioMonitor: audioMonitor,
                         elapsedTime: elapsedTime,
-                        isRecording: settings.isRecording,
-                        onStop: stopRecording
+                        isRecording: settings.isRecording
                     )
                 case .notchShelf:
                     NotchShelfOverlay(
                         audioMonitor: audioMonitor,
-                        elapsedTime: elapsedTime,
-                        isRecording: settings.isRecording,
-                        onStop: stopRecording
+                        elapsedTime: elapsedTime
                     )
                 case .mini:
                     CompactRecordingOverlay(
@@ -74,7 +74,7 @@ struct RecordingOverlayView: View {
 
 // MARK: - Compact Mode
 
-/// Tight, Superwhisper-style pill: red dot, dot equalizer, "Recording", timer, stop button
+/// Tight pill: red dot, dot equalizer, timer, stop button
 struct CompactRecordingOverlay: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     let elapsedTime: TimeInterval
@@ -104,7 +104,7 @@ struct CompactRecordingOverlay: View {
             DotEqualizerView(audioMonitor: audioMonitor)
 
             // Timer
-            Text(formatTimeCompact(elapsedTime))
+            Text(OverlayElapsedClock.formatted(elapsedTime))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: true, vertical: false)
@@ -134,12 +134,6 @@ struct CompactRecordingOverlay: View {
         .onTapGesture(count: 2) {
             onToggleMode()
         }
-    }
-
-    private func formatTimeCompact(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 
@@ -192,7 +186,7 @@ struct ExpandedRecordingOverlay: View {
                     Text("Recording")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.primary)
-                    Text(formatTimeExpanded(elapsedTime))
+                    Text(OverlayElapsedClock.formatted(elapsedTime))
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
@@ -224,12 +218,6 @@ struct ExpandedRecordingOverlay: View {
         .onTapGesture(count: 2) {
             onToggleMode()
         }
-    }
-
-    private func formatTimeExpanded(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

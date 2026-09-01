@@ -167,7 +167,7 @@ enum AppReadiness {
         ).devices
         let availableInputDeviceNames = inputDevices.map(\.localizedName).sorted()
         let configuredInputDeviceFound = settings.audioInputDevice.isEmpty ||
-            availableInputDeviceNames.contains { $0.localizedCaseInsensitiveContains(settings.audioInputDevice) }
+            availableInputDeviceNames.contains { AudioInputDeviceResolver.namesMatch(settings.audioInputDevice, $0) }
 
         let modelDirectory = URL(fileURLWithPath: settings.effectiveModelDirectory, isDirectory: true)
 

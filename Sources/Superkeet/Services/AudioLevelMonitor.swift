@@ -31,6 +31,7 @@ final class AudioLevelMonitor: ObservableObject {
     // MARK: - Start / Stop
 
     func startMonitoring() {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard !isMonitoring else { return }
 
         // Don't access the audio engine if mic permission isn't granted —
@@ -87,22 +88,19 @@ final class AudioLevelMonitor: ObservableObject {
         }
 
         self.audioEngine = engine
-        DispatchQueue.main.async {
-            self.isMonitoring = true
-        }
+        self.isMonitoring = true
     }
 
     func stopMonitoring() {
+        dispatchPrecondition(condition: .onQueue(.main))
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
         smoothedLevel = 0
         lastPublishedAt = .distantPast
-        DispatchQueue.main.async {
-            self.isMonitoring = false
-            self.errorMessage = nil
-            self.levels = Array(repeating: 0, count: Self.bandCount)
-        }
+        isMonitoring = false
+        errorMessage = nil
+        levels = Array(repeating: 0, count: Self.bandCount)
     }
 
     // MARK: - Level Processing
@@ -165,6 +163,10 @@ enum AudioInputDeviceResolver {
         return selectDevice(forName: name, in: devices)
     }
 
+    static func namesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        lhs == rhs || lhs.caseInsensitiveCompare(rhs) == .orderedSame
+    }
+
     /// Selector over attached devices: exact display-name match first, then
     /// case-insensitive. An empty name always resolves to the system default.
     static func selectDevice(forName name: String, in devices: [(id: AudioDeviceID, name: String)]) -> AudioDeviceID? {
@@ -172,7 +174,7 @@ enum AudioInputDeviceResolver {
         if let match = devices.first(where: { $0.name == name }) {
             return match.id
         }
-        return devices.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })?.id
+        return devices.first(where: { namesMatch(name, $0.name) })?.id
     }
 
     private static func allInputDevices() -> [(id: AudioDeviceID, name: String)] {
@@ -209,17 +211,17 @@ enum AudioInputDeviceResolver {
 
     private static func deviceName(for deviceID: AudioDeviceID) -> String? {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceName,
+            mSelector: kAudioObjectPropertyName,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        var name: CFString?
-        var nameSize = UInt32(MemoryLayout<CFString?>.size)
-        let status = withUnsafeMutablePointer(to: &name) { pointer in
-            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &nameSize, pointer)
+        var cfName: Unmanaged<CFString>?
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = withUnsafeMutablePointer(to: &cfName) { pointer in
+            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, pointer)
         }
-        guard status == noErr, let name else { return nil }
-        return name as String
+        guard status == noErr, let cfName else { return nil }
+        return cfName.takeUnretainedValue() as String
     }
 
     private static func hasInputChannels(_ deviceID: AudioDeviceID) -> Bool {
@@ -229,35 +231,21 @@ enum AudioInputDeviceResolver {
             mElement: kAudioObjectPropertyElementMain
         )
         var dataSize: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr else { return false }
-
-        // Layout mirror of AudioBufferList's buffer elements so we can walk
-        // the variable-length array without the unavailable Swift helper.
-        struct RawAudioBuffer {
-            var mData: UnsafeMutableRawPointer?
-            var mDataByteSize: UInt32
-            var mNumberChannels: UInt32
-        }
-        let bufferStride = MemoryLayout<UInt32>.size // mNumberBuffers header
-        guard dataSize >= UInt32(bufferStride) else { return false }
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
+              dataSize > 0 else { return false }
 
         let rawBuffer = UnsafeMutableRawPointer.allocate(
-            byteCount: bufferStride + Int(dataSize),
-            alignment: MemoryLayout<UInt32>.alignment
+            byteCount: Int(dataSize),
+            alignment: MemoryLayout<AudioBufferList>.alignment
         )
         defer { rawBuffer.deallocate() }
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, rawBuffer) == noErr else { return false }
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, rawBuffer) == noErr else {
+            return false
+        }
 
-        let bufferListPointer = rawBuffer.assumingMemoryBound(to: UInt32.self)
-        let bufferCount = Int(bufferListPointer.pointee)
-        let bufferBase = rawBuffer.advanced(by: bufferStride)
-        guard bufferCount > 0 else { return false }
-
-        let buffers = UnsafeBufferPointer<RawAudioBuffer>(
-            start: bufferBase.assumingMemoryBound(to: RawAudioBuffer.self),
-            count: bufferCount
-        )
-        return buffers.reduce(0) { $0 + Int($1.mNumberChannels) } > 0
+        let bufferList = rawBuffer.assumingMemoryBound(to: AudioBufferList.self)
+        let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+        return buffers.contains { $0.mNumberChannels > 0 }
     }
 }
 

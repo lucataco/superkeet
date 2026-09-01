@@ -34,6 +34,7 @@ final class ParakeetService: ObservableObject {
     private var recordingStartTime: Date?
     private var activeAppAtRecordingStart: (name: String, bundleId: String, processIdentifier: pid_t?)?
     private var lastDeliveredTranscription: String?
+    private var outputGate = RecordingOutputGate()
     private var idleShutdownTask: DispatchWorkItem?
     private let lifecycleLock = NSLock()
     private var startTask: Task<Void, Error>?
@@ -229,6 +230,9 @@ final class ParakeetService: ObservableObject {
                 }
                 self.settings.isDaemonRunning = false
                 self.settings.isRecording = false
+                if previousState == .recording {
+                    self.outputGate.close()
+                }
 
                 if previousState == .idle || previousState == .recording {
                     self.scheduleAutoRestart(afterUnexpectedExitOf: proc)
@@ -421,27 +425,36 @@ final class ParakeetService: ObservableObject {
               envelope.state == "recording" else {
             recordingStartTime = nil
             activeAppAtRecordingStart = nil
+            let message = "Couldn't start recording — is the speech engine running?"
+            parakeetLog.error("start command failed: \(response ?? "nil", privacy: .public)")
+            lastUserFacingError = message
+            settings.runtimeIssue = message
             return false
         }
 
+        outputGate.open()
         daemonState = .recording
         settings.isRecording = true
+        lastUserFacingError = nil
+        settings.runtimeIssue = nil
         return true
     }
 
     @MainActor
     func stopRecording() {
+        daemonState = .idle
+        settings.isRecording = false
+        resetIdleTimer()
         sendSocketCommand("stop") { [weak self] response in
             DispatchQueue.main.async {
-                guard let envelope = self?.decodeSocketResponse(response),
+                guard let self else { return }
+                guard let envelope = self.decodeSocketResponse(response),
                       envelope.status == "ok" else {
+                    parakeetLog.error("stop command failed: \(response, privacy: .public)")
+                    let message = "Couldn't confirm stop with the speech engine. Try recording again."
+                    self.lastUserFacingError = message
+                    self.settings.runtimeIssue = message
                     return
-                }
-
-                if envelope.state == "stopping" || envelope.state == "idle" {
-                    self?.daemonState = .idle
-                    self?.settings.isRecording = false
-                    self?.resetIdleTimer()
                 }
             }
         }
@@ -449,35 +462,22 @@ final class ParakeetService: ObservableObject {
 
     @MainActor
     func cancelRecording() {
+        outputGate.close()
+        recordingStartTime = nil
+        activeAppAtRecordingStart = nil
+        lastDeliveredTranscription = nil
+        daemonState = .idle
+        settings.isRecording = false
+        resetIdleTimer()
         sendSocketCommand("cancel") { [weak self] response in
             DispatchQueue.main.async {
-                guard let envelope = self?.decodeSocketResponse(response),
-                      envelope.status == "ok" else {
+                guard let self else { return }
+                guard self.decodeSocketResponse(response)?.status == "ok" else {
+                    parakeetLog.error("cancel command failed: \(response, privacy: .public)")
                     return
-                }
-
-                if envelope.state == "idle" || envelope.state == "cancelling" {
-                    self?.daemonState = .idle
-                    self?.settings.isRecording = false
-                    self?.recordingStartTime = nil
-                    self?.activeAppAtRecordingStart = nil
-                    self?.resetIdleTimer()
                 }
             }
         }
-    }
-
-    @MainActor
-    func toggleRecording() {
-        if settings.isRecording {
-            stopRecording()
-        } else {
-            Task { _ = await startRecording() }
-        }
-    }
-
-    func queryStatus(completion: ((String) -> Void)? = nil) {
-        sendSocketCommand("status", completion: completion)
     }
 
     @MainActor
@@ -689,6 +689,11 @@ final class ParakeetService: ObservableObject {
     }
 
     private func processTranscription(_ text: String) {
+        guard outputGate.isOpen else {
+            parakeetLog.info("Dropping transcription because the recording session is closed")
+            return
+        }
+
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -737,18 +742,12 @@ final class ParakeetService: ObservableObject {
             )
         }
 
-        // Reset
+        outputGate.close()
         recordingStartTime = nil
         activeAppAtRecordingStart = nil
     }
 
     // MARK: - Cleanup
-
-    func cleanup() {
-        Task {
-            await cleanupAndWait()
-        }
-    }
 
     func cleanupAndWait() async {
         await stopDaemonAndWait()

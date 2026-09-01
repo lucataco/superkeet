@@ -7,7 +7,6 @@ struct GradientIslandOverlay: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     let elapsedTime: TimeInterval
     let isRecording: Bool
-    let onStop: () -> Void
 
     @State private var appeared = false
 
@@ -15,20 +14,10 @@ struct GradientIslandOverlay: View {
         HStack(spacing: 8) {
             ReactiveOrbView(level: aggregateLevel, isRecording: isRecording)
 
-            Text(formatTime(elapsedTime))
+            Text(OverlayElapsedClock.formatted(elapsedTime))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: true, vertical: false)
-
-            Button(action: onStop) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(.white)
-                    .frame(width: 20, height: 20)
-                    .background(Color.primary.opacity(0.3))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -50,12 +39,6 @@ struct GradientIslandOverlay: View {
 
     private var aggregateLevel: CGFloat {
         EqualizerPalette.aggregateLevel(audioMonitor.levels)
-    }
-
-    private func formatTime(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

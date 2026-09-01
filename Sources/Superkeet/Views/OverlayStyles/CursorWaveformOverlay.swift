@@ -29,7 +29,7 @@ struct CursorWaveformOverlay: View {
                 cornerRadius: 1.5
             )
 
-            Text(formatTime(elapsedTime))
+            Text(OverlayElapsedClock.formatted(elapsedTime))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: true, vertical: false)
@@ -55,11 +55,5 @@ struct CursorWaveformOverlay: View {
                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 6)
-    }
-
-    private func formatTime(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%d:%02d", minutes, seconds)
     }
 }

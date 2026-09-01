@@ -81,6 +81,15 @@ final class AudioLevelMonitorTests: XCTestCase {
         XCTAssertNil(AudioInputDeviceResolver.selectDevice(forName: "Missing Mic", in: devices))
     }
 
+    func testNamesMatchIsCaseInsensitive() {
+        XCTAssertTrue(AudioInputDeviceResolver.namesMatch("USB Microphone", "usb microphone"))
+    }
+
+    func testNamesMatchRejectsSubstring() {
+        XCTAssertFalse(AudioInputDeviceResolver.namesMatch("Mic", "USB Microphone"))
+        XCTAssertFalse(AudioInputDeviceResolver.namesMatch("USB Microphone", "USB"))
+    }
+
     // MARK: - Helpers
 
     private func makeBuffer(sampleValue: Float) throws -> AVAudioPCMBuffer {

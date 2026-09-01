@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import os.log
 
 private let menuBarLog = Logger(subsystem: "com.superkeet.app", category: "MenuBar")
@@ -16,6 +17,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var historyWindowController: NSWindowController?
     private var onboardingWindowController: NSWindowController?
     private var recordingRequested: Bool = false
+    private var pttSessionActive: Bool = false
+    private var recordingStateCancellable: AnyCancellable?
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -28,6 +31,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem?.menu = menu
+
+        // Clear the in-flight request flag on true→false transitions only.
+        // Assigning `isRecording = false` while already false (daemon exit
+        // during start) must not clobber a new `recordingRequested`.
+        recordingStateCancellable = settings.$isRecording
+            .receive(on: DispatchQueue.main)
+            .scan((false, false)) { ($0.1, $1) }
+            .filter { $0.0 && !$0.1 }
+            .sink { [weak self] _ in
+                self?.recordingRequested = false
+                self?.pttSessionActive = false
+                self?.updateMenuBarIcon(recording: false)
+            }
     }
 
     /// Rebuilds all menu items. Called by NSMenuDelegate before each display.
@@ -135,7 +151,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             }
         } catch {
             menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription)")
-            resetRecordingUI()
+            teardownRecordingUI()
             return
         }
 
@@ -143,7 +159,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         let started = await parakeetService.startRecording()
         guard started else {
-            resetRecordingUI()
+            teardownRecordingUI()
             return
         }
 
@@ -163,8 +179,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @MainActor
-    private func resetRecordingUI() {
+    private func teardownRecordingUI() {
         recordingRequested = false
+        pttSessionActive = false
         updateMenuBarIcon(recording: false)
         AudioLevelMonitor.shared.stopMonitoring()
         RecordingOverlayWindowController.shared.hide()
@@ -172,22 +189,16 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     @objc private func stopRecording() {
-        recordingRequested = false
         parakeetService.stopRecording()
         CaptureSoundPlayer.play(.stop)
-        updateMenuBarIcon(recording: false)
-        AudioLevelMonitor.shared.stopMonitoring()
-        RecordingOverlayWindowController.shared.hide()
+        teardownRecordingUI()
     }
 
     @MainActor
     @objc private func cancelRecording() {
-        recordingRequested = false
         parakeetService.cancelRecording()
         CaptureSoundPlayer.play(.stop)
-        updateMenuBarIcon(recording: false)
-        AudioLevelMonitor.shared.stopMonitoring()
-        RecordingOverlayWindowController.shared.hide()
+        teardownRecordingUI()
     }
 
     @objc private func openHistory() {
@@ -346,6 +357,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         if settings.isRecording {
             stopRecording()
         } else {
+            pttSessionActive = false
             startRecording()
         }
     }
@@ -354,10 +366,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @MainActor
     func startRecordingOnly() {
         guard !settings.isRecording && !recordingRequested else { return }
+        pttSessionActive = true
         startRecording()
     }
 
-    /// Called by Escape key or PTT key release — only stops, never starts
+    /// Called by PTT key release — ignored unless this session was started by PTT
+    @MainActor
+    func stopPushToTalk() {
+        guard pttSessionActive else { return }
+        pttSessionActive = false
+        stopRecordingOnly()
+    }
+
+    /// Called by Escape key or overlay stop — only stops, never starts
     @MainActor
     func stopRecordingOnly() {
         guard settings.isRecording || recordingRequested else { return }

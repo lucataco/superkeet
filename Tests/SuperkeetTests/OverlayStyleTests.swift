@@ -195,6 +195,15 @@ final class OverlayStyleTests: XCTestCase {
         XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .none), .floating)
     }
 
+    func testNotchStylesIgnoreMouseEvents() {
+        XCTAssertTrue(RecordingOverlayWindowController.ignoresMouseEvents(for: .notchShelf))
+        XCTAssertTrue(RecordingOverlayWindowController.ignoresMouseEvents(for: .gradientIsland))
+        XCTAssertFalse(RecordingOverlayWindowController.ignoresMouseEvents(for: .mini))
+        XCTAssertFalse(RecordingOverlayWindowController.ignoresMouseEvents(for: .classic))
+        XCTAssertFalse(RecordingOverlayWindowController.ignoresMouseEvents(for: .cursorWaveform))
+        XCTAssertFalse(RecordingOverlayWindowController.ignoresMouseEvents(for: .none))
+    }
+
     // MARK: - Pointer tracking gating
 
     func testOnlyCursorWaveformTracksPointer() {

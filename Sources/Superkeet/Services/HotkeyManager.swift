@@ -1,5 +1,4 @@
 import Foundation
-import Carbon
 import AppKit
 import os.log
 
@@ -42,6 +41,9 @@ final class HotkeyManager: ObservableObject {
     /// Track rapid tap re-enables to detect a tight re-enable loop
     fileprivate var tapReEnableCount: Int = 0
     fileprivate var tapReEnableWindowStart: Date = .distantPast
+    /// Nested count of in-app hotkey recorders. While > 0, the tap passes
+    /// events through so the local NSEvent monitor can capture them.
+    private var hotkeyCaptureCount: Int = 0
 
     private init() {
         // Only check silently at init – don't show the macOS system dialog.
@@ -132,6 +134,23 @@ final class HotkeyManager: ObservableObject {
         eventTap = nil
         runLoopSource = nil
         self.isListening = false
+        pttKeyDown = false
+        fnKeyDown = false
+    }
+
+    func beginHotkeyCapture() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        hotkeyCaptureCount += 1
+        if pttKeyDown {
+            pttKeyDown = false
+            fnKeyDown = false
+            onPushToTalkEnded?()
+        }
+    }
+
+    func endHotkeyCapture() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        hotkeyCaptureCount = max(0, hotkeyCaptureCount - 1)
     }
 
     // MARK: - Retry
@@ -167,6 +186,10 @@ final class HotkeyManager: ObservableObject {
     // MARK: - Event Handling
 
     fileprivate func handleEvent(_ event: CGEvent) -> Bool {
+        if hotkeyCaptureCount > 0 {
+            return false
+        }
+
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
         let eventType = event.type
@@ -218,7 +241,7 @@ final class HotkeyManager: ObservableObject {
 
         // --- Toggle Recording hotkey (keyDown only) ---
         if eventType == .keyDown && Int(keyCode) == settings.toggleHotkeyKeyCode {
-            if matchesModifiers(flags, required: settings.toggleHotkeyModifierFlags) {
+            if Self.modifiersMatch(flags, required: settings.toggleHotkeyModifierFlags) {
                 hotkeyLog.info("Toggle hotkey pressed (keyCode=\(keyCode))")
                 onToggleHotkeyPressed?()
                 return true
@@ -227,14 +250,22 @@ final class HotkeyManager: ObservableObject {
 
         // --- Push to Talk hotkey (keyDown = start, keyUp = stop) ---
         if Int(keyCode) == settings.pttHotkeyKeyCode && settings.pttHotkeyKeyCode != 63 {
-            if eventType == .keyDown && !pttKeyDown {
-                if matchesModifiers(flags, required: settings.pttHotkeyModifierFlags) {
-                    pttKeyDown = true
-                    hotkeyLog.info("PTT key pressed (keyCode=\(keyCode)) — starting recording")
-                    onPushToTalkStarted?()
-                    return true
-                }
-            } else if eventType == .keyUp && pttKeyDown {
+            let modifiersMatch = Self.modifiersMatch(flags, required: settings.pttHotkeyModifierFlags)
+            switch PTTHotkeyPolicy.keyAction(
+                isKeyDown: eventType == .keyDown,
+                pttAlreadyDown: pttKeyDown,
+                modifiersMatch: modifiersMatch
+            ) {
+            case .ignore:
+                break
+            case .start:
+                pttKeyDown = true
+                hotkeyLog.info("PTT key pressed (keyCode=\(keyCode)) — starting recording")
+                onPushToTalkStarted?()
+                return true
+            case .consumeRepeat:
+                return true
+            case .stop:
                 pttKeyDown = false
                 hotkeyLog.info("PTT key released (keyCode=\(keyCode)) — stopping recording")
                 onPushToTalkEnded?()
@@ -243,12 +274,6 @@ final class HotkeyManager: ObservableObject {
         }
 
         return false
-    }
-
-    /// Check whether the event's modifier flags match the required flags.
-    /// Only checks the significant modifier bits (Cmd, Option, Control, Shift).
-    func matchesModifiers(_ eventFlags: CGEventFlags, required: Int) -> Bool {
-        Self.modifiersMatch(eventFlags, required: required)
     }
 
     /// Pure logic for modifier matching, exposed for testability.
@@ -395,8 +420,10 @@ private func hotkeyCallback(
                 }
             } else {
                 hotkeyLog.warning("Event tap disabled repeatedly (\(manager.tapReEnableCount) times in 10s), backing off. Will retry via timer.")
-                manager.stopListening()
-                manager.startRetryTimer()
+                DispatchQueue.main.async {
+                    manager.stopListening()
+                    manager.startRetryTimer()
+                }
             }
         }
         return Unmanaged.passUnretained(event)
