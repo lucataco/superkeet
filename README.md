@@ -83,6 +83,21 @@ After uploading `Superkeet-<version>.zip` to a GitHub Release, update the Homebr
 brew install --cask lucataco/tap/superkeet
 ```
 
+To verify `HOMEBREW_TAP_TOKEN` after creating or rotating it, run **Actions → Verify
+Homebrew Token → Run workflow**, or:
+
+```bash
+gh workflow run verify-homebrew-token.yml --repo lucataco/superkeet
+```
+
+This manual workflow checks tap access and authorization at the Contents and Pull
+requests write endpoints. Its write probes use a null Git object ID and identical
+PR head/base branches, so GitHub rejects them without creating repository content.
+It requires specific validation errors; authentication failures, missing permissions,
+rate limits and unexpected responses fail the job. Results appear in the job summary.
+It does not rebuild the app or replace release ZIPs/checksums. Actual release updates
+still obey the tap's branch protection and repository rules.
+
 If you use `swift run` during development, make sure the active developer directory points to full Xcode:
 
 ```bash
