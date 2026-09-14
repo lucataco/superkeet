@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Displays transcription history with rich context
 struct HistoryView: View {
     @ObservedObject var historyStore = HistoryStore.shared
     @ObservedObject var settings = AppSettings.shared
@@ -20,7 +19,6 @@ struct HistoryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             HStack {
                 Text("History")
                     .font(.title2)
@@ -45,7 +43,9 @@ struct HistoryView: View {
             }
             .padding()
 
-            // Search
+            if let issue = historyStore.persistenceIssue {
+                Text(issue).font(.caption).foregroundStyle(.orange).textSelection(.enabled).padding(.horizontal)
+            }
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
@@ -67,7 +67,6 @@ struct HistoryView: View {
 
             Divider()
 
-            // Records list
             if filteredRecords.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: emptyStateIcon)
@@ -93,6 +92,9 @@ struct HistoryView: View {
                                 .contextMenu {
                                     Button("Copy Text") {
                                         PasteService.shared.copyToClipboard(record.text)
+                                    }
+                                    if let original = record.rawText {
+                                        Button("Copy Original Transcript") { PasteService.shared.copyToClipboard(original) }
                                     }
                                     Divider()
                                     Button("Delete", role: .destructive) {
@@ -133,9 +135,7 @@ struct HistoryRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Top row: app name + timestamp
             HStack {
-                // App icon placeholder + name
                 HStack(spacing: 4) {
                     Image(systemName: "app.fill")
                         .font(.system(size: 10))
@@ -152,13 +152,15 @@ struct HistoryRowView: View {
                     .foregroundColor(.secondary.opacity(0.7))
             }
 
-            // Transcription text
+            if record.isPartial == true {
+                Label("Partial transcript", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             Text(record.text)
                 .font(.system(size: 13))
                 .lineLimit(3)
                 .foregroundColor(.primary)
 
-            // Bottom row: stats
             HStack(spacing: 12) {
                 Label("\(record.wordCount) words", systemImage: "textformat")
                 Label(String(format: "%.1fs", record.durationSeconds), systemImage: "clock")

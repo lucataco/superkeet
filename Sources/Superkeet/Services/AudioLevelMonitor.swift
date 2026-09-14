@@ -5,21 +5,15 @@ import os.log
 
 private let audioLevelLog = Logger(subsystem: "com.superkeet.app", category: "AudioLevelMonitor")
 
-/// Monitors microphone audio levels for the equalizer visualization.
-/// Uses AVAudioEngine with an input tap, separate from Parakeet's mic capture.
 final class AudioLevelMonitor: ObservableObject {
     static let shared = AudioLevelMonitor()
 
-    /// Current audio levels for equalizer bars (0.0 to 1.0), throttled to 15 Hz.
     @Published private(set) var levels: [Float] = Array(repeating: 0, count: 8)
 
-    /// Whether monitoring is active
     @Published private(set) var isMonitoring: Bool = false
 
-    /// Diagnostic surface when the meter cannot start or the configured device is unavailable.
     @Published private(set) var errorMessage: String?
 
-    /// Maximum rate at which smoothed levels are published to the UI.
     private static let publishInterval: TimeInterval = 1.0 / 15.0
 
     private var audioEngine: AVAudioEngine?
@@ -28,14 +22,10 @@ final class AudioLevelMonitor: ObservableObject {
 
     private init() {}
 
-    // MARK: - Start / Stop
-
     func startMonitoring() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !isMonitoring else { return }
 
-        // Don't access the audio engine if mic permission isn't granted —
-        // AVAudioEngine.inputNode implicitly triggers a system mic prompt.
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             errorMessage = micPermissionDeniedMessage
             return
@@ -46,8 +36,6 @@ final class AudioLevelMonitor: ObservableObject {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
-        // Honor the configured input device so the overlay meters the same mic
-        // the daemon records from. Resolution failure falls back to the default.
         if !requestedDevice.isEmpty {
             if let deviceID = AudioInputDeviceResolver.deviceID(forName: requestedDevice) {
                 do {
@@ -77,9 +65,6 @@ final class AudioLevelMonitor: ObservableObject {
             return
         }
 
-        // Install the tap only after the engine has started successfully, so a
-        // failed start doesn't leave an orphaned tap on the input node (which
-        // `stopMonitoring()` cannot remove because `self.audioEngine` is nil).
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             let level = Self.normalizedLevel(from: buffer)
             DispatchQueue.main.async {
@@ -103,11 +88,8 @@ final class AudioLevelMonitor: ObservableObject {
         levels = Array(repeating: 0, count: Self.bandCount)
     }
 
-    // MARK: - Level Processing
-
     private func update(level newLevel: Float) {
         guard isMonitoring else { return }
-        // Exponential moving average gives a stable, pleasing meter.
         smoothedLevel = smoothedLevel * 0.65 + newLevel * 0.35
         let now = Date()
         guard now.timeIntervalSince(lastPublishedAt) >= Self.publishInterval else { return }
@@ -115,24 +97,18 @@ final class AudioLevelMonitor: ObservableObject {
         levels = Self.bands(for: smoothedLevel)
     }
 
-    // MARK: - Level Math (internal for tests)
-
     static let bandWeights: [Float] = [0.7, 0.85, 1.0, 1.1, 1.05, 0.95, 0.8, 0.65]
 
     static var bandCount: Int {
         bandWeights.count
     }
 
-    /// Perceptually shaped RMS across all channels, normalized to 0...1.
     nonisolated static func normalizedLevel(from buffer: AVAudioPCMBuffer) -> Float {
         guard let channelData = buffer.floatChannelData else { return 0 }
         let channelCount = Int(buffer.format.channelCount)
         let frameCount = Int(buffer.frameLength)
         guard channelCount > 0, frameCount > 0 else { return 0 }
 
-        // Mic input is effectively mono — summing every channel over the
-        // device-native tap (~43 Hz) is redundant work per buffer. Use the
-        // first channel; the energy level is identical for a single source.
         let samples = channelData[0]
         var sum: Float = 0
         for frame in 0..<frameCount {
@@ -143,21 +119,21 @@ final class AudioLevelMonitor: ObservableObject {
         return pow(min(1, rootMeanSquare * 8), 0.65)
     }
 
-    /// Styled spectrum: one measured level rendered across bands with a fixed
-    /// hill-shaped falloff. Deterministic — no random jitter.
     static func bands(for level: Float) -> [Float] {
         let clamped = min(max(level, 0), 1)
         return bandWeights.map { weight in min(1, clamped * weight) }
     }
 }
 
-// MARK: - Device Resolution
-
-/// Maps a stored input-device display name to a CoreAudio device. Pure
-/// matching logic is separated from CoreAudio interop so it can be tested.
 enum AudioInputDeviceResolver {
-    /// CoreAudio device ID for a display name, or nil when the name does not
-    /// match any currently attached device (caller falls back to default).
+    static func availableDeviceNames() -> [String] {
+        deviceNames(in: allInputDevices())
+    }
+
+    static func deviceNames(in devices: [(id: AudioDeviceID, name: String)]) -> [String] {
+        Array(Set(devices.map { $0.name })).sorted()
+    }
+
     static func deviceID(forName name: String) -> AudioDeviceID? {
         let devices = allInputDevices()
         return selectDevice(forName: name, in: devices)
@@ -167,8 +143,6 @@ enum AudioInputDeviceResolver {
         lhs == rhs || lhs.caseInsensitiveCompare(rhs) == .orderedSame
     }
 
-    /// Selector over attached devices: exact display-name match first, then
-    /// case-insensitive. An empty name always resolves to the system default.
     static func selectDevice(forName name: String, in devices: [(id: AudioDeviceID, name: String)]) -> AudioDeviceID? {
         guard !name.isEmpty else { return nil }
         if let match = devices.first(where: { $0.name == name }) {

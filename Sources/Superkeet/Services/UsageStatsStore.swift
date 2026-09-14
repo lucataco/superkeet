@@ -3,32 +3,30 @@ import os.log
 
 private let usageStatsLog = Logger(subsystem: "com.superkeet.app", category: "UsageStatsStore")
 
-/// Privacy-safe aggregate usage metrics.
-///
-/// Unlike `HistoryStore`, this store keeps **numbers only** — never transcribed
-/// text — so it can run regardless of the "Save History" setting. It powers the
-/// stats header (words dictated, average speaking rate, time saved).
 final class UsageStatsStore: ObservableObject {
     static let shared = UsageStatsStore()
 
-    /// Average typing speed assumed when estimating time saved (words per minute).
     private static let assumedTypingWPM = 40.0
 
-    /// One day's worth of aggregated activity. No text is ever stored.
     struct DayBucket: Codable {
         var words: Int
         var seconds: Double
         var sessions: Int
     }
 
-    /// Aggregates keyed by ISO `yyyy-MM-dd` (local calendar day).
     @Published private(set) var buckets: [String: DayBucket] = [:]
+    @Published private(set) var persistenceIssue: String?
+    @Published private(set) var recoveryBackupURL: URL?
 
     private let fileURL: URL
+    private let storeFile: RecoverableStoreFile
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let persistenceQueue = DispatchQueue(label: "com.superkeet.usage-stats-store", qos: .utility)
-    private var saveDebounceTask: DispatchWorkItem?
+    private lazy var persistence = DebouncedStoreWriter<[String: DayBucket]>(
+        queueLabel: "com.superkeet.usage-stats-store",
+        write: { [storeFile, encoder] in try storeFile.write(encoder.encode($0)) },
+        didSave: { [weak self] in self?.completeSave($0) }
+    )
 
     private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -41,18 +39,16 @@ final class UsageStatsStore: ObservableObject {
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL
             ?? AppPaths.applicationSupportDirectory.appendingPathComponent("usage-stats.json")
+        self.storeFile = RecoverableStoreFile(url: self.fileURL)
         load()
     }
 
-    // MARK: - Recording
-
-    /// Record a completed transcription. Stores only counts, never text.
     func record(wordCount: Int, durationSeconds: Double) {
         record(wordCount: wordCount, durationSeconds: durationSeconds, on: Date())
     }
 
-    /// Internal overload with an explicit day, so streak logic is testable.
     func record(wordCount: Int, durationSeconds: Double, on date: Date) {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard wordCount > 0 || durationSeconds > 0 else { return }
         let key = Self.dayFormatter.string(from: date)
         var bucket = buckets[key] ?? DayBucket(words: 0, seconds: 0, sessions: 0)
@@ -64,20 +60,15 @@ final class UsageStatsStore: ObservableObject {
     }
 
     func reset() {
+        dispatchPrecondition(condition: .onQueue(.main))
         buckets = [:]
         save()
     }
 
     func flushPendingSave() {
-        saveDebounceTask?.cancel()
-        saveDebounceTask = nil
-        let snapshot = buckets
-        persistenceQueue.sync {
-            writeBuckets(snapshot)
-        }
+        dispatchPrecondition(condition: .onQueue(.main))
+        persistence.flush(buckets)
     }
-
-    // MARK: - Derived stats (all-time)
 
     var totalWords: Int {
         buckets.values.reduce(0) { $0 + $1.words }
@@ -95,28 +86,22 @@ final class UsageStatsStore: ObservableObject {
         totalSessions > 0
     }
 
-    /// Average speaking rate across all recorded sessions, in words per minute.
     var averageWordsPerMinute: Double {
         let minutes = totalSeconds / 60.0
         guard minutes > 0 else { return 0 }
         return Double(totalWords) / minutes
     }
 
-    /// Estimated minutes saved versus typing the same words at `assumedTypingWPM`.
     var timeSavedMinutes: Double {
         let typingMinutes = Double(totalWords) / Self.assumedTypingWPM
         let speakingMinutes = totalSeconds / 60.0
         return max(0, typingMinutes - speakingMinutes)
     }
 
-    /// Consecutive active-day streak, counting back from today. If today has
-    /// no activity yet, the streak counts from yesterday (Nativ's rule), so a
-    /// streak only breaks after a full inactive day.
     var currentStreak: Int {
         Self.currentStreak(in: buckets, calendar: Self.dayFormatter.calendar, now: Date())
     }
 
-    /// Pure streak computation over day-keyed activity. Internal for tests.
     static func currentStreak(in buckets: [String: DayBucket], calendar: Calendar, now: Date) -> Int {
         let activeDays = Set(buckets.keys)
         guard !activeDays.isEmpty else { return 0 }
@@ -138,42 +123,31 @@ final class UsageStatsStore: ObservableObject {
         return streak
     }
 
-    // MARK: - Persistence
-
     private func load() {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {
             let data = try Data(contentsOf: fileURL)
             buckets = try decoder.decode([String: DayBucket].self, from: data)
         } catch {
+            storeFile.needsRecoveryBackup = true
+            persistenceIssue = "Could not load usage statistics. The original file will be preserved before any new statistics are saved. \(error.localizedDescription)"
             usageStatsLog.error("Failed to load stats: \(error.localizedDescription)")
         }
     }
 
     private func save() {
-        saveDebounceTask?.cancel()
-        let snapshot = buckets
-        let task = DispatchWorkItem { [weak self] in
-            self?.performSave(snapshot)
-        }
-        saveDebounceTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
+        persistence.schedule(buckets)
     }
 
-    private func performSave(_ snapshot: [String: DayBucket]) {
-        persistenceQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.writeBuckets(snapshot)
-        }
-    }
-
-    private func writeBuckets(_ snapshot: [String: DayBucket]) {
-        do {
-            let data = try encoder.encode(snapshot)
-            try data.write(to: fileURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch {
+    private func completeSave(_ result: Result<URL?, Error>) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        switch result {
+        case .success(let backup):
+            recoveryBackupURL = backup
+            persistenceIssue = backup.map { "Earlier statistics could not be loaded. Their original file is preserved at \($0.path)." }
+        case .failure(let error):
             usageStatsLog.error("Failed to save stats: \(error.localizedDescription)")
+            persistenceIssue = "Could not save usage statistics: \(error.localizedDescription)"
         }
     }
 }

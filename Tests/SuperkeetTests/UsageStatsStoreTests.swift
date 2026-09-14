@@ -73,8 +73,6 @@ final class UsageStatsStoreTests: XCTestCase {
     func testTimeSavedMinutes() {
         let (dir, store) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        // Assumed typing speed: 40 WPM
-        // 100 words typed would take 2.5 min; speaking took 1 min -> saved 1.5 min
         store.record(wordCount: 100, durationSeconds: 60)
         XCTAssertEqual(store.timeSavedMinutes, 1.5, accuracy: 0.001)
     }
@@ -82,7 +80,6 @@ final class UsageStatsStoreTests: XCTestCase {
     func testTimeSavedIsNeverNegative() {
         let (dir, store) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        // If speaking took longer than typing would (very slow speech)
         store.record(wordCount: 1, durationSeconds: 120)
         XCTAssertEqual(store.timeSavedMinutes, 0, accuracy: 0.001)
     }
@@ -124,7 +121,32 @@ final class UsageStatsStoreTests: XCTestCase {
         XCTAssertFalse(reloaded.hasData)
     }
 
-    // MARK: - Streaks
+    func testFailedLoadPreservesFileOnQuitAndBeforeNewSave() throws {
+        let (dir, _) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("usage-stats.json")
+        let original = Data("{\"2026-09-14\":{\"words\":42,\"seconds\":15,\"sessions\":1},\"broken\":null}".utf8)
+        try original.write(to: path)
+        let store = UsageStatsStore(fileURL: path)
+        XCTAssertNotNil(store.persistenceIssue)
+        store.flushPendingSave()
+        XCTAssertEqual(try Data(contentsOf: path), original)
+        store.record(wordCount: 10, durationSeconds: 5)
+        store.flushPendingSave()
+        let backup = try XCTUnwrap(store.recoveryBackupURL)
+        XCTAssertEqual(try Data(contentsOf: backup), original)
+        XCTAssertEqual(UsageStatsStore(fileURL: path).totalWords, 10)
+        store.reset()
+        store.flushPendingSave()
+        XCTAssertEqual(try Data(contentsOf: backup), original)
+    }
+
+    func testUntouchedEmptyStoreDoesNotCreateFileOnQuit() {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        store.flushPendingSave()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("usage-stats.json").path))
+    }
 
     func testStreakIsZeroWithNoData() {
         let (dir, store) = makeStore()

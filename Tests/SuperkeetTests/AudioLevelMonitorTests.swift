@@ -4,8 +4,6 @@ import AVFoundation
 
 final class AudioLevelMonitorTests: XCTestCase {
 
-    // MARK: - normalizedLevel
-
     func testNormalizedLevelIsZeroForEmptyBuffer() throws {
         let buffer = try makeBuffer(sampleValue: 0)
         buffer.frameLength = 0
@@ -23,14 +21,11 @@ final class AudioLevelMonitorTests: XCTestCase {
     }
 
     func testNormalizedLevelAppliesPerceptualCurve() throws {
-        // RMS = 0.05 -> 0.05 * 8 = 0.4 -> pow(0.4, 0.65) ≈ 0.552
         let buffer = try makeBuffer(sampleValue: 0.05)
         let level = AudioLevelMonitor.normalizedLevel(from: buffer)
         let expected = pow(Float(0.4), Float(0.65))
         XCTAssertEqual(level, expected, accuracy: 0.001)
     }
-
-    // MARK: - bands(for:)
 
     func testBandsAreDeterministicStylingOfSingleLevel() {
         let bands = AudioLevelMonitor.bands(for: 0.5)
@@ -52,8 +47,6 @@ final class AudioLevelMonitorTests: XCTestCase {
         let bands = AudioLevelMonitor.bands(for: 0)
         XCTAssertTrue(bands.allSatisfy { $0 == 0 })
     }
-
-    // MARK: - Device resolution
 
     func testSelectDevicePrefersExactMatch() {
         let devices: [(id: AudioDeviceID, name: String)] = [
@@ -89,8 +82,6 @@ final class AudioLevelMonitorTests: XCTestCase {
         XCTAssertFalse(AudioInputDeviceResolver.namesMatch("Mic", "USB Microphone"))
         XCTAssertFalse(AudioInputDeviceResolver.namesMatch("USB Microphone", "USB"))
     }
-
-    // MARK: - Helpers
 
     private func makeBuffer(sampleValue: Float) throws -> AVAudioPCMBuffer {
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))

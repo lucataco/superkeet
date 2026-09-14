@@ -5,7 +5,6 @@ import os.log
 
 private let parakeetLog = Logger(subsystem: "com.superkeet.app", category: "ParakeetService")
 
-/// Manages the parakeet serve daemon subprocess and communicates via Unix socket
 final class ParakeetService: ObservableObject {
     static let shared = ParakeetService()
     private static let startupPollIntervalNanoseconds: UInt64 = 100_000_000
@@ -13,6 +12,9 @@ final class ParakeetService: ObservableObject {
 
     @Published var daemonState: DaemonState = .stopped
     @Published var lastTranscription: String = ""
+    @Published var lastRawTranscription: String = ""
+    @Published var sessionStatus: String = "Ready"
+    @Published var canUndoTextChanges = false
     @Published var lastUserFacingError: String?
     @Published var lastDiagnosticsSummary: String?
     @Published var startupStatusDetail: String?
@@ -22,6 +24,7 @@ final class ParakeetService: ObservableObject {
         case starting
         case idle
         case recording
+        case transcribing
         case stopping
     }
 
@@ -29,12 +32,15 @@ final class ParakeetService: ObservableObject {
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
     private let settings = AppSettings.shared
-    private var outputBuffer: String = ""
+    private var outputStream = TranscriptEventStream()
+    private var outputGeneration = UUID()
     private var stderrBuffer: String = ""
     private var recordingStartTime: Date?
     private var activeAppAtRecordingStart: (name: String, bundleId: String, processIdentifier: pid_t?)?
-    private var lastDeliveredTranscription: String?
-    private var outputGate = RecordingOutputGate()
+    private var outputGate = TranscriptSessionGate()
+    private var recordingDuration: TimeInterval = 0
+    private var completionTimeout: DispatchWorkItem?
+    private var startRequestPending = false
     private var idleShutdownTask: DispatchWorkItem?
     private let lifecycleLock = NSLock()
     private var startTask: Task<Void, Error>?
@@ -42,11 +48,7 @@ final class ParakeetService: ObservableObject {
     private var autoRestartTask: Task<Void, Never>?
     private var autoRestartPolicy = AutoRestartPolicy()
 
-    private static let maxBufferedOutputCharacters = 16_384
-
     private init() {}
-
-    // MARK: - Daemon Management
 
     func startDaemon() async throws {
         let pendingStop = lifecycleLock.withLock { stopTask }
@@ -88,21 +90,19 @@ final class ParakeetService: ObservableObject {
             self.lastUserFacingError = nil
             self.lastDiagnosticsSummary = nil
             self.startupStatusDetail = "Starting daemon"
-            self.outputBuffer = ""
+            self.outputStream = TranscriptEventStream()
             self.autoRestartTask?.cancel()
             self.autoRestartTask = nil
             self.settings.runtimeIssue = nil
         }
 
-        // Kill any orphaned daemon from a previous run
         await killStaleProcesses()
         try Task.checkCancellation()
 
         try ensureRuntimeDirectory()
         try Task.checkCancellation()
 
-        if !FileManager.default.isExecutableFile(atPath: settings.parakeetBinaryPath),
-           settings.canBootstrapDevelopmentParakeet {
+        if settings.canBootstrapDevelopmentParakeet {
             await MainActor.run { self.startupStatusDetail = "Preparing development speech engine" }
             do {
                 _ = try await DevelopmentParakeetBootstrap.ensureAvailable(settings: settings)
@@ -134,9 +134,6 @@ final class ParakeetService: ObservableObject {
             ])
         }
 
-        // Provision the on-device model before launching `serve` (the engine
-        // refuses to start without it). If onboarding already downloaded it this
-        // returns immediately; otherwise it downloads now and surfaces progress.
         if !ModelProvisioning.shared.isModelInstalled() {
             await MainActor.run { self.startupStatusDetail = "Downloading speech model" }
             do {
@@ -164,32 +161,34 @@ final class ParakeetService: ObservableObject {
             args.append(contentsOf: ["--device", settings.audioInputDevice])
         }
 
-        // Always pass an explicit model directory so `serve` and `download`
-        // resolve to the same location regardless of CLI defaults.
         args.append(contentsOf: ["--model-dir", settings.effectiveModelDirectory])
 
         process.arguments = args
 
         let stdout = Pipe()
         let stderr = Pipe()
+        let generation = UUID()
         process.standardOutput = stdout
         process.standardError = stderr
         await MainActor.run {
             self.stdoutPipe = stdout
             self.stderrPipe = stderr
             self.stderrBuffer = ""
+            self.outputGeneration = generation
         }
 
-        // Read stdout for transcriptions
-        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        let deliverOutput: @MainActor @Sendable (Data) -> Void = { [weak self] data in
+            guard let self, self.outputGeneration == generation else { return }
+            self.handleDaemonOutput(data)
+        }
+        stdout.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Task { @MainActor [weak self] in
-                self?.handleDaemonOutput(text)
+            if data.isEmpty { handle.readabilityHandler = nil }
+            DispatchQueue.main.async {
+                deliverOutput(data)
             }
         }
 
-        // Read stderr for status messages
         stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
@@ -201,7 +200,7 @@ final class ParakeetService: ObservableObject {
 
         process.terminationHandler = { [weak self] proc in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
+                guard let self = self, self.outputGeneration == generation else { return }
                 let previousState = self.daemonState
 
                 if previousState == .starting {
@@ -211,14 +210,12 @@ final class ParakeetService: ObservableObject {
                     self.lastDiagnosticsSummary = diagnostics
                     self.startupStatusDetail = "Startup failed"
                     self.settings.runtimeIssue = self.lastUserFacingError
-                } else if previousState == .idle || previousState == .recording {
-                    // Unexpected crash — notify user and attempt auto-restart
+                } else if previousState == .idle || previousState == .recording || previousState == .transcribing {
                     let message = "Speech engine exited unexpectedly (code \(proc.terminationStatus)). Restarting..."
                     parakeetLog.warning("\(message, privacy: .public)")
                     self.settings.runtimeIssue = message
                 }
 
-                // Clear pipe handlers in case stopDaemon wasn't called
                 self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
                 self.stderrPipe?.fileHandleForReading.readabilityHandler = nil
                 self.stdoutPipe = nil
@@ -230,11 +227,11 @@ final class ParakeetService: ObservableObject {
                 }
                 self.settings.isDaemonRunning = false
                 self.settings.isRecording = false
-                if previousState == .recording {
-                    self.outputGate.close()
+                if self.outputGate.sessionID != nil {
+                    self.failSession("The speech engine exited before transcription completed.")
                 }
 
-                if previousState == .idle || previousState == .recording {
+                if previousState == .idle || previousState == .recording || previousState == .transcribing {
                     self.scheduleAutoRestart(afterUnexpectedExitOf: proc)
                 }
             }
@@ -279,8 +276,8 @@ final class ParakeetService: ObservableObject {
                 daemonStarted: true,
                 autoPasteEnabled: self.settings.autoPasteEnabled
             )
+            self.autoRestartPolicy.recordReady()
         }
-        autoRestartPolicy.reset()
     }
 
     func stopDaemon() {
@@ -322,8 +319,11 @@ final class ParakeetService: ObservableObject {
             self.idleShutdownTask = nil
             self.autoRestartTask?.cancel()
             self.autoRestartTask = nil
+            if self.outputGate.sessionID != nil {
+                self.failSession("Transcription interrupted because the speech engine stopped.")
+            }
             self.daemonState = .stopping
-            self.outputBuffer = ""
+            self.outputStream = TranscriptEventStream()
             self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
             self.stderrPipe?.fileHandleForReading.readabilityHandler = nil
             self.stdoutPipe = nil
@@ -355,7 +355,7 @@ final class ParakeetService: ObservableObject {
         stderrPipe = nil
 
         await MainActor.run {
-            self.outputBuffer = ""
+            self.outputStream = TranscriptEventStream()
             self.daemonState = .stopped
             self.settings.isDaemonRunning = false
             self.settings.isRecording = false
@@ -375,15 +375,10 @@ final class ParakeetService: ObservableObject {
         try await startDaemon()
     }
 
-    // MARK: - Stale Process Cleanup
-
-    /// Kill any orphaned parakeet serve processes from previous runs.
-    /// Only terminates a validated stale PID from Superkeet's own runtime state.
     private func killStaleProcesses() async {
         let pidPath = settings.pidFilePath
         let socketPath = settings.socketPath
 
-        // 1. Try to kill via PID file if it still points at the bundled engine.
         if let pidString = try? String(contentsOfFile: pidPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            let pid = Int32(pidString), pid > 0 {
             if isExpectedParakeetProcess(pid: pid) {
@@ -392,23 +387,22 @@ final class ParakeetService: ObservableObject {
             }
         }
 
-        // 2. Remove stale files owned by this app runtime.
         try? FileManager.default.removeItem(atPath: socketPath)
         try? FileManager.default.removeItem(atPath: pidPath)
 
-        // Brief pause to let the OS release the socket
         try? await Task.sleep(for: .milliseconds(200))
     }
 
-    // MARK: - Recording Control
-
     @MainActor
     func startRecording() async -> Bool {
-        // Cancel any pending idle shutdown since the user is active
+        guard daemonState == .idle, outputGate.sessionID == nil, !startRequestPending else { return false }
+        startRequestPending = true
+        defer { startRequestPending = false }
+        let sessionID = UUID().uuidString
+        guard outputGate.begin(sessionID) else { return false }
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
 
-        // Capture the frontmost app before we do anything
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             activeAppAtRecordingStart = (
                 name: frontApp.localizedName ?? "Unknown",
@@ -417,23 +411,24 @@ final class ParakeetService: ObservableObject {
             )
         }
         recordingStartTime = Date()
-        lastDeliveredTranscription = nil
+        recordingDuration = 0
+        sessionStatus = "Starting recording…"
 
-        let response = await sendSocketCommandAsync("start")
+        let response = await sendSocketCommandAsync("start", sessionID: sessionID)
+        guard outputGate.sessionID == sessionID else { return false }
         guard let envelope = decodeSocketResponse(response ?? ""),
               envelope.status == "ok",
-              envelope.state == "recording" else {
-            recordingStartTime = nil
-            activeAppAtRecordingStart = nil
+              envelope.state == "recording",
+              envelope.sessionID == sessionID else {
             let message = "Couldn't start recording — is the speech engine running?"
             parakeetLog.error("start command failed: \(response ?? "nil", privacy: .public)")
-            lastUserFacingError = message
-            settings.runtimeIssue = message
+            failSession(message)
+            stopDaemon()
             return false
         }
 
-        outputGate.open()
         daemonState = .recording
+        sessionStatus = "Recording…"
         settings.isRecording = true
         lastUserFacingError = nil
         settings.runtimeIssue = nil
@@ -442,18 +437,21 @@ final class ParakeetService: ObservableObject {
 
     @MainActor
     func stopRecording() {
-        daemonState = .idle
+        guard daemonState == .recording, let sessionID = outputGate.sessionID else { return }
+        recordingDuration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        daemonState = .transcribing
+        sessionStatus = "Transcribing…"
         settings.isRecording = false
-        resetIdleTimer()
-        sendSocketCommand("stop") { [weak self] response in
+        armCompletionTimeout(sessionID: sessionID)
+        sendSocketCommand("stop", sessionID: sessionID) { [weak self] response in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.outputGate.sessionID == sessionID else { return }
                 guard let envelope = self.decodeSocketResponse(response),
-                      envelope.status == "ok" else {
+                       envelope.status == "ok", envelope.sessionID == sessionID else {
                     parakeetLog.error("stop command failed: \(response, privacy: .public)")
                     let message = "Couldn't confirm stop with the speech engine. Try recording again."
-                    self.lastUserFacingError = message
-                    self.settings.runtimeIssue = message
+                    self.failSession(message)
+                    self.stopDaemon()
                     return
                 }
             }
@@ -462,20 +460,23 @@ final class ParakeetService: ObservableObject {
 
     @MainActor
     func cancelRecording() {
+        guard let sessionID = outputGate.sessionID else { return }
         outputGate.close()
+        completionTimeout?.cancel()
         recordingStartTime = nil
         activeAppAtRecordingStart = nil
-        lastDeliveredTranscription = nil
-        daemonState = .idle
+        sessionStatus = "Recording cancelled"
+        daemonState = .transcribing
         settings.isRecording = false
-        resetIdleTimer()
-        sendSocketCommand("cancel") { [weak self] response in
+        sendSocketCommand("cancel", sessionID: sessionID) { [weak self] response in
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard self.decodeSocketResponse(response)?.status == "ok" else {
                     parakeetLog.error("cancel command failed: \(response, privacy: .public)")
+                    self.stopDaemon()
                     return
                 }
+                Task { try? await self.restartDaemon() }
             }
         }
     }
@@ -486,10 +487,6 @@ final class ParakeetService: ObservableObject {
         lastDiagnosticsSummary = diagnosticSummary(readiness: readiness)
     }
 
-    // MARK: - Idle Shutdown
-
-    /// Schedule a daemon shutdown after the configured idle timeout.
-    /// Called after each recording stops. Cancelled when a new recording starts.
     @MainActor
     private func resetIdleTimer() {
         idleShutdownTask?.cancel()
@@ -507,10 +504,9 @@ final class ParakeetService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(timeoutMinutes * 60), execute: task)
     }
 
-    // MARK: - Socket Communication
-
     private struct SocketCommand: Encodable {
         let command: String
+        var session_id: String?
     }
 
     private struct SocketCommandResult: Sendable {
@@ -521,6 +517,14 @@ final class ParakeetService: ObservableObject {
     private struct SocketResponseEnvelope: Decodable {
         let status: String
         let state: String?
+        let sessionID: String?
+        let protocolVersion: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case status, state
+            case sessionID = "session_id"
+            case protocolVersion = "protocol_version"
+        }
     }
 
     private func decodeSocketResponse(_ response: String) -> SocketResponseEnvelope? {
@@ -528,14 +532,14 @@ final class ParakeetService: ObservableObject {
         return try? JSONDecoder().decode(SocketResponseEnvelope.self, from: data)
     }
 
-    private func sendSocketCommand(_ command: String, completion: ((String) -> Void)? = nil) {
+    private func sendSocketCommand(_ command: String, sessionID: String? = nil, completion: ((String) -> Void)? = nil) {
         Task { [weak self] in
-            let response = await self?.sendSocketCommandAsync(command)
+            let response = await self?.sendSocketCommandAsync(command, sessionID: sessionID)
             completion?(response ?? "")
         }
     }
 
-    private func sendSocketCommandAsync(_ command: String) async -> String? {
+    private func sendSocketCommandAsync(_ command: String, sessionID: String? = nil) async -> String? {
         let socketPath = settings.socketPath
         let result = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -543,7 +547,8 @@ final class ParakeetService: ObservableObject {
                 let result = Self.sendSocketCommandSynchronously(
                     command,
                     socketPath: socketPath,
-                    timeout: timeout
+                    timeout: timeout,
+                    sessionID: sessionID
                 )
                 continuation.resume(returning: result)
             }
@@ -554,26 +559,11 @@ final class ParakeetService: ObservableObject {
         return result.response
     }
 
-    private func sendSocketCommandSynchronously(
-        _ command: String,
-        timeout requestedTimeout: timeval,
-        publishConnectionErrors: Bool
-    ) -> String? {
-        let result = Self.sendSocketCommandSynchronously(
-            command,
-            socketPath: settings.socketPath,
-            timeout: requestedTimeout
-        )
-        if publishConnectionErrors, let issue = result.runtimeIssue {
-            publishRuntimeIssue(issue)
-        }
-        return result.response
-    }
-
     private static func sendSocketCommandSynchronously(
         _ command: String,
         socketPath: String,
-        timeout requestedTimeout: timeval
+        timeout requestedTimeout: timeval,
+        sessionID: String? = nil
     ) -> SocketCommandResult {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
@@ -610,7 +600,7 @@ final class ParakeetService: ObservableObject {
             return SocketCommandResult(response: nil, runtimeIssue: "Superkeet could not reach the speech engine. Try relaunching the app.")
         }
 
-        guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command)),
+        guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command, session_id: sessionID)),
               var json = String(data: jsonData, encoding: .utf8) else {
             parakeetLog.error("Failed to encode socket command")
             return SocketCommandResult(response: nil, runtimeIssue: nil)
@@ -628,15 +618,15 @@ final class ParakeetService: ObservableObject {
         }
 
         var buffer = [UInt8](repeating: 0, count: 4096)
-        let bytesRead = recv(fd, &buffer, buffer.count - 1, 0)
-        if bytesRead > 0 {
-            let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
-            parakeetLog.debug("Response: \(response, privacy: .public)")
-            return SocketCommandResult(response: response, runtimeIssue: nil)
+        var responseData = Data()
+        while responseData.count < 65_536 {
+            let bytesRead = recv(fd, &buffer, buffer.count, 0)
+            if bytesRead == 0 { break }
+            guard bytesRead > 0 else { return SocketCommandResult(response: nil, runtimeIssue: nil) }
+            responseData.append(contentsOf: buffer.prefix(bytesRead))
+            if responseData.contains(0x0A) { break }
         }
-
-        parakeetLog.debug("recv returned \(bytesRead) (timeout or error)")
-        return SocketCommandResult(response: nil, runtimeIssue: nil)
+        return SocketCommandResult(response: String(data: responseData, encoding: .utf8), runtimeIssue: nil)
     }
 
     private static func unixSocketAddress(for socketPath: String) -> sockaddr_un? {
@@ -667,61 +657,82 @@ final class ParakeetService: ObservableObject {
         }
     }
 
-    // MARK: - Output Handling
-
-    private func handleDaemonOutput(_ text: String) {
-        outputBuffer += text
-        if outputBuffer.count > Self.maxBufferedOutputCharacters {
-            outputBuffer = String(outputBuffer.suffix(Self.maxBufferedOutputCharacters))
-        }
-
-        // The daemon outputs transcription text on stdout when a session ends
-        let lines = outputBuffer.components(separatedBy: "\n")
-        if lines.count > 1 {
-            for line in lines.dropLast() {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    processTranscription(trimmed)
+    @MainActor
+    private func handleDaemonOutput(_ data: Data) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        do {
+            if data.isEmpty {
+                try outputStream.finish()
+                if outputGate.sessionID != nil { throw TranscriptProtocolError.incompleteMessage }
+                return
+            }
+            for event in try outputStream.append(data) where outputGate.accepts(event) {
+                switch event.type {
+                case "session_started": break
+                case "transcribing":
+                    if daemonState == .recording {
+                        recordingDuration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
+                        armCompletionTimeout(sessionID: event.sessionID)
+                    }
+                    daemonState = .transcribing
+                    settings.isRecording = false
+                    sessionStatus = "Transcribing…"
+                case "complete":
+                    guard ["ok", "partial", "empty", "error"].contains(event.status ?? ""), event.text != nil else {
+                        throw TranscriptProtocolError.invalidMessage
+                    }
+                    completeSession(event)
+                default: throw TranscriptProtocolError.invalidMessage
                 }
             }
-            outputBuffer = lines.last ?? ""
+        } catch {
+            failSession(error.localizedDescription)
+            stopDaemon()
         }
     }
 
-    private func processTranscription(_ text: String) {
-        guard outputGate.isOpen else {
-            parakeetLog.info("Dropping transcription because the recording session is closed")
-            return
+    @MainActor
+    private func completeSession(_ event: TranscriptEvent) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let raw = event.text ?? ""
+        let partial = event.isPartial && !raw.isEmpty
+        if !raw.isEmpty { processTranscription(raw, isPartial: partial) }
+        if partial {
+            let detail = event.message ?? "\(event.failedSegments ?? 0) failed segments, \(event.droppedSamples ?? 0) dropped samples"
+            sessionStatus = "Partial transcript — \(detail)"
+            lastUserFacingError = sessionStatus
+            settings.runtimeIssue = sessionStatus
+        } else if event.status == "error" || (event.isPartial && raw.isEmpty) {
+            return failSession(event.message ?? "Transcription failed.")
+        } else {
+            sessionStatus = raw.isEmpty ? "No speech detected" : "Transcription complete"
         }
+        finishSession()
+    }
 
-        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        // Apply filler word removal if enabled
-        if settings.fillerWordRemovalEnabled {
-            trimmed = FillerWordCleaner.clean(trimmed)
-            guard !trimmed.isEmpty else { return }
-        }
-
-        if lastDeliveredTranscription == trimmed {
-            return
-        }
-
-        lastTranscription = trimmed
-        lastDeliveredTranscription = trimmed
-
-        let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
+    @MainActor
+    private func processTranscription(_ text: String, isPartial: Bool) {
         let appInfo = activeAppAtRecordingStart ?? (name: "Unknown", bundleId: "", processIdentifier: nil)
+        let processedText = TranscriptTextProcessor.process(
+            text, removeFillers: settings.fillerWordRemovalEnabled,
+            replacements: PhraseReplacementStore.shared.rules, bundleID: appInfo.bundleId,
+            spokenCommands: settings.spokenCorrectionsEnabled
+        )
+        lastRawTranscription = text
+        lastTranscription = processedText
+        canUndoTextChanges = text != processedText
+
+        let duration = recordingDuration
 
         let record = TranscriptionRecord(
-            text: trimmed,
+            text: processedText,
             durationSeconds: duration,
             activeAppName: appInfo.name,
-            activeAppBundleId: appInfo.bundleId
+            activeAppBundleId: appInfo.bundleId,
+            rawText: text,
+            isPartial: isPartial
         )
 
-        // Record privacy-safe aggregate metrics (numbers only, no text)
-        // regardless of whether history saving is enabled.
         UsageStatsStore.shared.record(wordCount: record.wordCount, durationSeconds: duration)
 
         let outputDecision = OutputRouting.decision(
@@ -734,24 +745,60 @@ final class ParakeetService: ObservableObject {
             HistoryStore.shared.addRecord(record)
         }
 
-        if outputDecision.shouldCopyToClipboard {
+        if outputDecision.shouldCopyToClipboard && !processedText.isEmpty {
             PasteService.shared.deliverText(
-                trimmed,
+                processedText,
                 decision: outputDecision,
                 targetProcessIdentifier: appInfo.processIdentifier
             )
         }
 
+    }
+
+    @MainActor
+    private func finishSession() {
+        completionTimeout?.cancel()
+        completionTimeout = nil
         outputGate.close()
         recordingStartTime = nil
         activeAppAtRecordingStart = nil
+        settings.isRecording = false
+        if daemonState == .recording || daemonState == .transcribing { daemonState = .idle }
+        resetIdleTimer()
     }
 
-    // MARK: - Cleanup
+    @MainActor
+    private func failSession(_ message: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        sessionStatus = "Transcription failed"
+        lastUserFacingError = message
+        settings.runtimeIssue = message
+        finishSession()
+    }
+
+    @MainActor
+    private func armCompletionTimeout(sessionID: String) {
+        completionTimeout?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, self.outputGate.sessionID == sessionID else { return }
+            self.failSession("Transcription timed out. The speech engine will restart.")
+            self.stopDaemon()
+        }
+        completionTimeout = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: task)
+    }
+
+    func undoLastTextChanges() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard canUndoTextChanges else { return }
+        lastTranscription = lastRawTranscription
+        canUndoTextChanges = false
+        PasteService.shared.copyToClipboard(lastTranscription)
+        sessionStatus = "Original transcript restored and copied"
+    }
 
     func cleanupAndWait() async {
         await stopDaemonAndWait()
-        // Clean up socket and pid files
         try? FileManager.default.removeItem(atPath: settings.socketPath)
         try? FileManager.default.removeItem(atPath: settings.pidFilePath)
     }
@@ -812,12 +859,14 @@ final class ParakeetService: ObservableObject {
 
     private func probeSocketReadiness() async throws -> Bool {
         let timeout = timeval(tv_sec: 0, tv_usec: 300_000)
-        let response = sendSocketCommandSynchronously(
+        let response = Self.sendSocketCommandSynchronously(
             "status",
-            timeout: timeout,
-            publishConnectionErrors: false
-        )
-        return response?.contains("\"status\":\"ok\"") == true
+            socketPath: settings.socketPath,
+            timeout: timeout
+        ).response
+        guard let envelope = decodeSocketResponse(response ?? ""), envelope.status == "ok" else { return false }
+        guard envelope.protocolVersion == 1 else { throw TranscriptProtocolError.invalidMessage }
+        return true
     }
 
     @MainActor

@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// Cursor Waveform style: a slim pointer-following pill with a live wave bar.
-/// Position is driven by `RecordingOverlayWindowController`; this view only
-/// renders the pill contents.
 struct CursorWaveformOverlay: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     let elapsedTime: TimeInterval

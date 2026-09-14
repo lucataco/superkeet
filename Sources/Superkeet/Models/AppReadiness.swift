@@ -2,7 +2,7 @@ import Foundation
 import AVFoundation
 import AppKit
 
-enum AppReadinessIssue: String, CaseIterable, Identifiable {
+enum AppReadinessIssue: String {
     case microphone
     case inputDevice
     case engine
@@ -10,27 +10,6 @@ enum AppReadinessIssue: String, CaseIterable, Identifiable {
     case runtimeDirectory
     case accessibility
     case architecture
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .microphone:
-            return "Microphone Access"
-        case .inputDevice:
-            return "Audio Input Device"
-        case .engine:
-            return "Speech Engine"
-        case .model:
-            return "Speech Model"
-        case .runtimeDirectory:
-            return "Runtime Directory"
-        case .accessibility:
-            return "Accessibility Access"
-        case .architecture:
-            return "Apple Silicon Mac"
-        }
-    }
 
     var detail: String {
         switch self {
@@ -71,10 +50,6 @@ struct AppReadinessReport {
     let issues: [AppReadinessIssue]
     let diagnostics: AppDiagnostics
 
-    /// Issues that mean a fresh app install is genuinely broken (missing engine
-    /// binary, unsupported architecture, or no writable runtime dir). A missing
-    /// *model* is intentionally excluded — that's a recoverable first-run
-    /// download, not a broken install.
     var hasDaemonBlockingIssue: Bool {
         issues.contains(.engine) || issues.contains(.runtimeDirectory) || issues.contains(.architecture)
     }
@@ -83,7 +58,6 @@ struct AppReadinessReport {
         issues.contains(.microphone) || issues.contains(.inputDevice)
     }
 
-    /// The on-device model still needs to be downloaded before recording works.
     var needsModelDownload: Bool {
         issues.contains(.model)
     }
@@ -160,12 +134,7 @@ enum AppReadiness {
 
     static func collectDiagnostics(settings: AppSettings = .shared) -> AppDiagnostics {
         let runtimeDirectory = runtimeFilesDirectory()
-        let inputDevices = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.microphone, .external],
-            mediaType: .audio,
-            position: .unspecified
-        ).devices
-        let availableInputDeviceNames = inputDevices.map(\.localizedName).sorted()
+        let availableInputDeviceNames = AudioInputDeviceResolver.availableDeviceNames()
         let configuredInputDeviceFound = settings.audioInputDevice.isEmpty ||
             availableInputDeviceNames.contains { AudioInputDeviceResolver.namesMatch(settings.audioInputDevice, $0) }
 
@@ -187,10 +156,6 @@ enum AppReadiness {
         cachedRuntimeFilesDirectory
     }
 
-    /// Resolved once on first access and memoized. `runtimeFilesDirectory()` was
-    /// previously called on every read of `settings.socketPath` /
-    /// `settings.pidFilePath` (15+ times per daemon lifecycle), each call
-    /// issuing a `FileManager.createDirectory`. Caching drops that to one call.
     private static let cachedRuntimeFilesDirectory: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches")
@@ -217,12 +182,9 @@ enum AppReadiness {
         }
     }
 
-    /// True when the host CPU is Apple Silicon (arm64 / arm64e).
-    /// Used to refuse startup on Intel Macs, where the bundled engine binary
-    /// cannot run and would produce a confusing launch failure.
     private static var hostIsAppleSilicon: Bool {
         var sysinfo = utsname()
-        guard uname(&sysinfo) == 0 else { return true }  // fail open
+        guard uname(&sysinfo) == 0 else { return true }
         let machineSize = MemoryLayout.size(ofValue: sysinfo.machine)
         let machine = withUnsafePointer(to: &sysinfo.machine) { ptr in
             ptr.withMemoryRebound(to: CChar.self, capacity: machineSize) {

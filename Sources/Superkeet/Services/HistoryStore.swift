@@ -3,22 +3,28 @@ import os.log
 
 private let historyLog = Logger(subsystem: "com.superkeet.app", category: "HistoryStore")
 
-/// Persists transcription history to a JSON file on disk
 final class HistoryStore: ObservableObject {
     static let shared = HistoryStore()
     private static let maxRecords = 1000
 
     @Published var records: [TranscriptionRecord] = []
+    @Published private(set) var persistenceIssue: String?
+    @Published private(set) var recoveryBackupURL: URL?
 
     private let fileURL: URL
+    private let storeFile: RecoverableStoreFile
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let persistenceQueue = DispatchQueue(label: "com.superkeet.history-store", qos: .utility)
-    private var saveDebounceTask: DispatchWorkItem?
+    private lazy var persistence = DebouncedStoreWriter<[TranscriptionRecord]>(
+        queueLabel: "com.superkeet.history-store",
+        write: { [storeFile, encoder] in try storeFile.write(encoder.encode($0)) },
+        didSave: { [weak self] in self?.completeSave($0) }
+    )
 
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL
             ?? AppPaths.applicationSupportDirectory.appendingPathComponent("history.json")
+        self.storeFile = RecoverableStoreFile(url: self.fileURL)
 
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = .prettyPrinted
@@ -27,9 +33,8 @@ final class HistoryStore: ObservableObject {
         loadRecords()
     }
 
-    // MARK: - CRUD
-
     func addRecord(_ record: TranscriptionRecord) {
+        dispatchPrecondition(condition: .onQueue(.main))
         records.insert(record, at: 0)
         if records.count > Self.maxRecords {
             records = Array(records.prefix(Self.maxRecords))
@@ -38,66 +43,51 @@ final class HistoryStore: ObservableObject {
     }
 
     func deleteRecord(_ record: TranscriptionRecord) {
+        dispatchPrecondition(condition: .onQueue(.main))
         records.removeAll { $0.id == record.id }
         saveRecords()
     }
 
     func clearHistory() {
+        dispatchPrecondition(condition: .onQueue(.main))
         records.removeAll()
         saveRecords()
     }
 
     func flushPendingSave() {
-        saveDebounceTask?.cancel()
-        saveDebounceTask = nil
-        let snapshot = records
-        persistenceQueue.sync {
-            writeRecords(snapshot)
-        }
+        dispatchPrecondition(condition: .onQueue(.main))
+        persistence.flush(records)
     }
-
-    // MARK: - Persistence
 
     private func loadRecords() {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {
             let data = try Data(contentsOf: fileURL)
             records = try decoder.decode([TranscriptionRecord].self, from: data)
-            // Prune if history exceeds the cap (e.g., limit was lowered)
             if records.count > Self.maxRecords {
                 records = Array(records.prefix(Self.maxRecords))
                 saveRecords()
             }
         } catch {
+            storeFile.needsRecoveryBackup = true
+            persistenceIssue = "Could not load history. The original file will be preserved before any new history is saved. \(error.localizedDescription)"
             historyLog.error("Failed to load history: \(error.localizedDescription)")
         }
     }
 
     private func saveRecords() {
-        // Debounce: coalesce rapid saves (e.g., multiple transcriptions in quick succession)
-        saveDebounceTask?.cancel()
-        let snapshot = records
-        let task = DispatchWorkItem { [weak self] in
-            self?.performSave(records: snapshot)
-        }
-        saveDebounceTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
+        persistence.schedule(records)
     }
 
-    private func performSave(records snapshot: [TranscriptionRecord]) {
-        persistenceQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.writeRecords(snapshot)
-        }
-    }
-
-    private func writeRecords(_ snapshot: [TranscriptionRecord]) {
-        do {
-            let data = try encoder.encode(snapshot)
-            try data.write(to: fileURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch {
+    private func completeSave(_ result: Result<URL?, Error>) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        switch result {
+        case .success(let backup):
+            recoveryBackupURL = backup
+            persistenceIssue = backup.map { "Earlier history could not be loaded. Its original file is preserved at \($0.path)." }
+        case .failure(let error):
             historyLog.error("Failed to save history: \(error.localizedDescription)")
+            persistenceIssue = "Could not save history: \(error.localizedDescription)"
         }
     }
 }

@@ -51,12 +51,6 @@ def main() -> int:
 
 
 def write_atomic(path: pathlib.Path, content: str) -> None:
-    """Write content to path via a temp file in the same directory, then rename.
-
-    A direct write that is interrupted mid-flight would leave a corrupt cask
-    file that breaks `brew install` for every tap user. `os.replace` is atomic
-    on the same filesystem, so the temp file is created alongside the target.
-    """
     dir_path = path.parent
     fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix=".update-", suffix=".rb")
     try:

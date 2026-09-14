@@ -1,14 +1,7 @@
 import SwiftUI
 
-/// About tab showing app version and credits
 struct AboutTabView: View {
     private let websiteURL = URL(string: "https://catacolabs.com")
-
-    private var appVersion: String {
-        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? shortVersion
-        return "\(shortVersion) (\(buildVersion))"
-    }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -16,17 +9,15 @@ struct AboutTabView: View {
 
             AppIconView()
 
-            // App name and version
             VStack(spacing: 4) {
                 Text("Superkeet")
                     .font(.title)
                     .fontWeight(.bold)
-                Text("Version \(appVersion)")
+                Text("Version \(AppVersion.current.displayString)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
 
-            // Description
             Text("Voice-to-text powered by Parakeet — a fully local, offline speech recognition engine using NVIDIA's Parakeet TDT 0.6B model.")
                 .font(.body)
                 .multilineTextAlignment(.center)
@@ -36,7 +27,6 @@ struct AboutTabView: View {
             Divider()
                 .padding(.horizontal, 60)
 
-            // Credits
             VStack(spacing: 8) {
                 Text("Built with")
                     .font(.caption)
@@ -53,7 +43,6 @@ struct AboutTabView: View {
             Divider()
                 .padding(.horizontal, 60)
 
-            // Links
             VStack(spacing: 8) {
                 Text("All audio is processed locally on your Mac. Nothing is sent to the cloud.")
                     .font(.caption)
@@ -72,7 +61,6 @@ struct AboutTabView: View {
 
             Spacer()
 
-            // Attribution
             HStack(spacing: 4) {
                 Text("Made with love from")
                     .font(.caption)

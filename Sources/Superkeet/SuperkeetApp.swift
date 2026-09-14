@@ -4,7 +4,6 @@ import os.log
 
 private let appLog = Logger(subsystem: "com.superkeet.app", category: "AppDelegate")
 
-/// AppDelegate handles the lifecycle, menu bar setup, daemon management, and hotkey registration
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarManager = MenuBarManager.shared
     private let parakeetService = ParakeetService.shared
@@ -17,25 +16,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isTerminating: Bool = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide the dock icon (LSUIElement in Info.plist handles this for release builds,
-        // but for swift run we need this)
         NSApp.setActivationPolicy(.accessory)
 
-        // Install signal handlers so cleanup runs even on Ctrl-C / kill
         installSignalHandlers()
 
-        // Apply the saved theme before any windows appear.
         settings.applyAppearancePreference()
 
         settings.syncLaunchAtLoginStatus()
 
-        // Setup menu bar
         menuBarManager.setup()
 
-        // Setup hotkeys
         setupHotkeys()
 
-        // Show onboarding or start daemon
         if !settings.hasCompletedOnboarding {
             showOnboardingWindow()
         } else {
@@ -123,7 +115,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func activatePostOnboardingServices() {
-        // Silent check — never prompt after onboarding (permissions may reset after brew upgrade)
         hotkeyManager.accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
         hotkeyManager.startListening()
         if !hotkeyManager.isListening {
@@ -139,7 +130,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 appLog.info("Parakeet daemon started successfully")
             } catch {
                 appLog.error("Failed to start daemon: \(error.localizedDescription)")
-                // Show an alert to the user
                 await MainActor.run {
                     let alert = NSAlert()
                     alert.messageText = "Failed to start Parakeet"
@@ -178,12 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    // MARK: - Signal Handlers
-
-    /// Install SIGINT and SIGTERM handlers so the parakeet daemon gets cleaned up
-    /// even when the app is killed via Ctrl-C (swift run) or `kill`.
     private func installSignalHandlers() {
-        // Ignore the default signal behavior so our dispatch sources can handle them
         signal(SIGINT, SIG_IGN)
         signal(SIGTERM, SIG_IGN)
 

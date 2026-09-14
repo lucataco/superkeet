@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Recording overlay; style is chosen by `AppSettings.overlayAnimationStyle`.
 struct RecordingOverlayView: View {
     let sessionStart: Date
     @ObservedObject var audioMonitor = AudioLevelMonitor.shared
@@ -72,9 +71,6 @@ struct RecordingOverlayView: View {
     }
 }
 
-// MARK: - Compact Mode
-
-/// Tight pill: red dot, dot equalizer, timer, stop button
 struct CompactRecordingOverlay: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     let elapsedTime: TimeInterval
@@ -84,7 +80,6 @@ struct CompactRecordingOverlay: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // Pulsing red recording dot
             ZStack {
                 Circle()
                     .fill(Color.red.opacity(0.3))
@@ -100,16 +95,13 @@ struct CompactRecordingOverlay: View {
             }
             .frame(width: 20)
 
-            // Dot equalizer
             DotEqualizerView(audioMonitor: audioMonitor)
 
-            // Timer
             Text(OverlayElapsedClock.formatted(elapsedTime))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: true, vertical: false)
 
-            // Stop button
             Button(action: onStop) {
                 Image(systemName: "stop.fill")
                     .font(.system(size: 9))
@@ -137,9 +129,6 @@ struct CompactRecordingOverlay: View {
     }
 }
 
-// MARK: - Expanded Mode
-
-/// Larger overlay with tall bar equalizer and more visual presence
 struct ExpandedRecordingOverlay: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     let elapsedTime: TimeInterval
@@ -149,7 +138,6 @@ struct ExpandedRecordingOverlay: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            // Top row: chevron to collapse
             HStack {
                 Spacer()
                 Button(action: onToggleMode) {
@@ -162,7 +150,6 @@ struct ExpandedRecordingOverlay: View {
             }
 
             HStack(spacing: 16) {
-                // Pulsing red recording dot
                 ZStack {
                     Circle()
                         .fill(Color.red.opacity(0.3))
@@ -177,11 +164,9 @@ struct ExpandedRecordingOverlay: View {
                         .frame(width: 10, height: 10)
                 }
 
-                // Bar equalizer
                 EqualizerView(audioMonitor: audioMonitor)
                     .frame(width: 60)
 
-                // Recording label + timer
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recording")
                         .font(.system(size: 12, weight: .semibold))
@@ -191,7 +176,6 @@ struct ExpandedRecordingOverlay: View {
                         .foregroundColor(.secondary)
                 }
 
-                // Stop button
                 Button(action: onStop) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 12))
@@ -221,9 +205,6 @@ struct ExpandedRecordingOverlay: View {
     }
 }
 
-// MARK: - Visual Effect
-
-/// NSVisualEffectView wrapper for the frosted glass background
 struct VisualEffectBlur: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow

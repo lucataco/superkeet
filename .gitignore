@@ -1,9 +1,7 @@
-# Swift Package Manager
 .build/
 .swiftpm/
 Package.resolved
 
-# Xcode
 *.xcodeproj/
 *.xcworkspace/
 xcuserdata/
@@ -15,21 +13,20 @@ DerivedData/
 *.xccheckout
 *.moved-aside
 
-# App bundle (built by install.sh)
 *.app
 dist/
 .release/
 .release-check/
 
-# macOS
 .DS_Store
 .AppleDouble
 .LSOverride
 ._*
 
-# IDE
 *.swp
 *.swo
 *~
 .idea/
 .vscode/
+
+__pycache__/

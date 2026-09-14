@@ -33,8 +33,6 @@ final class SetupVerificationTests: XCTestCase {
     }
 
     func testMissingModelIsNotADaemonBlockingIssue() {
-        // A missing model is a recoverable first-run download, not a broken
-        // install — it must not trip the "reinstall the app" error path.
         let report = makeReport(issues: [.model])
 
         XCTAssertFalse(report.hasDaemonBlockingIssue)

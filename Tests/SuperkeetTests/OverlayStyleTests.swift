@@ -4,8 +4,6 @@ import AppKit
 
 final class OverlayStyleTests: XCTestCase {
 
-    // MARK: - OverlayAnimationStyle resolution
-
     func testResolvesAllRawValues() {
         XCTAssertEqual(OverlayAnimationStyle.resolve("mini"), .mini)
         XCTAssertEqual(OverlayAnimationStyle.resolve("classic"), .classic)
@@ -26,14 +24,10 @@ final class OverlayStyleTests: XCTestCase {
         }
     }
 
-    // MARK: - CaptureSoundStyle mapping
-
     func testSoundPlayerUsesBrevitySafeSystemSounds() {
         XCTAssertEqual(CaptureSoundPlayer.soundName(for: .start), "Tink")
         XCTAssertEqual(CaptureSoundPlayer.soundName(for: .stop), "Pop")
     }
-
-    // MARK: - Geometry
 
     func testBottomCenterOrigin() {
         let visible = NSRect(x: 0, y: 0, width: 1440, height: 876)
@@ -56,21 +50,18 @@ final class OverlayStyleTests: XCTestCase {
     }
 
     func testMenuBandDetection() {
-        // Notched laptop: menu band is taller than the classic 24 px bar.
         let notched = OverlayGeometry.menuBandHeight(
             screenFrame: NSRect(x: 0, y: 0, width: 1728, height: 1117),
             visibleFrame: NSRect(x: 0, y: 0, width: 1728, height: 1079)
         )
         XCTAssertEqual(notched, 38)
 
-        // Plain external display: classic 24 px menu bar, no notch.
         let plain = OverlayGeometry.hasCameraNotch(
             screenFrame: NSRect(x: 0, y: 0, width: 1920, height: 1080),
             visibleFrame: NSRect(x: 0, y: 0, width: 1920, height: 1056)
         )
         XCTAssertFalse(plain)
 
-        // safeAreaInsets.top > 0 is the authoritative notch signal.
         let notchedByInset = OverlayGeometry.hasCameraNotch(
             screenFrame: NSRect(x: 0, y: 0, width: 1512, height: 982),
             visibleFrame: NSRect(x: 0, y: 0, width: 1512, height: 945),
@@ -80,7 +71,6 @@ final class OverlayStyleTests: XCTestCase {
     }
 
     func testNotchMetricsFromAuxiliaryAreas() {
-        // 14" MacBook Pro: 1512x982 logical, ~184pt notch centered.
         let frame = NSRect(x: 0, y: 0, width: 1512, height: 982)
         let visible = NSRect(x: 0, y: 0, width: 1512, height: 945)
         let auxLeft = NSRect(x: 0, y: 945, width: 664, height: 37)
@@ -123,7 +113,6 @@ final class OverlayStyleTests: XCTestCase {
             visibleFrame: visible,
             notchRightEdge: 940
         )
-        // Just right of the notch's right edge, vertically centered in the band.
         XCTAssertEqual(origin.x, 952)
         XCTAssertEqual(origin.y + size.height / 2, frame.maxY - 37 / 2, accuracy: 0.001)
     }
@@ -155,12 +144,10 @@ final class OverlayStyleTests: XCTestCase {
             visibleFrame: visible,
             metrics: metrics
         )
-        // Window spans the full menu band height, bottom-anchored to the band.
         XCTAssertEqual(layout.frame.minY, frame.maxY - metrics.bandHeight, accuracy: 0.001)
         XCTAssertEqual(layout.frame.height, metrics.bandHeight, accuracy: 0.001)
-        // Centered on the notch, gap covers the notch.
         XCTAssertEqual(layout.frame.midX, 756, accuracy: 0.001)
-        XCTAssertEqual(layout.gapWidth, 208, accuracy: 0.001) // 184 notch + 24 padding
+        XCTAssertEqual(layout.gapWidth, 208, accuracy: 0.001)
         XCTAssertGreaterThan(layout.frame.width, layout.gapWidth)
     }
 
@@ -184,8 +171,6 @@ final class OverlayStyleTests: XCTestCase {
         XCTAssertLessThan(layout.frame.maxY, visible.maxY)
     }
 
-    // MARK: - Window level gating
-
     func testNotchStylesDrawAboveMenuBar() {
         XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .notchShelf), .statusBar)
         XCTAssertEqual(RecordingOverlayWindowController.windowLevel(for: .gradientIsland), .statusBar)
@@ -203,8 +188,6 @@ final class OverlayStyleTests: XCTestCase {
         XCTAssertFalse(RecordingOverlayWindowController.ignoresMouseEvents(for: .cursorWaveform))
         XCTAssertFalse(RecordingOverlayWindowController.ignoresMouseEvents(for: .none))
     }
-
-    // MARK: - Pointer tracking gating
 
     func testOnlyCursorWaveformTracksPointer() {
         XCTAssertTrue(RecordingOverlayWindowController.shouldTrackPointer(for: .cursorWaveform))

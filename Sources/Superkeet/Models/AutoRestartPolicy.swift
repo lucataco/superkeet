@@ -7,6 +7,7 @@ struct AutoRestartPolicy {
     let maxDelay: TimeInterval
 
     private(set) var attemptTimestamps: [Date] = []
+    private var readySince: Date?
 
     init(
         maxAttempts: Int = 3,
@@ -21,6 +22,10 @@ struct AutoRestartPolicy {
     }
 
     mutating func nextDelay(now: Date = Date()) -> TimeInterval? {
+        if let readySince, now.timeIntervalSince(readySince) >= window {
+            reset()
+        }
+        readySince = nil
         attemptTimestamps = attemptTimestamps.filter { now.timeIntervalSince($0) < window }
         guard attemptTimestamps.count < maxAttempts else { return nil }
 
@@ -31,5 +36,10 @@ struct AutoRestartPolicy {
 
     mutating func reset() {
         attemptTimestamps.removeAll()
+        readySince = nil
+    }
+
+    mutating func recordReady(now: Date = Date()) {
+        readySince = now
     }
 }

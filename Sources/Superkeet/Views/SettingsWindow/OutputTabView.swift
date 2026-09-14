@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Output settings: visualization style, auto-paste, clipboard behavior
 struct OutputTabView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var historyStore = HistoryStore.shared
@@ -16,6 +15,9 @@ struct OutputTabView: View {
             )
 
             Form {
+                Section("Last Transcript & Recovery") {
+                    LastTranscriptView()
+                }
                 Section {
                     LazyVGrid(
                         columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
@@ -57,16 +59,25 @@ struct OutputTabView: View {
                     settingToggle(
                         isOn: $settings.fillerWordRemovalEnabled,
                         title: "Remove Filler Words",
-                        subtitle: "Strip \"uh\", \"um\", \"er\", and \"hmm\" from transcriptions"
+                        subtitle: "Remove ‘uh’ and ‘um’; preserve er, err, hmm, ah, like, and ER"
                     )
                     settingToggle(
                         isOn: $settings.clipboardCopyEnabled,
                         title: "Copy to Clipboard",
                         subtitle: "Copy each transcription so you can paste it where you want"
                     )
+                    settingToggle(
+                        isOn: $settings.spokenCorrectionsEnabled,
+                        title: "Spoken Correction Commands",
+                        subtitle: "Interpret standalone ‘scratch that’, ‘replace orange with yellow’, and ‘undo last correction’ clauses within this recording"
+                    )
                 } header: {
                     Text("Transcription")
+                } footer: {
+                    Text("Commands are off by default and must be separated by punctuation or a line break. ‘Scratch that’ removes the previous clause. Replacements require one unambiguous earlier match. Natural er/err/or stays literal. Copy Original or Undo Text Changes recovers the recognizer’s output.")
                 }
+
+                PhraseReplacementsView()
 
                 Section {
                     settingToggle(
@@ -119,6 +130,12 @@ struct OutputTabView: View {
                 } header: {
                     Text("Privacy")
                 } footer: {
+                    if let issue = historyStore.persistenceIssue {
+                        Text(issue).foregroundStyle(.orange).textSelection(.enabled)
+                    }
+                    if let issue = usageStats.persistenceIssue {
+                        Text(issue).foregroundStyle(.orange).textSelection(.enabled)
+                    }
                     Text("History and usage stats are stored locally in ~/Library/Application Support/Superkeet. Usage stats never include transcribed text.")
                 }
 
@@ -139,7 +156,7 @@ struct OutputTabView: View {
                                 "Note",
                                 detail: settings.saveHistoryEnabled
                                     ? "Text will only appear in History. Enable clipboard copy for an easier default flow."
-                                    : "Text will not be retained anywhere. Enable history or clipboard copy before recording."
+                                    : "The last transcript remains available here and in the menu bar until the next result or app exit."
                             )
                             .foregroundColor(.orange)
                         }
@@ -182,14 +199,12 @@ struct OutputTabView: View {
         }
     }
 
-    /// A native-weight toggle row: title plus secondary subtitle, trailing switch.
     private func settingToggle(isOn: Binding<Bool>, title: String, subtitle: String) -> some View {
         Toggle(isOn: isOn) {
             rowLabel(title, subtitle)
         }
     }
 
-    /// Standard two-line label (primary title + secondary subtitle) for form rows.
     private func rowLabel(_ title: String, _ subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
@@ -199,8 +214,6 @@ struct OutputTabView: View {
         }
     }
 }
-
-// MARK: - Visualization Option Card
 
 private struct VisualizationOption: View {
     let title: String

@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// The three-number summary shown at the top of Settings: words dictated,
-/// average speaking rate, and estimated time saved. Backed by the privacy-safe
-/// `UsageStatsStore`, so it works whether or not history saving is enabled.
 struct StatsHeaderView: View {
     @ObservedObject var stats = UsageStatsStore.shared
 
@@ -32,8 +29,6 @@ struct StatsHeaderView: View {
         }
     }
 }
-
-// MARK: - Stat Tile
 
 private struct StatTile: View {
     let value: String
@@ -71,10 +66,7 @@ private struct StatTile: View {
     }
 }
 
-// MARK: - Formatting helpers
-
 private enum Formatters {
-    /// Compact integer formatting, e.g. 1234 -> "1.2k".
     static func compact(_ value: Int) -> String {
         switch value {
         case 1_000_000...:
@@ -88,7 +80,6 @@ private enum Formatters {
         }
     }
 
-    /// Human-friendly duration from minutes, e.g. "45m", "2.5h".
     static func duration(minutes: Double) -> String {
         if minutes < 1 {
             return "<1m"

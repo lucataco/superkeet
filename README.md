@@ -23,6 +23,8 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - Floating recording overlay with mini/classic/hidden modes
 - Searchable local history
 - Output controls for clipboard, auto-paste, and local history retention
+- Visible transcription completion, partial-result warnings, and last/original transcript recovery
+- App-scoped phrase replacements and opt-in spoken correction commands with undo
 - Setup diagnostics for microphone access, engine presence, runtime directory, and daemon state
 - 100% local transcription via `parakeet`
 
@@ -50,7 +52,7 @@ cd superkeet
 open ~/Applications/Superkeet.app
 ```
 
-`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`. If no local `parakeet` binary is found, it clones `lucataco/parakeet-cli` into `.build/parakeet-cli` and builds it with Cargo first. Source installs therefore require `git` and Rust/Cargo.
+`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`. It requires a protocol-1 engine (v0.1.6). If no local engine is found, it clones the pinned tag into `.build/parakeet-cli-v0.1.6` and builds it with Cargo. Source installs therefore require `git` and Rust/Cargo. To use an existing engine checkout, set `PARAKEET_SOURCE_DIR=/path/to/parakeet-cli`.
 
 By default, local installs are ad-hoc signed. To keep the same macOS privacy identity across local installs, pass a Developer ID identity:
 
@@ -87,7 +89,7 @@ If you use `swift run` during development, make sure the active developer direct
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-`swift run` also needs a local `parakeet` binary because the release app bundle is not assembled. If none is found, Superkeet automatically clones `lucataco/parakeet-cli` into `.build/parakeet-cli` and runs `cargo build --release --bin parakeet` on first startup. This requires `git` and Rust/Cargo.
+`swift run` also needs a protocol-1 `parakeet` engine because the release app bundle is not assembled. It builds `PARAKEET_SOURCE_DIR`, an adjacent Formulae/sibling checkout, or the version-specific `.build/parakeet-cli-v0.1.6` checkout using Cargo with `--locked`. Explicit binary overrides skip the build. Existing source checkouts are not reset.
 
 If you already have a local engine, you can still point Superkeet at it directly:
 
@@ -123,11 +125,16 @@ After the model is present, Superkeet starts the bundled Parakeet daemon in the 
 Click the menu bar icon to:
 
 - Start or stop recording
+- Copy the last transcript, copy the original, or undo text changes and copy
 - Open History
 - Open Settings
 - Quit the app
 
-The icon turns red while recording.
+The icon turns red while recording. After stop, the menu bar shows “Transcribing”
+until success, no speech, a partial transcript, or failure is reported. A new
+recording waits for that completion. Recovery and text-processing settings live
+in Output & Privacy. See [transcription preservation](docs/transcription-preservation.md)
+for command grammar, audio regression results and release dependencies.
 
 ### Shortcuts
 

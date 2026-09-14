@@ -4,8 +4,6 @@ import CoreGraphics
 
 final class HotkeyDisplayTests: XCTestCase {
 
-    // MARK: - keyCodeName
-
     func testLetterKeyCodes() {
         XCTAssertEqual(keyCodeName(0), "A")
         XCTAssertEqual(keyCodeName(1), "S")
@@ -47,8 +45,6 @@ final class HotkeyDisplayTests: XCTestCase {
         XCTAssertEqual(keyCodeName(999), "Key999")
     }
 
-    // MARK: - displayNameForHotkey
-
     func testNoModifiers() {
         let result = displayNameForHotkey(keyCode: 49, modifierFlags: 0)
         XCTAssertEqual(result, "Space")
@@ -67,7 +63,6 @@ final class HotkeyDisplayTests: XCTestCase {
     }
 
     func testMultipleModifiersInCorrectOrder() {
-        // Control + Option + Shift + Command
         let flags = Int(
             CGEventFlags.maskControl.rawValue |
             CGEventFlags.maskAlternate.rawValue |
@@ -75,7 +70,6 @@ final class HotkeyDisplayTests: XCTestCase {
             CGEventFlags.maskCommand.rawValue
         )
         let result = displayNameForHotkey(keyCode: 15, modifierFlags: flags)
-        // Expected order: ⌃ ⌥ ⇧ ⌘ R
         XCTAssertEqual(result, "⌃ ⌥ ⇧ ⌘ R")
     }
 

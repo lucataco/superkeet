@@ -13,8 +13,12 @@ PARAKEET_SOURCE_DIR="${PARAKEET_SOURCE_DIR:-}"
 PARAKEET_OVERRIDE="${PARAKEET_CLI_PATH:-}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 PARAKEET_REPOSITORY_URL="https://github.com/lucataco/parakeet-cli.git"
-PARAKEET_REF="${PARAKEET_REF:-v0.1.5}"
-LOCAL_PARAKEET_SOURCE_DIR="${SCRIPT_DIR}/.build/parakeet-cli"
+PARAKEET_REF="${PARAKEET_REF:-v0.1.6}"
+LOCAL_PARAKEET_SOURCE_DIR="${SCRIPT_DIR}/.build/parakeet-cli-${PARAKEET_REF}"
+
+if [[ -z "$PARAKEET_SOURCE_DIR" && -f "${SCRIPT_DIR}/../../Formulae/parakeet-cli/Cargo.toml" ]]; then
+    PARAKEET_SOURCE_DIR="${SCRIPT_DIR}/../../Formulae/parakeet-cli"
+fi
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -27,11 +31,21 @@ resolve_parakeet_binary() {
     local candidates=()
 
     if [[ -n "$PARAKEET_BINARY_PATH" ]]; then
-        candidates+=("$PARAKEET_BINARY_PATH")
+        if [[ ! -x "$PARAKEET_BINARY_PATH" ]]; then
+            printf 'PARAKEET_BINARY_PATH is not executable: %s\n' "$PARAKEET_BINARY_PATH" >&2
+            return 1
+        fi
+        printf '%s\n' "$PARAKEET_BINARY_PATH"
+        return 0
     fi
 
     if [[ -n "$PARAKEET_OVERRIDE" ]]; then
-        candidates+=("$PARAKEET_OVERRIDE")
+        if [[ ! -x "$PARAKEET_OVERRIDE" ]]; then
+            printf 'PARAKEET_CLI_PATH is not executable: %s\n' "$PARAKEET_OVERRIDE" >&2
+            return 1
+        fi
+        printf '%s\n' "$PARAKEET_OVERRIDE"
+        return 0
     fi
 
     if [[ -n "$PARAKEET_SOURCE_DIR" ]]; then
@@ -68,7 +82,7 @@ build_parakeet_source_dir() {
     local source_dir="$1"
     require_command cargo
     printf '==> Building parakeet from %s...\n' "$source_dir"
-    cargo build --release --bin parakeet --manifest-path "${source_dir}/Cargo.toml"
+    cargo build --release --locked --bin parakeet --manifest-path "${source_dir}/Cargo.toml"
 }
 
 bootstrap_local_parakeet_cli() {
@@ -76,11 +90,7 @@ bootstrap_local_parakeet_cli() {
     require_command cargo
 
     printf '==> Preparing parakeet-cli %s in %s...\n' "$PARAKEET_REF" "$LOCAL_PARAKEET_SOURCE_DIR"
-    if [[ -d "${LOCAL_PARAKEET_SOURCE_DIR}/.git" ]]; then
-        git -C "$LOCAL_PARAKEET_SOURCE_DIR" fetch --depth 1 origin "$PARAKEET_REF"
-        git -C "$LOCAL_PARAKEET_SOURCE_DIR" checkout --force FETCH_HEAD
-    else
-        rm -rf "$LOCAL_PARAKEET_SOURCE_DIR"
+    if [[ ! -f "${LOCAL_PARAKEET_SOURCE_DIR}/Cargo.toml" ]]; then
         mkdir -p "$(dirname "$LOCAL_PARAKEET_SOURCE_DIR")"
         git clone --depth 1 --branch "$PARAKEET_REF" "$PARAKEET_REPOSITORY_URL" "$LOCAL_PARAKEET_SOURCE_DIR"
     fi
@@ -98,7 +108,6 @@ verify_parakeet_architecture() {
         printf 'Could not inspect architectures of `%s` (is lipo available?).\n' "$binary" >&2
         exit 1
     fi
-    # binary_archs is space-separated (e.g. "x86_64 arm64" for a universal binary)
     if [[ " $binary_archs " != *" $host_arch "* ]]; then
         printf 'Parakeet binary (%s) does not match host architecture (%s).\n' "$binary_archs" "$host_arch" >&2
         printf 'Rebuild parakeet for %s before installing.\n' "$host_arch" >&2
@@ -109,11 +118,14 @@ verify_parakeet_architecture() {
 require_command swift
 require_command codesign
 
-if [[ -n "$PARAKEET_SOURCE_DIR" && ! -x "${PARAKEET_SOURCE_DIR}/target/release/parakeet" ]]; then
+if [[ -n "$PARAKEET_SOURCE_DIR" && -z "$PARAKEET_BINARY_PATH" && -z "$PARAKEET_OVERRIDE" ]]; then
     build_parakeet_source_dir "$PARAKEET_SOURCE_DIR"
 fi
 
 PARAKEET_BINARY="$(resolve_parakeet_binary || true)"
+if [[ -z "$PARAKEET_BINARY" && ( -n "$PARAKEET_BINARY_PATH" || -n "$PARAKEET_OVERRIDE" ) ]]; then
+    exit 1
+fi
 if [[ -z "$PARAKEET_BINARY" ]]; then
     bootstrap_local_parakeet_cli
     PARAKEET_BINARY="$(resolve_parakeet_binary || true)"
@@ -126,6 +138,10 @@ if [[ -z "$PARAKEET_BINARY" ]]; then
 fi
 
 verify_parakeet_architecture "$PARAKEET_BINARY"
+if [[ "$("$PARAKEET_BINARY" protocol-version)" != "1" ]]; then
+    printf 'Superkeet requires parakeet-cli v0.1.6 or later with transcript protocol 1. Rebuild the engine or set PARAKEET_SOURCE_DIR.\n' >&2
+    exit 1
+fi
 
 printf '==> Building %s (release)...\n' "$APP_NAME"
 swift build -c release

@@ -37,7 +37,6 @@ final class DownloadCollectorTests: XCTestCase {
 
     func testStderrTruncatesToTailKeepLast8192Bytes() {
         let collector = DownloadCollector()
-        // Write 10 chunks of 1001 bytes each (10010 total > 8192 limit)
         let chunk = String(repeating: "x", count: 1000) + "\n"
         for _ in 0..<10 {
             collector.appendStderr(Data(chunk.utf8))
@@ -45,14 +44,12 @@ final class DownloadCollectorTests: XCTestCase {
         let excerpt = collector.stderrExcerpt()
         XCTAssertNotNil(excerpt)
         XCTAssertFalse(excerpt?.isEmpty == true)
-        // After trimming whitespace, should be <= 8192 characters
         XCTAssertLessThanOrEqual(excerpt?.count ?? 0, 8192)
     }
 
     func testStderrExcerptHandlesInvalidUTF8Gracefully() {
         let collector = DownloadCollector()
         collector.appendStderr(Data([0xFF, 0xFE, 0x00]))
-        // Should not crash; returns either nil or a replacement-char string
         _ = collector.stderrExcerpt()
     }
 }

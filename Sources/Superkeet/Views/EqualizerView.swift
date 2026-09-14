@@ -1,16 +1,8 @@
 import SwiftUI
 
-/// Shared "hot" color ramp + gain used by the recording equalizers so every
-/// overlay style stays visually consistent: dim cyan when silent → bright
-/// green/yellow → hot red when the mic hears loud audio. Colors are
-/// precomputed into a lookup table — at 15 Hz × 8 bars per overlay the
-/// alternative (computed HSB + two `Color` allocations per band) allocates
-/// over 1,900 objects per second purely for rendering.
 enum EqualizerPalette {
-    /// Extra gain applied to incoming levels so normal speech reads strongly.
     static let displayGain: CGFloat = 1.6
 
-    /// Quantization steps for the color ramp lookup.
     private static let rampResolution = 32
     private static let colorRamp: [Color] = (0..<rampResolution).map { step in
         let level = CGFloat(step) / CGFloat(rampResolution - 1)
@@ -21,34 +13,28 @@ enum EqualizerPalette {
         return makeColor(for: level, withOpacity: false)
     }
 
-    /// Normalize + gain-boost a raw level into the 0...1 display range.
     static func boostedLevel(_ raw: CGFloat) -> CGFloat {
         min(1, max(0, raw * displayGain))
     }
 
-    /// Heat-map color for a boosted level. Cheap quantized lookup.
     static func color(for level: CGFloat) -> Color {
         let clamped = min(max(level, 0), 1)
         return colorRamp[Int(clamped * CGFloat(rampResolution - 1))]
     }
 
-    /// Shadow color for the same level (opaque — no fade). Lookup-only.
     static func shadowColor(for level: CGFloat) -> Color {
         let clamped = min(max(level, 0), 1)
         return colorRampOpaque[Int(clamped * CGFloat(rampResolution - 1))]
     }
 
-    /// Aggregate level across bands — the "how loud" metric for reactive orbs.
     static func aggregateLevel(_ levels: [Float]) -> CGFloat {
         guard !levels.isEmpty else { return 0 }
         let sum = levels.reduce(0) { $0 + $1 }
         return boostedLevel(CGFloat(sum) / CGFloat(levels.count))
     }
 
-    // MARK: - Ramp construction (called once)
-
     private static func makeColor(for level: CGFloat, withOpacity: Bool) -> Color {
-        let hue = 0.5 - 0.5 * level        // 0.5 cyan -> 0.0 red
+        let hue = 0.5 - 0.5 * level
         let saturation = 0.85 + 0.15 * level
         let brightness = 0.9 + 0.1 * level
         let opacity = withOpacity ? 0.35 + 0.65 * level : 1.0
@@ -56,9 +42,6 @@ enum EqualizerPalette {
     }
 }
 
-/// Animated equalizer bars that respond to audio levels.
-/// Shares the same hot color ramp and gain as the mini dot equalizer.
-/// Sizing parameters let slimmer overlay styles reuse the same rendering.
 struct EqualizerView: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
 
@@ -92,7 +75,6 @@ struct EqualizerView: View {
     }
 
     private func barGradient(for level: CGFloat) -> LinearGradient {
-        // Slightly cooler/dimmer at the base, vivid at the tip.
         return LinearGradient(
             gradient: Gradient(colors: [
                 EqualizerPalette.color(for: level * 0.65),
@@ -104,20 +86,13 @@ struct EqualizerView: View {
     }
 }
 
-/// Dot-style equalizer for compact recording overlay — capsules that sit as
-/// small dots when idle and stretch tall while shifting through a hot color
-/// ramp as soon as the mic picks up the user's voice. The exaggerated height
-/// and color make it obvious that audio is being heard.
 struct DotEqualizerView: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
 
     let dotCount = 7
     let dotSpacing: CGFloat = 3
-    /// Width of each capsule (also the diameter of the resting dot).
     let dotWidth: CGFloat = 5
-    /// Resting height — a round dot when there's no audio.
     private var minHeight: CGFloat { dotWidth }
-    /// Fully stretched height when the mic hears loud audio.
     let maxHeight: CGFloat = 18
 
     var body: some View {
@@ -137,20 +112,17 @@ struct DotEqualizerView: View {
                     )
             }
         }
-        // Fixed size keeps the pill layout stable as capsules grow/shrink.
         .frame(
             width: CGFloat(dotCount) * dotWidth + CGFloat(dotCount - 1) * dotSpacing,
             height: maxHeight
         )
     }
 
-    /// Normalized, gain-boosted level (0...1) for a given dot.
     private func audioLevel(for index: Int) -> CGFloat {
         let mappedIndex = min(index, audioMonitor.levels.count - 1)
         return EqualizerPalette.boostedLevel(CGFloat(audioMonitor.levels[mappedIndex]))
     }
 
-    /// Stretches from a small resting dot up to a tall pill with the level.
     private func dotHeight(for level: CGFloat) -> CGFloat {
         minHeight + (maxHeight - minHeight) * level
     }

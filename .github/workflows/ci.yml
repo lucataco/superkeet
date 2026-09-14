@@ -42,3 +42,6 @@ jobs:
 
       - name: Run test suite
         run: swift test
+
+      - name: Test audio regression scoring
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'

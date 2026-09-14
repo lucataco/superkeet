@@ -6,7 +6,6 @@ import os.log
 
 private let homeTabLog = Logger(subsystem: "com.superkeet.app", category: "HomeTab")
 
-/// Setup tab focused on first-run clarity and recording shortcuts.
 struct HomeTabView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var parakeetService = ParakeetService.shared
@@ -103,8 +102,6 @@ struct HomeTabView: View {
         }
     }
 
-    // MARK: - Checklist
-
     private var checks: [SetupCheck] {
         [
             SetupCheck(
@@ -160,8 +157,6 @@ struct HomeTabView: View {
             )
         ]
     }
-
-    // MARK: - Derived checklist state
 
     private var requiredChecks: [SetupCheck] {
         checks.filter { !$0.isOptional }
@@ -714,8 +709,6 @@ private struct SetupRow: View {
     }
 }
 
-// MARK: - Checklist model
-
 private struct SetupCheck: Identifiable {
     var id: String { title }
     let title: String
@@ -745,8 +738,6 @@ private struct ReadyRow: View {
         }
     }
 }
-
-// MARK: - Hotkey Row
 
 private struct HotkeyRow: View {
     let title: String
@@ -799,8 +790,6 @@ private struct HotkeyBadge: View {
         )
     }
 }
-
-// MARK: - Interactive Hotkey Recorder
 
 private struct InteractiveHotkeyRecorder: View {
     @StateObject private var recorderState = RecorderState()
@@ -872,14 +861,12 @@ private struct InteractiveHotkeyRecorder: View {
             guard recorderState.isActive else { return event }
             let keyCode = Int(event.keyCode)
 
-            // Escape cancels the recorder
             if keyCode == 53 {
                 teardown()
                 onCancel()
                 return nil
             }
 
-            // Pass through Cmd+Q and Cmd+W so the user can still quit/close
             if event.modifierFlags.contains(.command) && (keyCode == 12 || keyCode == 13) {
                 return event
             }

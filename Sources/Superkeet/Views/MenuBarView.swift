@@ -5,7 +5,6 @@ import os.log
 
 private let menuBarLog = Logger(subsystem: "com.superkeet.app", category: "MenuBar")
 
-/// Manages the NSMenu displayed from the menu bar status item
 final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     static let shared = MenuBarManager()
 
@@ -16,9 +15,12 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var settingsWindowController: NSWindowController?
     private var historyWindowController: NSWindowController?
     private var onboardingWindowController: NSWindowController?
-    private var recordingRequested: Bool = false
+    private let recordingStart = RecordingStartCoordinator()
+    private var recordingRequested: Bool { recordingStart.requestID != nil }
     private var pttSessionActive: Bool = false
     private var recordingStateCancellable: AnyCancellable?
+    private var sessionStatusCancellable: AnyCancellable?
+    private var statusClearTask: DispatchWorkItem?
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -29,37 +31,43 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         let menu = NSMenu()
+        menu.autoenablesItems = false
         menu.delegate = self
         statusItem?.menu = menu
 
-        // Clear the in-flight request flag on true→false transitions only.
-        // Assigning `isRecording = false` while already false (daemon exit
-        // during start) must not clobber a new `recordingRequested`.
         recordingStateCancellable = settings.$isRecording
-            .receive(on: DispatchQueue.main)
             .scan((false, false)) { ($0.1, $1) }
             .filter { $0.0 && !$0.1 }
-            .sink { [weak self] _ in
-                self?.recordingRequested = false
-                self?.pttSessionActive = false
-                self?.updateMenuBarIcon(recording: false)
+            .map { [weak self] _ in self?.recordingStart.requestID }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] requestID in
+                guard let self, self.recordingStart.requestID == requestID else { return }
+                self.recordingStart.cancel()
+                self.pttSessionActive = false
+                self.updateMenuBarIcon(recording: false)
+                AudioLevelMonitor.shared.stopMonitoring()
+                RecordingOverlayWindowController.shared.hide()
             }
+
+        sessionStatusCancellable = parakeetService.$sessionStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in self?.showSessionStatus(status) }
     }
 
-    /// Rebuilds all menu items. Called by NSMenuDelegate before each display.
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Status header
         let statusText: String
-        if settings.isRecording {
+        if parakeetService.daemonState == .transcribing {
+            statusText = "Transcribing…"
+        } else if settings.isRecording {
             statusText = "Recording..."
         } else if !hotkeyManager.isListening {
             statusText = "Hotkeys not active — grant Accessibility"
         } else if !settings.isDaemonRunning {
             statusText = "Daemon not running"
         } else {
-            statusText = "Ready"
+            statusText = parakeetService.sessionStatus
         }
         let statusItem = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
         statusItem.isEnabled = false
@@ -72,7 +80,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
         menu.addItem(statusItem)
 
-        // Show accessibility help item when hotkeys are not active
         if !hotkeyManager.isListening {
             let helpItem = NSMenuItem(title: "Open Accessibility Settings...", action: #selector(openAccessibilitySettings), keyEquivalent: "")
             helpItem.target = self
@@ -82,35 +89,37 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Start/Stop Recording
         if settings.isRecording {
             let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecording), keyEquivalent: "")
             stopItem.target = self
             stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: "Stop")
             menu.addItem(stopItem)
+        } else if recordingRequested {
+            let cancelItem = NSMenuItem(title: "Cancel Starting Recording", action: #selector(cancelRecording), keyEquivalent: "")
+            cancelItem.target = self
+            menu.addItem(cancelItem)
         } else {
             let startItem = NSMenuItem(title: "Start Recording", action: #selector(startRecording), keyEquivalent: "")
             startItem.target = self
             startItem.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Record")
-            startItem.isEnabled = !recordingRequested
+            startItem.isEnabled = !recordingRequested && parakeetService.daemonState != .transcribing
             menu.addItem(startItem)
         }
 
         menu.addItem(NSMenuItem.separator())
 
-        // History
+        addRecoveryItems(to: menu)
+
         let historyItem = NSMenuItem(title: "History", action: #selector(openHistory), keyEquivalent: "h")
         historyItem.target = self
         historyItem.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
         menu.addItem(historyItem)
 
-        // Settings
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")
         menu.addItem(settingsItem)
 
-        // Run Setup
         let setupItem = NSMenuItem(title: "Run Setup Again...", action: #selector(runSetupAgain), keyEquivalent: "")
         setupItem.target = self
         setupItem.image = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: "Setup")
@@ -118,53 +127,94 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Quit
         let quitItem = NSMenuItem(title: "Quit Superkeet", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
     }
 
-    // MARK: - NSMenuDelegate
-
     func menuNeedsUpdate(_ menu: NSMenu) {
         rebuildMenu(menu)
     }
 
-    // MARK: - Actions
+    private func addRecoveryItems(to menu: NSMenu) {
+        let actions: [(String, Selector, Bool)] = [
+            ("Copy Last Transcript", #selector(copyLastTranscript), !parakeetService.lastTranscription.isEmpty),
+            ("Copy Original Transcript", #selector(copyOriginalTranscript), !parakeetService.lastRawTranscription.isEmpty),
+            ("Undo Text Changes and Copy", #selector(undoTextChanges), parakeetService.canUndoTextChanges)
+        ]
+        for (title, action, enabled) in actions {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+    }
 
-    @MainActor
-    @objc private func startRecording() {
-        guard !recordingRequested else { return }
-        recordingRequested = true
-        updateMenuBarIcon(recording: false)
+    @objc private func copyLastTranscript() {
+        PasteService.shared.copyToClipboard(parakeetService.lastTranscription)
+    }
 
-        Task { @MainActor in
-            await self.startRecordingFlow()
+    @objc private func copyOriginalTranscript() {
+        PasteService.shared.copyToClipboard(parakeetService.lastRawTranscription)
+    }
+
+    @objc private func undoTextChanges() {
+        parakeetService.undoLastTextChanges()
+    }
+
+    private func showSessionStatus(_ status: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        statusClearTask?.cancel()
+        guard let button = statusItem?.button else { return }
+        let isPartial = status.hasPrefix("Partial transcript")
+        button.title = status == "Ready" || status == "Recording…" ? "" : " " + (isPartial ? "Partial transcript" : status)
+        button.toolTip = status
+        button.setAccessibilityLabel("Superkeet: \(status)")
+        NSAccessibility.post(element: button, notification: .announcementRequested, userInfo: [
+            .announcement: status, .priority: NSAccessibilityPriorityLevel.high.rawValue
+        ])
+        if status == "Transcription complete" || status == "No speech detected" || status == "Recording cancelled" {
+            let task = DispatchWorkItem { [weak button] in button?.title = "" }
+            statusClearTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: task)
         }
     }
 
     @MainActor
-    private func startRecordingFlow() async {
+    @objc private func startRecording() {
+        guard parakeetService.daemonState != .transcribing, let requestID = recordingStart.begin() else { return }
+        updateMenuBarIcon(recording: false)
+
+        Task { @MainActor in
+            await self.startRecordingFlow(requestID: requestID)
+        }
+    }
+
+    @MainActor
+    private func startRecordingFlow(requestID: UUID) async {
+        let started: Bool
         do {
-            if !settings.isDaemonRunning {
-                try await parakeetService.startDaemon()
-            }
+            started = try await recordingStart.run(requestID, prepare: {
+                if !self.settings.isDaemonRunning {
+                    try await self.parakeetService.startDaemon()
+                }
+            }, start: {
+                await self.parakeetService.startRecording()
+            })
         } catch {
             menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription)")
+            guard recordingStart.isCurrent(requestID) else { return }
             teardownRecordingUI()
             return
         }
 
-        guard recordingRequested else { return }
-
-        let started = await parakeetService.startRecording()
+        guard recordingStart.isCurrent(requestID) else {
+            if started { parakeetService.cancelRecording() }
+            return
+        }
         guard started else {
             teardownRecordingUI()
-            return
-        }
-
-        guard recordingRequested else {
-            parakeetService.stopRecording()
             return
         }
 
@@ -180,7 +230,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     private func teardownRecordingUI() {
-        recordingRequested = false
+        recordingStart.cancel()
         pttSessionActive = false
         updateMenuBarIcon(recording: false)
         AudioLevelMonitor.shared.stopMonitoring()
@@ -196,7 +246,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     @objc private func cancelRecording() {
+        let wasPending = recordingRequested && !settings.isRecording
+        recordingStart.cancel()
         parakeetService.cancelRecording()
+        if wasPending { parakeetService.sessionStatus = "Recording cancelled" }
         CaptureSoundPlayer.play(.stop)
         teardownRecordingUI()
     }
@@ -247,9 +300,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         let window = NSWindow(contentViewController: hostingController)
         window.setContentSize(NSSize(width: 800, height: 620))
         window.styleMask = [.titled, .closable, .resizable]
-        // Empty title keeps the transparent titlebar clean; the in-content large
-        // titles and sidebar identity provide context. `titleVisibility` alone is
-        // unreliable here because NavigationSplitView's toolbar re-asserts the title.
         window.title = ""
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -285,7 +335,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         let onboardingView = OnboardingView { [weak self] in
-            // On completion, just close the window (daemon is already running)
             self?.onboardingWindowController?.window?.close()
             self?.onboardingWindowController = nil
             NSApp.setActivationPolicy(.accessory)
@@ -330,39 +379,36 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    // MARK: - UI Updates
-
     func updateMenuBarIcon(recording: Bool) {
         if recording {
             let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
             if let image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Superkeet - Recording")?
                 .withSymbolConfiguration(config) {
                 image.size = NSSize(width: 16, height: 18)
-                image.isTemplate = false  // Use our red color, not menu bar template rendering
+                image.isTemplate = false
                 statusItem?.button?.image = image
             }
             statusItem?.button?.contentTintColor = nil
         } else {
             let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Superkeet")
             image?.size = NSSize(width: 18, height: 18)
-            // isTemplate defaults to true — adapts to light/dark automatically
             statusItem?.button?.image = image
             statusItem?.button?.contentTintColor = nil
         }
     }
 
-    /// Called by the hotkey manager to toggle recording
     @MainActor
     func toggleRecording() {
         if settings.isRecording {
             stopRecording()
+        } else if recordingRequested {
+            cancelRecording()
         } else {
             pttSessionActive = false
             startRecording()
         }
     }
 
-    /// Called by PTT key press — only starts, never stops
     @MainActor
     func startRecordingOnly() {
         guard !settings.isRecording && !recordingRequested else { return }
@@ -370,7 +416,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         startRecording()
     }
 
-    /// Called by PTT key release — ignored unless this session was started by PTT
     @MainActor
     func stopPushToTalk() {
         guard pttSessionActive else { return }
@@ -378,14 +423,12 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         stopRecordingOnly()
     }
 
-    /// Called by Escape key or overlay stop — only stops, never starts
     @MainActor
     func stopRecordingOnly() {
         guard settings.isRecording || recordingRequested else { return }
         stopRecording()
     }
 
-    /// Called by Escape key — cancels without asking the daemon to transcribe.
     @MainActor
     func cancelRecordingOnly() {
         guard settings.isRecording || recordingRequested else { return }

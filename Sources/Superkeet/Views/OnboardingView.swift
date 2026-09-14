@@ -2,8 +2,6 @@ import SwiftUI
 import AVFoundation
 import AppKit
 
-/// Multi-step onboarding wizard shown on first launch.
-/// Walks through permissions, engine verification, and hotkey setup.
 struct OnboardingView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var hotkeyManager = HotkeyManager.shared
@@ -11,15 +9,12 @@ struct OnboardingView: View {
     @State private var currentStep: OnboardingStep = .welcome
     @State private var readiness = AppReadiness.current()
 
-    // Accessibility polling
     @State private var accessibilityPollingTimer: Timer?
     @State private var accessibilityGranted: Bool = false
     @State private var didTriggerAccessibilityPrompt: Bool = false
 
-    // Microphone state
     @State private var microphoneGranted: Bool = false
 
-    /// Called when the user completes onboarding
     var onComplete: () -> Void
 
     private enum OnboardingStep: Int, CaseIterable {
@@ -46,7 +41,6 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Step content
             Group {
                 switch currentStep {
                 case .welcome: welcomeStep
@@ -61,9 +55,7 @@ struct OnboardingView: View {
 
             Divider()
 
-            // Navigation bar
             HStack {
-                // Step indicator
                 HStack(spacing: 6) {
                     ForEach(OnboardingStep.allCases, id: \.self) { step in
                         Circle()
@@ -96,14 +88,11 @@ struct OnboardingView: View {
             .padding(20)
         }
         .onAppear {
-            // Seed initial state
             microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
         }
         .onChange(of: currentStep) {
             if currentStep == .model {
-                // Kick off the model download as soon as the user reaches it, so
-                // it runs in the background while they finish the rest of setup.
                 modelProvisioning.startDownloadIfNeeded()
             }
             if currentStep == .accessibility {
@@ -116,19 +105,15 @@ struct OnboardingView: View {
             stopAccessibilityPolling()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            // Refresh everything when user switches back to the app
             readiness = AppReadiness.current()
             microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
             syncAccessibilityState(accessibilityGranted)
         }
         .onChange(of: modelProvisioning.state) {
-            // Keep the readiness summary in sync as the model download completes.
             readiness = AppReadiness.current()
         }
     }
-
-    // MARK: - Step 0: Welcome
 
     private var welcomeStep: some View {
         VStack(spacing: 24) {
@@ -157,7 +142,6 @@ struct OnboardingView: View {
 
             Spacer()
 
-            // Set expectations up front for the one-time model download.
             Text("First-time setup downloads the on-device speech model (about 670 MB), then Superkeet runs completely offline.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -204,14 +188,11 @@ struct OnboardingView: View {
         currentStep = previous
     }
 
-    // MARK: - Step 1: Microphone
-
     private var microphoneStep: some View {
         VStack(spacing: 0) {
             Spacer()
 
             VStack(spacing: 24) {
-                // Icon
                 ZStack {
                     Circle()
                         .fill(microphoneGranted ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
@@ -235,8 +216,6 @@ struct OnboardingView: View {
                 if microphoneGranted {
                     statusPill(text: "Microphone access granted", tint: .green)
                 } else if microphoneAccessDenied {
-                    // Already denied/restricted — skip the dead "Grant" click and
-                    // guide the user straight to System Settings.
                     VStack(spacing: 12) {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -280,7 +259,6 @@ struct OnboardingView: View {
 
             Spacer()
 
-            // Subtle note at bottom
             Text("Audio never leaves your Mac. All processing happens locally.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -288,8 +266,6 @@ struct OnboardingView: View {
         }
         .padding(24)
     }
-
-    // MARK: - Step 2: Speech Model
 
     private var modelStep: some View {
         VStack(spacing: 0) {
@@ -457,14 +433,11 @@ struct OnboardingView: View {
         return formatter
     }()
 
-    // MARK: - Step 3: Accessibility
-
     private var accessibilityStep: some View {
         VStack(spacing: 0) {
             Spacer()
 
             VStack(spacing: 24) {
-                // Icon
                 ZStack {
                     Circle()
                         .fill(accessibilityGranted ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
@@ -488,12 +461,9 @@ struct OnboardingView: View {
                 }
 
                 if accessibilityGranted {
-                    // Granted state
                     statusPill(text: "Accessibility access granted", tint: .green)
                 } else {
-                    // Instructions + Open Settings button
                     VStack(spacing: 16) {
-                        // Numbered instructions
                         VStack(alignment: .leading, spacing: 10) {
                             instructionRow(number: "1", text: "Click \"Open System Settings\" below")
                             instructionRow(number: "2", text: "Find **Superkeet** in the list")
@@ -513,7 +483,6 @@ struct OnboardingView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
 
-                        // Polling indicator
                         HStack(spacing: 6) {
                             ProgressView()
                                 .controlSize(.small)
@@ -527,7 +496,6 @@ struct OnboardingView: View {
 
             Spacer()
 
-            // Skip option
             if !accessibilityGranted {
                 VStack(spacing: 4) {
                     Text("You can skip this step, but global hotkeys and auto-paste won't work.")
@@ -560,8 +528,6 @@ struct OnboardingView: View {
                 .foregroundColor(.primary)
         }
     }
-
-    // MARK: - Step 4: Output
 
     private var outputStep: some View {
         VStack(spacing: 0) {
@@ -632,8 +598,6 @@ struct OnboardingView: View {
         .padding(24)
     }
 
-    // MARK: - Step 5: Ready
-
     private var readyStep: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 24) {
@@ -683,7 +647,6 @@ struct OnboardingView: View {
                     )
                 }
 
-                // Engine warning (only shown if engine binary is missing)
                 if !readiness.diagnostics.engineBinaryExists {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -703,7 +666,6 @@ struct OnboardingView: View {
                     .cornerRadius(10)
                 }
 
-                // Model still downloading in the background
                 if modelProvisioning.state.isBusy {
                     HStack(alignment: .center, spacing: 10) {
                         ProgressView()
@@ -721,9 +683,6 @@ struct OnboardingView: View {
                     .cornerRadius(10)
                 }
 
-                // Setup summary — keep it simple. Always show the permissions the
-                // user understands; only surface the technical diagnostics
-                // (engine, input device, runtime directory) when one needs attention.
                 VStack(spacing: 8) {
                     permissionSummaryRow(
                         icon: "mic.fill",
@@ -880,11 +839,6 @@ struct OnboardingView: View {
         settings.autoPasteEnabled = mode == .autoPaste
     }
 
-    // MARK: - Actions
-
-    /// True when microphone access is explicitly denied or restricted. macOS
-    /// won't show the permission prompt again in these states, so we route the
-    /// user to System Settings instead of offering a no-op "Grant" button.
     private var microphoneAccessDenied: Bool {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         return status == .denied || status == .restricted
@@ -907,18 +861,12 @@ struct OnboardingView: View {
         guard !didTriggerAccessibilityPrompt && !accessibilityGranted else { return }
         didTriggerAccessibilityPrompt = true
 
-        // Registers "Superkeet" in the Accessibility list and shows the native macOS
-        // prompt (which has its own "Open System Settings" button). We intentionally
-        // do NOT auto-open System Settings here — the user can read the on-screen
-        // steps and click "Open System Settings" when they're ready.
         hotkeyManager.checkAccessibility()
     }
 
     private func openAccessibilitySettings() {
         SystemSettingsLinks.openAccessibility()
     }
-
-    // MARK: - Accessibility Polling
 
     private func startAccessibilityPolling() {
         stopAccessibilityPolling()

@@ -14,13 +14,7 @@ let package = Package(
         .executableTarget(
             name: "Superkeet",
             dependencies: [],
-            path: "Sources/Superkeet",
-            resources: [
-                // Only used by `swift run` to read CFBundleVersion etc.
-                // install.sh and package_release.sh copy Info.plist into the
-                // .app bundle Contents/ directory separately.
-                .copy("../../Resources/Info.plist")
-            ]
+            path: "Sources/Superkeet"
         ),
         .testTarget(
             name: "SuperkeetTests",

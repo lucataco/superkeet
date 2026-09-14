@@ -4,15 +4,9 @@ import Combine
 
 private let pointerTrackingInterval: TimeInterval = 1.0 / 15.0
 
-/// Manages the floating recording overlay window.
-/// Sizes and anchors resolve from the active `OverlayAnimationStyle`;
-/// the cursor-waveform style additionally tracks the pointer.
 final class RecordingOverlayWindowController: ObservableObject {
     static let shared = RecordingOverlayWindowController()
 
-    /// Transparent gap the notch-shelf view leaves over the physical camera
-    /// notch. Published so the SwiftUI view can react when the shelf moves
-    /// between screens with different notch widths.
     @Published private(set) var notchGapWidth: CGFloat = 0
 
     private var window: NSWindow?
@@ -21,8 +15,6 @@ final class RecordingOverlayWindowController: ObservableObject {
     private var pointerTracker: Timer?
 
     private init() {}
-
-    // MARK: - Style Sizing
 
     static let compactSize = NSSize(width: 260, height: 50)
     static let expandedSize = NSSize(width: 310, height: 94)
@@ -41,9 +33,6 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
     }
 
-    /// Notch-adjacent styles draw in the menu-bar band, which sits above the
-    /// standard `.floating` level — they must be raised to `.statusBar` or the
-    /// menu bar occludes them entirely.
     static func windowLevel(for style: OverlayAnimationStyle) -> NSWindow.Level {
         switch style {
         case .gradientIsland, .notchShelf:
@@ -53,13 +42,9 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
     }
 
-    /// Notch-band overlays sit over menu extras; clicks must fall through to
-    /// the menu bar. Stop via the hotkey or Escape.
     static func ignoresMouseEvents(for style: OverlayAnimationStyle) -> Bool {
         style == .gradientIsland || style == .notchShelf
     }
-
-    // MARK: - Show / Hide
 
     func show() {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -68,9 +53,6 @@ final class RecordingOverlayWindowController: ObservableObject {
         guard style.showsOverlay else { return }
 
         if let window {
-            // Reuse the panel (NSPanel is expensive) but replace the SwiftUI
-            // root so session-scoped state — elapsed clock, island morph-in —
-            // starts fresh. orderOut does not destroy the hosting view.
             hostingView?.rootView = RecordingOverlayView(sessionStart: Date())
             applyChrome(window, style: style)
             if !window.isVisible {
@@ -114,12 +96,8 @@ final class RecordingOverlayWindowController: ObservableObject {
         stopPointerTracking()
         recordingCancellable?.cancel()
         recordingCancellable = nil
-        // Keep the panel alive — just order it out. The next show() re-anchors,
-        // replaces the SwiftUI root, and re-orders.
         window?.orderOut(nil)
     }
-
-    // MARK: - Auto-hide subscription
 
     private func subscribeRecordingAutoHide() {
         guard recordingCancellable == nil else { return }
@@ -134,9 +112,6 @@ final class RecordingOverlayWindowController: ObservableObject {
             }
     }
 
-    // MARK: - Resize
-
-    /// Animate the window resize/reposition when the style changes.
     func resizeForCurrentMode() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let window = window else { return }
@@ -161,11 +136,6 @@ final class RecordingOverlayWindowController: ObservableObject {
         window.setFrame(layout.frame, display: true, animate: animate)
     }
 
-    // MARK: - Positioning
-
-    /// Full layout (frame + notch gap) for the style, resolved against the
-    /// screen under the pointer — including the screen's real safe-area
-    /// insets and auxiliary notch areas.
     private func layoutForCurrentScreen(style: OverlayAnimationStyle) -> (frame: NSRect, gapWidth: CGFloat) {
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
@@ -228,10 +198,6 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
     }
 
-    // MARK: - Pointer Tracking
-
-    /// Whether a pointer-tracking timer should be active for the style.
-    /// Internal for tests — the tracker self-invalidates when this goes false.
     static func shouldTrackPointer(for style: OverlayAnimationStyle) -> Bool {
         style == .cursorWaveform
     }
@@ -241,8 +207,6 @@ final class RecordingOverlayWindowController: ObservableObject {
         let size = Self.size(for: style)
         pointerTracker = Timer.scheduledTimer(withTimeInterval: pointerTrackingInterval, repeats: true) { [weak self] timer in
             guard let self = self, let window = self.window else { return }
-            // Self-invalidate if the style changed to a non-cursor style —
-            // stops runaway tracking when the user switches styles mid-recording.
             guard Self.shouldTrackPointer(for: AppSettings.shared.overlayAnimationStyle) else {
                 timer.invalidate()
                 self.pointerTracker = nil

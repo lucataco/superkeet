@@ -4,55 +4,32 @@ import os.log
 
 private let hotkeyLog = Logger(subsystem: "com.superkeet.app", category: "HotkeyManager")
 
-/// Global hotkey manager using CGEvent tap for monitoring keyboard events system-wide.
-/// Supports two independent hotkeys:
-///   1. Toggle Recording — press to start, press again to stop
-///   2. Push to Talk — hold to record, release to stop
-/// Requires Accessibility permission.
 final class HotkeyManager: ObservableObject {
     static let shared = HotkeyManager()
 
     @Published var isListening: Bool = false
     @Published var accessibilityGranted: Bool = false
 
-    // MARK: - Callbacks
-
-    /// Toggle hotkey fired (press to start/stop)
     var onToggleHotkeyPressed: (() -> Void)?
-    /// Push-to-talk key pressed down (start recording)
     var onPushToTalkStarted: (() -> Void)?
-    /// Push-to-talk key released (stop recording)
     var onPushToTalkEnded: (() -> Void)?
-    /// Escape key pressed while recording
     var onEscapePressed: (() -> Void)?
 
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private let settings = AppSettings.shared
     private var retryTimer: Timer?
-    /// Stores the retained self reference passed to the event tap's userInfo.
-    /// Must be released exactly once in stopListening() to balance passRetained().
     private var retainedSelf: Unmanaged<HotkeyManager>?
 
-    /// Track whether the PTT key is currently held to avoid repeat keyDown events
     fileprivate var pttKeyDown: Bool = false
-    /// Track previous fn key state for edge detection (fn only fires flagsChanged)
     fileprivate var fnKeyDown: Bool = false
-    /// Track rapid tap re-enables to detect a tight re-enable loop
     fileprivate var tapReEnableCount: Int = 0
     fileprivate var tapReEnableWindowStart: Date = .distantPast
-    /// Nested count of in-app hotkey recorders. While > 0, the tap passes
-    /// events through so the local NSEvent monitor can capture them.
     private var hotkeyCaptureCount: Int = 0
 
     private init() {
-        // Only check silently at init – don't show the macOS system dialog.
-        // The prompting dialog will appear during onboarding (Permissions step)
-        // or after onboarding completes via completeOnboarding().
         self.accessibilityGranted = checkAccessibilitySilently()
     }
-
-    // MARK: - Accessibility
 
     func checkAccessibilitySilently() -> Bool {
         AXIsProcessTrusted()
@@ -66,8 +43,6 @@ final class HotkeyManager: ObservableObject {
         self.accessibilityGranted = trusted
         return trusted
     }
-
-    // MARK: - Start / Stop
 
     func startListening() {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -83,7 +58,6 @@ final class HotkeyManager: ObservableObject {
             return
         }
 
-        // Listen for keyDown, keyUp, and flagsChanged (for modifier-only keys like fn)
         let eventMask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
@@ -127,7 +101,6 @@ final class HotkeyManager: ObservableObject {
             if let source = runLoopSource {
                 CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
             }
-            // Balance the passRetained(self) from startListening()
             retainedSelf?.release()
             retainedSelf = nil
         }
@@ -153,10 +126,6 @@ final class HotkeyManager: ObservableObject {
         hotkeyCaptureCount = max(0, hotkeyCaptureCount - 1)
     }
 
-    // MARK: - Retry
-
-    /// Start a periodic retry that attempts to create the event tap once
-    /// Accessibility permission is granted. Stops automatically on success.
     func startRetryTimer() {
         guard retryTimer == nil else { return }
         hotkeyLog.info("Starting accessibility retry timer (every 3s)")
@@ -183,8 +152,6 @@ final class HotkeyManager: ObservableObject {
         retryTimer = nil
     }
 
-    // MARK: - Event Handling
-
     fileprivate func handleEvent(_ event: CGEvent) -> Bool {
         if hotkeyCaptureCount > 0 {
             return false
@@ -194,18 +161,15 @@ final class HotkeyManager: ObservableObject {
         let flags = event.flags
         let eventType = event.type
 
-        // --- Escape key (keyCode 53) cancels recording when active ---
         if eventType == .keyDown && keyCode == 53 && settings.isRecording {
             hotkeyLog.info("Escape pressed while recording — cancelling")
             onEscapePressed?()
             return true
         }
 
-        // --- Handle fn key separately (only fires flagsChanged, not keyDown/keyUp) ---
         if eventType == .flagsChanged && keyCode == 63 {
             let fnPressed = flags.contains(.maskSecondaryFn)
 
-            // Check if fn is the Toggle Recording hotkey
             if settings.toggleHotkeyKeyCode == 63 && settings.toggleHotkeyModifierFlags == 0 {
                 if fnPressed && !fnKeyDown {
                     fnKeyDown = true
@@ -218,7 +182,6 @@ final class HotkeyManager: ObservableObject {
                 return false
             }
 
-            // Check if fn is the Push to Talk hotkey
             if settings.pttHotkeyKeyCode == 63 && settings.pttHotkeyModifierFlags == 0 {
                 if fnPressed && !fnKeyDown {
                     fnKeyDown = true
@@ -239,16 +202,21 @@ final class HotkeyManager: ObservableObject {
             return false
         }
 
-        // --- Toggle Recording hotkey (keyDown only) ---
-        if eventType == .keyDown && Int(keyCode) == settings.toggleHotkeyKeyCode {
-            if Self.modifiersMatch(flags, required: settings.toggleHotkeyModifierFlags) {
-                hotkeyLog.info("Toggle hotkey pressed (keyCode=\(keyCode))")
-                onToggleHotkeyPressed?()
-                return true
-            }
+        switch ToggleHotkeyPolicy.action(
+            isKeyDown: eventType == .keyDown,
+            matchesShortcut: Int(keyCode) == settings.toggleHotkeyKeyCode && Self.modifiersMatch(flags, required: settings.toggleHotkeyModifierFlags),
+            isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        ) {
+        case .toggle:
+            hotkeyLog.info("Toggle hotkey pressed (keyCode=\(keyCode))")
+            onToggleHotkeyPressed?()
+            return true
+        case .consumeRepeat:
+            return true
+        case .ignore:
+            break
         }
 
-        // --- Push to Talk hotkey (keyDown = start, keyUp = stop) ---
         if Int(keyCode) == settings.pttHotkeyKeyCode && settings.pttHotkeyKeyCode != 63 {
             let modifiersMatch = Self.modifiersMatch(flags, required: settings.pttHotkeyModifierFlags)
             switch PTTHotkeyPolicy.keyAction(
@@ -276,11 +244,9 @@ final class HotkeyManager: ObservableObject {
         return false
     }
 
-    /// Pure logic for modifier matching, exposed for testability.
     static func modifiersMatch(_ eventFlags: CGEventFlags, required: Int) -> Bool {
         let significant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
         if required == 0 {
-            // No modifiers required — match if no significant modifiers are pressed
             return eventFlags.isDisjoint(with: significant)
         }
         let requiredFlags = CGEventFlags(rawValue: UInt64(required))
@@ -288,9 +254,6 @@ final class HotkeyManager: ObservableObject {
     }
 }
 
-// MARK: - Key Code Display Names
-
-/// Converts a key code and modifier flags into a human-readable string (e.g., "⌥ Space", "⌘⇧R")
 func displayNameForHotkey(keyCode: Int, modifierFlags: Int) -> String {
     var parts: [String] = []
 
@@ -306,10 +269,8 @@ func displayNameForHotkey(keyCode: Int, modifierFlags: Int) -> String {
     return parts.joined(separator: " ")
 }
 
-/// Maps common key codes to display names
 func keyCodeName(_ keyCode: Int) -> String {
     switch keyCode {
-    // Letters (QWERTY layout)
     case 0: return "A"
     case 1: return "S"
     case 2: return "D"
@@ -356,7 +317,6 @@ func keyCodeName(_ keyCode: Int) -> String {
     case 45: return "N"
     case 46: return "M"
     case 47: return "."
-    // Special keys
     case 36: return "Return"
     case 48: return "Tab"
     case 49: return "Space"
@@ -389,25 +349,20 @@ func keyCodeName(_ keyCode: Int) -> String {
     }
 }
 
-// MARK: - Global C callback for CGEvent tap
-
 private func hotkeyCallback(
     proxy: CGEventTapProxy,
     type: CGEventType,
     event: CGEvent,
     userInfo: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
-    // Handle tap being disabled by the system
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         if let userInfo = userInfo {
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-            // Reset PTT state — a keyUp may have been missed while the tap was disabled
             if manager.pttKeyDown {
                 manager.pttKeyDown = false
                 manager.fnKeyDown = false
                 manager.onPushToTalkEnded?()
             }
-            // Backoff: if re-enabled too many times in a short window, stop trying
             let now = Date()
             if now.timeIntervalSince(manager.tapReEnableWindowStart) > 10 {
                 manager.tapReEnableCount = 0

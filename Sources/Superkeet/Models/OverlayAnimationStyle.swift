@@ -1,10 +1,5 @@
 import Foundation
 
-/// User-facing recording-overlay style choice.
-///
-/// Persisted as a raw string in `AppSettings.recordingOverlayStyle`, so legacy
-/// values ("mini", "classic", "none") resolve without migration. Unknown or
-/// stale values fall back to `.mini`.
 enum OverlayAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendable {
     case mini
     case classic
@@ -15,12 +10,10 @@ enum OverlayAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendabl
 
     var id: String { rawValue }
 
-    /// Safe resolution of a persisted raw value; invalid entries fall back to mini.
     static func resolve(_ stored: String) -> OverlayAnimationStyle {
         OverlayAnimationStyle(rawValue: stored) ?? .mini
     }
 
-    /// Styles that render an overlay (picker excludes "none" from live preview).
     var showsOverlay: Bool {
         self != .none
     }
@@ -47,7 +40,6 @@ enum OverlayAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendabl
         }
     }
 
-    /// Where the overlay anchors, shown as the card's location chip.
     var locationLabel: String {
         switch self {
         case .mini, .classic: return "Bottom center"

@@ -32,4 +32,25 @@ final class AutoRestartPolicyTests: XCTestCase {
         policy.reset()
         XCTAssertEqual(policy.nextDelay(now: now.addingTimeInterval(2)), 2)
     }
+
+    func testRepeatedShortLivedSuccessfulStartsStillHitRestartLimit() {
+        var policy = AutoRestartPolicy()
+        let now = Date()
+        for (offset, delay) in [(0.0, 2.0), (10.0, 4.0), (20.0, 8.0)] {
+            policy.recordReady(now: now.addingTimeInterval(offset))
+            XCTAssertEqual(policy.nextDelay(now: now.addingTimeInterval(offset + 1)), delay)
+        }
+        policy.recordReady(now: now.addingTimeInterval(30))
+        XCTAssertNil(policy.nextDelay(now: now.addingTimeInterval(31)))
+    }
+
+    func testSustainedHealthyRunResetsBackoff() {
+        var policy = AutoRestartPolicy(window: 60)
+        let now = Date()
+        _ = policy.nextDelay(now: now)
+        _ = policy.nextDelay(now: now.addingTimeInterval(1))
+        policy.recordReady(now: now.addingTimeInterval(2))
+        XCTAssertEqual(policy.nextDelay(now: now.addingTimeInterval(62)), 2)
+        XCTAssertEqual(policy.attemptTimestamps.count, 1)
+    }
 }

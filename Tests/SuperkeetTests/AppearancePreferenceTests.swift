@@ -5,7 +5,6 @@ import AppKit
 final class AppearancePreferenceTests: XCTestCase {
 
     func testRawValuesAreStable() {
-        // Raw values are persisted via @AppStorage, so they must not change.
         XCTAssertEqual(AppearancePreference.system.rawValue, "system")
         XCTAssertEqual(AppearancePreference.light.rawValue, "light")
         XCTAssertEqual(AppearancePreference.dark.rawValue, "dark")

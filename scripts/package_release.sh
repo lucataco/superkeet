@@ -50,11 +50,21 @@ resolve_parakeet_binary() {
     local candidates=()
 
     if [[ -n "$PARAKEET_BINARY_PATH" ]]; then
-        candidates+=("$PARAKEET_BINARY_PATH")
+        if [[ ! -x "$PARAKEET_BINARY_PATH" ]]; then
+            printf 'PARAKEET_BINARY_PATH is not executable: %s\n' "$PARAKEET_BINARY_PATH" >&2
+            return 1
+        fi
+        printf '%s\n' "$PARAKEET_BINARY_PATH"
+        return 0
     fi
 
     if [[ -n "$PARAKEET_OVERRIDE" ]]; then
-        candidates+=("$PARAKEET_OVERRIDE")
+        if [[ ! -x "$PARAKEET_OVERRIDE" ]]; then
+            printf 'PARAKEET_CLI_PATH is not executable: %s\n' "$PARAKEET_OVERRIDE" >&2
+            return 1
+        fi
+        printf '%s\n' "$PARAKEET_OVERRIDE"
+        return 0
     fi
 
     if [[ -n "$PARAKEET_SOURCE_DIR" ]]; then
@@ -81,10 +91,10 @@ resolve_parakeet_binary() {
 }
 
 build_parakeet_if_needed() {
-    if [[ -n "$PARAKEET_SOURCE_DIR" && ! -x "${PARAKEET_SOURCE_DIR}/target/release/parakeet" ]]; then
+    if [[ -n "$PARAKEET_SOURCE_DIR" && -z "$PARAKEET_BINARY_PATH" && -z "$PARAKEET_OVERRIDE" ]]; then
         require_command cargo
         printf '==> Building bundled parakeet from %s...\n' "$PARAKEET_SOURCE_DIR"
-        cargo build --release --bin parakeet --manifest-path "${PARAKEET_SOURCE_DIR}/Cargo.toml"
+        cargo build --release --locked --bin parakeet --manifest-path "${PARAKEET_SOURCE_DIR}/Cargo.toml"
     fi
 }
 
@@ -178,6 +188,10 @@ EOF
 fi
 
 verify_parakeet_architecture "$PARAKEET_BINARY"
+if [[ "$("$PARAKEET_BINARY" protocol-version)" != "1" ]]; then
+    printf 'Bundled engine must support transcript protocol 1 (parakeet-cli v0.1.6 or later).\n' >&2
+    exit 1
+fi
 
 printf '==> Building %s (release)...\n' "$APP_NAME"
 swift build -c release --package-path "$REPO_DIR"

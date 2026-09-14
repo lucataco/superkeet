@@ -1,11 +1,7 @@
 import AppKit
 
-/// Pure geometry for recording-overlay placement. Extracted from the window
-/// controller so anchoring and clamping rules are directly testable.
 enum OverlayGeometry {
 
-    /// Standard bottom anchor: horizontally centered on the screen's usable
-    /// area, lifted from the bottom edge.
     static func bottomCenterOrigin(visibleFrame: NSRect, size: NSSize) -> NSPoint {
         NSPoint(
             x: visibleFrame.midX - size.width / 2,
@@ -13,8 +9,6 @@ enum OverlayGeometry {
         )
     }
 
-    /// Pointer-following anchor: window tracks the pointer horizontally,
-    /// clamped so the whole window stays on the screen.
     static func pointerFollowingOrigin(
         pointer: NSPoint,
         size: NSSize,
@@ -28,20 +22,14 @@ enum OverlayGeometry {
         )
     }
 
-    /// Clamp x so the window stays within the screen frame.
     static func clampedX(_ x: CGFloat, width: CGFloat, screenFrame: NSRect) -> CGFloat {
         min(max(x, screenFrame.minX), screenFrame.maxX - width)
     }
 
-    /// Height of the top menu-bar band (difference between full frame and
-    /// visible frame). On notched MacBooks this band holds the camera notch.
     static func menuBandHeight(screenFrame: NSRect, visibleFrame: NSRect) -> CGFloat {
         max(0, screenFrame.maxY - visibleFrame.maxY)
     }
 
-    /// Whether the screen carries a camera notch. `safeAreaInsets.top > 0` is
-    /// the authoritative signal (macOS 12+); falls back to a band-height
-    /// heuristic when the inset is unavailable.
     static func hasCameraNotch(
         screenFrame: NSRect,
         visibleFrame: NSRect,
@@ -51,8 +39,6 @@ enum OverlayGeometry {
         return menuBandHeight(screenFrame: screenFrame, visibleFrame: visibleFrame) > 30
     }
 
-    /// Notch metrics resolved from the screen's auxiliary top areas.
-    /// When both aux areas exist, the notch is exactly the gap between them.
     struct NotchMetrics {
         let hasNotch: Bool
         let bandHeight: CGFloat
@@ -92,9 +78,6 @@ enum OverlayGeometry {
         )
     }
 
-    /// Top anchor beside the camera notch: inside the menu band, just right of
-    /// the notch's right edge. Falls back to floating just below the menu bar
-    /// on non-notched screens.
     static func islandOrigin(
         size: NSSize,
         screenFrame: NSRect,
@@ -120,11 +103,6 @@ enum OverlayGeometry {
         )
     }
 
-    /// Frame for the wide-notch shelf: spans centered on the notch inside the
-    /// menu band so the content flanks the camera. Returns the frame and the
-    /// gap width the view should leave transparent over the physical notch.
-    /// The window takes the full menu-band height so the pills vertically
-    /// align with the menu text and the notch.
     static func notchShelfLayout(
         size: NSSize,
         screenFrame: NSRect,
@@ -144,8 +122,6 @@ enum OverlayGeometry {
         }
         let gapWidth = metrics.notchWidth > 0 ? metrics.notchWidth + 24 : 0
         let width = max(size.width, gapWidth + 240)
-        // Full band height, anchored to the band's bottom edge (which equals
-        // visibleFrame.maxY on a notched screen).
         let height = metrics.bandHeight
         let y = screenFrame.maxY - height
         let x = clampedX(metrics.notchCenterX - width / 2, width: width, screenFrame: screenFrame)

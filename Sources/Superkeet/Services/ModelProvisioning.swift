@@ -1,14 +1,6 @@
 import Foundation
 import Combine
 
-/// Orchestrates the one-time, on-device speech-model download.
-///
-/// The bundled `parakeet` binary ships inside the app, but the ~670 MB model
-/// weights are downloaded on first run via `parakeet download --progress json`.
-/// This service spawns that command, parses its newline-delimited JSON progress
-/// stream, and publishes a `state` that the onboarding UI renders as a friendly
-/// progress experience. The daemon start path also calls `ensureModelAvailable()`
-/// so the model is provisioned automatically even if onboarding was skipped.
 final class ModelProvisioning: ObservableObject {
     static let shared = ModelProvisioning()
 
@@ -17,27 +9,31 @@ final class ModelProvisioning: ObservableObject {
     private let settings = AppSettings.shared
     private let lock = NSLock()
     private var inFlight: Task<Void, Error>?
+    private let directoryOverride: URL?
+    private let prepareEngineOverride: (() async throws -> String)?
+    private let downloadOverride: ((String, String) async throws -> DownloadOutcome)?
 
-    /// Headroom required before we attempt the INT8 download (~670 MB on disk,
-    /// plus temp files during verification).
     private static let requiredFreeBytes: Int64 = 1_500_000_000
 
-    private init() {
+    init(
+        modelDirectory: URL? = nil,
+        prepareEngine: (() async throws -> String)? = nil,
+        download: ((String, String) async throws -> DownloadOutcome)? = nil
+    ) {
+        directoryOverride = modelDirectory
+        prepareEngineOverride = prepareEngine
+        downloadOverride = download
         refreshInstalledState()
     }
 
-    // MARK: - Presence
-
     var modelDirectoryURL: URL {
-        URL(fileURLWithPath: settings.effectiveModelDirectory, isDirectory: true)
+        directoryOverride ?? URL(fileURLWithPath: settings.effectiveModelDirectory, isDirectory: true)
     }
 
     func isModelInstalled() -> Bool {
         Self.modelExists(at: modelDirectoryURL)
     }
 
-    /// Mirrors `parakeet-cli`'s `download::model_exists`: a usable install needs
-    /// an encoder + decoder pair (FP16, INT8, or legacy FP32) plus vocab + config.
     static func modelExists(at directory: URL) -> Bool {
         let fileManager = FileManager.default
         func has(_ name: String) -> Bool {
@@ -51,13 +47,13 @@ final class ModelProvisioning: ObservableObject {
         return (hasFp16 || hasInt8 || hasFp32) && has("vocab.txt") && has("config.json")
     }
 
-    /// Reconcile published state with what's actually on disk, without
-    /// disturbing an active download.
     @discardableResult
     func refreshInstalledState() -> Bool {
         let installed = isModelInstalled()
         switch state {
-        case .downloading, .verifying:
+        case .checking, .downloading, .verifying:
+            return installed
+        case .failed:
             return installed
         default:
             setState(installed ? .installed : .notInstalled)
@@ -65,15 +61,10 @@ final class ModelProvisioning: ObservableObject {
         }
     }
 
-    // MARK: - Provisioning
-
-    /// Fire-and-forget entry point for UI buttons / onboarding `onAppear`.
     func startDownloadIfNeeded() {
         Task { try? await ensureModelAvailable() }
     }
 
-    /// Force a verify/repair pass even when the model already exists. The CLI
-    /// skips checksum-verified files and re-fetches only corrupted/missing ones.
     func redownload() {
         Task {
             let (task, isCreator) = claimDownloadTask()
@@ -86,8 +77,6 @@ final class ModelProvisioning: ObservableObject {
         }
     }
 
-    /// Cancel an active download, if any. Used when startup is cancelled during
-    /// quit/stop so the app does not wait for a first-run model download to finish.
     func cancelInFlightDownload() {
         lock.lock()
         let task = inFlight
@@ -95,8 +84,6 @@ final class ModelProvisioning: ObservableObject {
         task?.cancel()
     }
 
-    /// Ensure the model is present, downloading it if necessary. Coalesces with
-    /// any in-flight download so onboarding and daemon-start never double-fetch.
     func ensureModelAvailable() async throws {
         if isModelInstalled() {
             setState(.installed)
@@ -112,7 +99,6 @@ final class ModelProvisioning: ObservableObject {
         try await task.value
     }
 
-    /// Synchronous critical section — keeps `NSLock` use out of async contexts.
     private func claimDownloadTask() -> (Task<Void, Error>, Bool) {
         lock.lock()
         defer { lock.unlock() }
@@ -133,60 +119,66 @@ final class ModelProvisioning: ObservableObject {
     private func runDownload() async throws {
         do {
             try Task.checkCancellation()
-            setState(.checking)
+            await MainActor.run { self.setState(.checking) }
 
             if let diskIssue = insufficientDiskSpaceMessage() {
-                fail(diskIssue)
                 throw ModelProvisioningError.message(diskIssue)
             }
 
-            if !FileManager.default.isExecutableFile(atPath: settings.parakeetBinaryPath),
-               settings.canBootstrapDevelopmentParakeet {
-                _ = try await DevelopmentParakeetBootstrap.ensureAvailable(settings: settings)
-            }
-
-            let binaryPath = settings.parakeetBinaryPath
+            let binaryPath = try await prepareEngine()
+            try Task.checkCancellation()
             guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
                 let message = settings.missingParakeetBinaryMessage
-                fail(message)
                 throw ModelProvisioningError.message(message)
             }
 
-            let modelDir = settings.effectiveModelDirectory
-            try? FileManager.default.createDirectory(
+            let modelDir = modelDirectoryURL.path
+            try FileManager.default.createDirectory(
                 atPath: modelDir,
                 withIntermediateDirectories: true
             )
 
-            let outcome = try await runDownloadProcess(binaryPath: binaryPath, modelDir: modelDir)
+            let outcome: DownloadOutcome
+            if let downloadOverride {
+                outcome = try await downloadOverride(binaryPath, modelDir)
+            } else {
+                outcome = try await runDownloadProcess(binaryPath: binaryPath, modelDir: modelDir)
+            }
 
             try Task.checkCancellation()
             guard outcome.exitCode == 0 else {
                 let detail = outcome.errorMessage
                     ?? "The speech model download failed (exit code \(outcome.exitCode))."
-                fail(detail)
                 throw ModelProvisioningError.message(detail)
             }
 
-            setState(.verifying)
+            await MainActor.run { self.setState(.verifying) }
             try Task.checkCancellation()
             guard isModelInstalled() else {
                 let detail = outcome.errorMessage
                     ?? "The speech model download finished, but the files could not be verified. Please try again."
-                fail(detail)
                 throw ModelProvisioningError.message(detail)
             }
 
-            setState(.installed)
+            await MainActor.run { self.setState(.installed) }
         } catch is CancellationError {
-            setState(isModelInstalled() ? .installed : .notInstalled)
+            await MainActor.run { self.setState(self.isModelInstalled() ? .installed : .notInstalled) }
             throw CancellationError()
+        } catch {
+            await MainActor.run { self.fail(error.localizedDescription) }
+            throw error
         }
     }
 
-    // MARK: - Subprocess + NDJSON parsing
+    private func prepareEngine() async throws -> String {
+        if let prepareEngineOverride { return try await prepareEngineOverride() }
+        if settings.canBootstrapDevelopmentParakeet {
+            return try await DevelopmentParakeetBootstrap.ensureAvailable(settings: settings)
+        }
+        return settings.parakeetBinaryPath
+    }
 
-    private struct DownloadOutcome {
+    struct DownloadOutcome {
         let exitCode: Int32
         let errorMessage: String?
     }
@@ -226,7 +218,6 @@ final class ModelProvisioning: ObservableObject {
                     stdoutPipe.fileHandleForReading.readabilityHandler = nil
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-                    // Drain anything buffered after the last readability callback.
                     let remaining = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                     if !remaining.isEmpty {
                         for line in lineBuffer.consume(remaining) {
@@ -319,8 +310,6 @@ final class ModelProvisioning: ObservableObject {
         }
     }
 
-    // MARK: - State helpers
-
     private func updateProgress(_ mutate: @escaping (inout ModelDownloadProgress) -> Void) {
         let apply = {
             var progress: ModelDownloadProgress
@@ -361,7 +350,7 @@ final class ModelProvisioning: ObservableObject {
 
         guard let values = try? probeURL.resourceValues(forKeys: keys),
               let available = values.volumeAvailableCapacityForImportantUsage else {
-            return nil  // Can't determine — let the download try.
+            return nil
         }
 
         if available < Self.requiredFreeBytes {
@@ -383,8 +372,6 @@ final class ModelProvisioning: ObservableObject {
         return file
     }
 }
-
-// MARK: - State model
 
 struct ModelDownloadProgress: Equatable {
     var fileIndex: Int = 0
@@ -441,8 +428,6 @@ enum ModelProvisioningError: LocalizedError {
     }
 }
 
-// MARK: - NDJSON decoding
-
 private struct DownloadEvent: Decodable {
     let type: String
     let file: String?
@@ -454,7 +439,6 @@ private struct DownloadEvent: Decodable {
     let message: String?
 }
 
-/// Accumulates raw stdout bytes and splits them into complete NDJSON lines.
 final class NDJSONLineBuffer {
     private var buffer = Data()
     private let lock = NSLock()
@@ -484,7 +468,6 @@ final class NDJSONLineBuffer {
     }
 }
 
-/// Thread-safe sink for the error message and stderr captured during a download.
 final class DownloadCollector {
     private let lock = NSLock()
     private var _errorMessage: String?
@@ -498,7 +481,6 @@ final class DownloadCollector {
     func appendStderr(_ data: Data) {
         lock.lock()
         stderrData.append(data)
-        // Keep only the tail so a chatty engine can't grow this unbounded.
         if stderrData.count > 8_192 {
             stderrData.removeSubrange(stderrData.startIndex..<(stderrData.endIndex - 8_192))
         }

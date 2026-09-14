@@ -4,24 +4,13 @@ import os.log
 private let developmentBootstrapLog = Logger(subsystem: "com.superkeet.app", category: "DevelopmentParakeetBootstrap")
 
 enum DevelopmentParakeetBootstrap {
-    private static let repositoryURL = "https://github.com/lucataco/parakeet-cli.git"
-    private static let repositoryRef = "v0.1.5"
-
     static func ensureAvailable(settings: AppSettings = .shared) async throws -> String {
-        let currentPath = settings.parakeetBinaryPath
-        if FileManager.default.isExecutableFile(atPath: currentPath) {
-            return currentPath
-        }
-
         guard settings.canBootstrapDevelopmentParakeet else {
             throw DevelopmentParakeetBootstrapError.message(settings.missingParakeetBinaryMessage)
         }
 
-        guard let gitPath = executablePath(named: "git") else {
-            throw DevelopmentParakeetBootstrapError.message(
-                "Superkeet could not build parakeet-cli for swift run because git is not available on PATH. Install Xcode command line tools or set PARAKEET_CLI_PATH to an existing parakeet binary."
-            )
-        }
+        let selection = try DevelopmentEngineLocator.select()
+        guard case .source(let sourceDirectory, let needsClone) = selection else { return selection.binaryURL.path }
 
         guard let cargoPath = executablePath(named: "cargo") else {
             throw DevelopmentParakeetBootstrapError.message(
@@ -29,9 +18,13 @@ enum DevelopmentParakeetBootstrap {
             )
         }
 
-        let sourceDirectory = settings.developmentParakeetSourceDirectory
-        developmentBootstrapLog.info("Preparing development parakeet-cli checkout at \(sourceDirectory.path, privacy: .public)")
-        try await prepareSourceCheckout(gitPath: gitPath, sourceDirectory: sourceDirectory)
+        if needsClone {
+            guard let git = executablePath(named: "git") else {
+                throw DevelopmentParakeetBootstrapError.message("Install git to download the speech engine sources.")
+            }
+            try FileManager.default.createDirectory(at: sourceDirectory.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try await runProcess(executablePath: git, arguments: ["clone", "--depth", "1", "--branch", DevelopmentEngineLocator.repositoryRef, DevelopmentEngineLocator.repositoryURL, sourceDirectory.path])
+        }
 
         developmentBootstrapLog.info("Building development parakeet binary from \(sourceDirectory.path, privacy: .public)")
         try await runProcess(
@@ -39,6 +32,7 @@ enum DevelopmentParakeetBootstrap {
             arguments: [
                 "build",
                 "--release",
+                "--locked",
                 "--bin",
                 "parakeet",
                 "--manifest-path",
@@ -46,7 +40,7 @@ enum DevelopmentParakeetBootstrap {
             ]
         )
 
-        let builtPath = settings.parakeetBinaryPath
+        let builtPath = selection.binaryURL.path
         guard FileManager.default.isExecutableFile(atPath: builtPath) else {
             throw DevelopmentParakeetBootstrapError.message(
                 "Superkeet built parakeet-cli, but could not find the parakeet binary at \(builtPath). Set PARAKEET_CLI_PATH to the built binary and try again."
@@ -54,42 +48,6 @@ enum DevelopmentParakeetBootstrap {
         }
 
         return builtPath
-    }
-
-    private static func prepareSourceCheckout(gitPath: String, sourceDirectory: URL) async throws {
-        let gitDirectory = sourceDirectory.appendingPathComponent(".git", isDirectory: true)
-        if FileManager.default.fileExists(atPath: gitDirectory.path) {
-            try await runProcess(
-                executablePath: gitPath,
-                arguments: ["-C", sourceDirectory.path, "fetch", "--depth", "1", "origin", repositoryRef]
-            )
-            try await runProcess(
-                executablePath: gitPath,
-                arguments: ["-C", sourceDirectory.path, "checkout", "--force", "FETCH_HEAD"]
-            )
-            return
-        }
-
-        if FileManager.default.fileExists(atPath: sourceDirectory.path) {
-            try FileManager.default.removeItem(at: sourceDirectory)
-        }
-
-        try FileManager.default.createDirectory(
-            at: sourceDirectory.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try await runProcess(
-            executablePath: gitPath,
-            arguments: [
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                repositoryRef,
-                repositoryURL,
-                sourceDirectory.path
-            ]
-        )
     }
 
     private static func executablePath(named name: String) -> String? {

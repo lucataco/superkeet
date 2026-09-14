@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// Gradient Island style: a compact pill beside the camera notch carrying a
-/// liquid-glass reactive orb plus a timer. The orb's gradient and scale react
-/// to the aggregate mic level; a morph-in start cue plays when it appears.
 struct GradientIslandOverlay: View {
     @ObservedObject var audioMonitor: AudioLevelMonitor
     let elapsedTime: TimeInterval
@@ -30,7 +27,6 @@ struct GradientIslandOverlay: View {
                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 6)
-        // Start cue: the whole island morphs in with a spring.
         .scaleEffect(appeared ? 1 : 0.3)
         .opacity(appeared ? 1 : 0)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: appeared)
@@ -42,8 +38,6 @@ struct GradientIslandOverlay: View {
     }
 }
 
-/// Liquid-glass orb whose colors sweep through a cyan → warm gradient and
-/// whose glow grows with loudness. Works back to macOS 14 without MeshGradient.
 private struct ReactiveOrbView: View {
     let level: CGFloat
     let isRecording: Bool
@@ -53,7 +47,7 @@ private struct ReactiveOrbView: View {
     }
 
     var body: some View {
-        let hueSweep = 0.75 - 0.35 * clampedLevel   // violet -> warm amber
+        let hueSweep = 0.75 - 0.35 * clampedLevel
         let gradient = LinearGradient(
             gradient: Gradient(colors: [
                 Color(hue: hueSweep, saturation: 0.85, brightness: 1),

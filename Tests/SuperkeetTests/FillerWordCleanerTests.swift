@@ -14,12 +14,12 @@ final class FillerWordCleanerTests: XCTestCase {
     func testRemovesMultipleFillerWords() {
         XCTAssertEqual(
             FillerWordCleaner.clean("So um I was uh thinking about er that"),
-            "So I was thinking about that"
+            "So I was thinking about er that"
         )
     }
 
     func testTextThatIsEntirelyFillerWords() {
-        XCTAssertEqual(FillerWordCleaner.clean("uh um er hmm"), "")
+        XCTAssertEqual(FillerWordCleaner.clean("uh um uhh umm"), "")
     }
 
     func testCaseInsensitivity() {
@@ -42,7 +42,6 @@ final class FillerWordCleanerTests: XCTestCase {
     }
 
     func testDoubleSpaceCleanup() {
-        // After removing a filler word from the middle, double spaces should collapse
         let result = FillerWordCleaner.clean("I  um  think")
         XCTAssertFalse(result.contains("  "), "Result should not contain double spaces")
     }
@@ -52,9 +51,7 @@ final class FillerWordCleanerTests: XCTestCase {
     }
 
     func testAllFillerVariants() {
-        // Test each recognized filler word individually
-        // "ugh" is intentionally not in this list — it is a legitimate interjection.
-        let fillers = ["uh", "uhh", "um", "umm", "er", "err", "hmm", "hmmm", "ah", "ahh"]
+        let fillers = ["uh", "uhh", "um", "umm"]
         for filler in fillers {
             let result = FillerWordCleaner.clean("yes \(filler) okay")
             XCTAssertEqual(result, "yes okay", "Failed to remove filler: \(filler)")
@@ -62,12 +59,20 @@ final class FillerWordCleanerTests: XCTestCase {
     }
 
     func testUghIsPreserved() {
-        // "ugh" is a legitimate interjection, not a filler word to strip.
         XCTAssertEqual(FillerWordCleaner.clean("ugh this is broken"), "ugh this is broken")
     }
 
+    func testMeaningAndCorrectionMarkersArePreserved() {
+        for text in ["Send him to the ER", "orange, err, yellow", "er, no", "hmm, ah, I like that", "A A agreed agreed", "do not turn it off", "orange or yellow"] {
+            XCTAssertEqual(FillerWordCleaner.clean(text), text)
+        }
+    }
+
+    func testFillerRemovalPreservesLineBreaks() {
+        XCTAssertEqual(FillerWordCleaner.clean("first um\nsecond"), "first \nsecond")
+    }
+
     func testDoesNotRemovePartialMatches() {
-        // "umbrella" contains "um" but should not be altered
         XCTAssertEqual(FillerWordCleaner.clean("grab the umbrella"), "grab the umbrella")
     }
 }

@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       parakeet_ref:
-        description: "Pinned parakeet-cli tag or commit"
+        description: "Pinned parakeet-cli protocol-1 tag or commit"
         required: false
         type: string
 
@@ -20,9 +20,7 @@ permissions:
 
 env:
   PARAKEET_REPOSITORY: lucataco/parakeet-cli
-  # Must be >= v0.1.5: the app drives first-run model provisioning via
-  # `parakeet download --progress json`, which was added in v0.1.5.
-  PARAKEET_REF: v0.1.5
+  PARAKEET_REF: v0.1.6
   HOMEBREW_TAP_REPOSITORY: lucataco/homebrew-tap
 
 jobs:
@@ -95,6 +93,9 @@ jobs:
         with:
           workspaces: ".release/parakeet-cli"
 
+      - name: Test pinned session engine
+        run: cargo test --locked --manifest-path .release/parakeet-cli/Cargo.toml
+
       - name: Resolve signing mode
         id: signing
         env:
@@ -126,10 +127,11 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+          if [ -n "$HOMEBREW_TAP_TOKEN" ] && [ "$(GH_TOKEN="$HOMEBREW_TAP_TOKEN" gh api "repos/$HOMEBREW_TAP_REPOSITORY" --jq '.permissions.push' 2>/dev/null)" = "true" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Homebrew tap sync is unavailable: the token is missing, invalid, or lacks push access. Release artifacts will still be published."
           fi
 
       - name: Prepare signing keychain
@@ -262,4 +264,4 @@ jobs:
       - name: Warn when tap sync is disabled
         if: steps.tap.outputs.enabled != 'true'
         run: |
-          echo "HOMEBREW_TAP_TOKEN is not configured, so the Homebrew tap was not updated."
+          echo "::warning::Homebrew tap was not updated. Configure a valid HOMEBREW_TAP_TOKEN with push and pull-request access to the tap repository."

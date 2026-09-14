@@ -1,9 +1,10 @@
 import Foundation
 
-/// A single transcription record stored in history
 struct TranscriptionRecord: Identifiable, Codable {
     let id: UUID
     let text: String
+    let rawText: String?
+    let isPartial: Bool?
     let timestamp: Date
     let durationSeconds: Double
     let wordCount: Int
@@ -20,14 +21,16 @@ struct TranscriptionRecord: Identifiable, Codable {
         timestamp: Date = Date(),
         durationSeconds: Double,
         activeAppName: String,
-        activeAppBundleId: String
+        activeAppBundleId: String,
+        rawText: String? = nil,
+        isPartial: Bool? = nil
     ) {
         self.id = UUID()
         self.text = text
+        self.rawText = rawText
+        self.isPartial = isPartial
         self.timestamp = timestamp
         self.durationSeconds = durationSeconds
-        // Split on any whitespace (tabs, newlines, NBSP, runs of spaces) so
-        // tabs-pasted text and multi-line transcriptions count words correctly.
         self.wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
         self.activeAppName = activeAppName
         self.activeAppBundleId = activeAppBundleId

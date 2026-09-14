@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// Main settings window. Uses a `NavigationSplitView` so the sidebar inherits
-/// the system's translucent (Liquid Glass) material and selection styling on
-/// macOS 26 while degrading gracefully on macOS 14.
 struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .home
 
@@ -70,7 +67,7 @@ struct SettingsView: View {
     private var sidebarFooter: some View {
         VStack(alignment: .leading, spacing: 0) {
             Divider()
-            Text("Version \(Self.appVersion)")
+            Text("Version \(AppVersion.current.shortVersion)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 14)
@@ -78,15 +75,8 @@ struct SettingsView: View {
         }
     }
 
-    private static var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-    }
 }
 
-// MARK: - Shared tab header
-
-/// Large title + subtitle shown at the top of each settings detail pane,
-/// matching the native macOS Settings layout above grouped form sections.
 struct SettingsTabHeader: View {
     let title: String
     let subtitle: String

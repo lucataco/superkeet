@@ -1,14 +1,3 @@
-# SwiftLint configuration for Superkeet
-#
-# Local usage:
-#   brew install swiftlint
-#   swiftlint lint --strict
-#
-# CI runs `swiftlint lint --strict` so any new violation fails the build.
-
-# Rules turned off because the codebase has large view/service files that would
-# require significant decomposition to satisfy. The remaining default rules
-# (force_cast, force_try, opening_brace, etc.) are kept.
 disabled_rules:
   - line_length
   - file_length
@@ -22,7 +11,6 @@ disabled_rules:
   - todo
   - superfluous_disable_command
 
-# Opt into rules that catch real bugs rather than style preferences.
 opt_in_rules:
   - force_unwrapping
   - implicitly_unwrapped_optional

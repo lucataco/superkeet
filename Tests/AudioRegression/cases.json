@@ -1,0 +1,13 @@
+{
+  "provenance": "Synthetic speech rendered by macOS say; not human complaint recordings.",
+  "cases": [
+    {"id": "list-from-five", "spoken": "Five, apples. Six, bananas. Seven, carrots. Eight, dates.", "critical_counts": {"5": 1, "6": 1, "7": 1, "8": 1, "apples": 1, "bananas": 1, "carrots": 1, "dates": 1}, "answer_count": 4},
+    {"id": "auth-versus-off", "spoken": "Configure auth middleware. Turn off the light.", "critical_counts": {"auth": 1, "off": 1}},
+    {"id": "correction-versus-choice", "spoken": "Choose orange, err, yellow. Choose orange or yellow.", "critical_counts": {"err": 1, "or": 1, "orange": 2, "yellow": 2}},
+    {"id": "negations", "spoken": "Do not enable it. Never delete the backup. I cannot agree.", "critical_counts": {"not": 1, "never": 1, "cannot": 1}},
+    {"id": "intentional-like", "spoken": "I like the blue one. It looks like a bird.", "critical_counts": {"like": 2}},
+    {"id": "repeated-answers", "spoken": "A. A. A. Agreed. Agreed.", "critical_counts": {"a": 3, "agreed": 2}, "answer_count": 5},
+    {"id": "immediate-stop", "spoken": "The final word is zebra.", "critical_counts": {"zebra": 1}, "trim_trailing_silence": true},
+    {"id": "ten-minute-session", "spoken": "Agreed. Answer A. Do not turn it off. I like auth middleware.", "critical_counts": {"agreed": 60, "a": 60, "not": 60, "off": 60, "like": 60, "auth": 60}, "repeat": 60, "period_seconds": 10}
+  ]
+}
