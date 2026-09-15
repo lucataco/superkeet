@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-final class ModelProvisioning: ObservableObject {
+final class ModelProvisioning: ObservableObject, @unchecked Sendable {
     static let shared = ModelProvisioning()
 
     @Published private(set) var state: ModelProvisionState = .unknown
@@ -310,8 +310,8 @@ final class ModelProvisioning: ObservableObject {
         }
     }
 
-    private func updateProgress(_ mutate: @escaping (inout ModelDownloadProgress) -> Void) {
-        let apply = {
+    private func updateProgress(_ mutate: @escaping @Sendable (inout ModelDownloadProgress) -> Void) {
+        let apply: @Sendable () -> Void = {
             var progress: ModelDownloadProgress
             if case .downloading(let current) = self.state {
                 progress = current
@@ -439,7 +439,7 @@ private struct DownloadEvent: Decodable {
     let message: String?
 }
 
-final class NDJSONLineBuffer {
+final class NDJSONLineBuffer: @unchecked Sendable {
     private var buffer = Data()
     private let lock = NSLock()
 
@@ -468,7 +468,7 @@ final class NDJSONLineBuffer {
     }
 }
 
-final class DownloadCollector {
+final class DownloadCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var _errorMessage: String?
     private var stderrData = Data()
@@ -496,7 +496,7 @@ final class DownloadCollector {
     }
 }
 
-private final class DownloadCancellationState {
+private final class DownloadCancellationState: @unchecked Sendable {
     private let lock = NSLock()
     private var _isCancelled = false
 

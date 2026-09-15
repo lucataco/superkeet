@@ -5,7 +5,7 @@ import os.log
 
 private let audioLevelLog = Logger(subsystem: "com.superkeet.app", category: "AudioLevelMonitor")
 
-final class AudioLevelMonitor: ObservableObject {
+final class AudioLevelMonitor: ObservableObject, @unchecked Sendable {
     static let shared = AudioLevelMonitor()
 
     @Published private(set) var levels: [Float] = Array(repeating: 0, count: 8)

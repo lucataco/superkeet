@@ -3,7 +3,7 @@ import Foundation
 import ServiceManagement
 import SwiftUI
 
-final class AppSettings: ObservableObject {
+final class AppSettings: ObservableObject, @unchecked Sendable {
     static let shared = AppSettings()
 
     @AppStorage("toggleHotkeyKeyCode") var toggleHotkeyKeyCode: Int = 49
@@ -13,6 +13,10 @@ final class AppSettings: ObservableObject {
     @AppStorage("pttHotkeyKeyCode") var pttHotkeyKeyCode: Int = 63
     @AppStorage("pttHotkeyModifierFlags") var pttHotkeyModifierFlags: Int = 0
     @AppStorage("pttHotkeyDisplayName") var pttHotkeyDisplayName: String = "fn"
+
+    @AppStorage("commandHotkeyKeyCode") var commandHotkeyKeyCode: Int = 49
+    @AppStorage("commandHotkeyModifierFlags") var commandHotkeyModifierFlags: Int = 655360
+    @AppStorage("commandHotkeyDisplayName") var commandHotkeyDisplayName: String = "⌥ ⇧ Space"
 
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("hasVerifiedSetup") var hasVerifiedSetup: Bool = false
@@ -43,8 +47,16 @@ final class AppSettings: ObservableObject {
     @AppStorage("fillerWordRemovalEnabled") var fillerWordRemovalEnabled: Bool = false
     @AppStorage("spokenCorrectionsEnabled") var spokenCorrectionsEnabled: Bool = false
 
+    @AppStorage("actionsEnabled") var actionsEnabled: Bool = false
+    @AppStorage("actionApprovalPolicy") var actionApprovalPolicy: ActionApprovalPolicy = .readOnlyAuto
+    @AppStorage("actionMaxSteps") var actionMaxSteps: Int = 12
+    @AppStorage("actionTimeoutSeconds") var actionTimeoutSeconds: Int = 120
+    @AppStorage("actionAuditEnabled") var actionAuditEnabled: Bool = true
+
     @Published var isRecording: Bool = false
     @Published var isDaemonRunning: Bool = false
+    @Published var isActionSessionActive: Bool = false
+    @Published var actionStatusText: String = ""
     @Published var runtimeIssue: String?
 
     var parakeetBinaryPath: String {
@@ -107,15 +119,9 @@ final class AppSettings: ObservableObject {
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
     }
 
+    @MainActor
     func applyAppearancePreference() {
-        let appearance = appearancePreference.nsAppearance
-        if Thread.isMainThread {
-            NSApp.appearance = appearance
-        } else {
-            DispatchQueue.main.async {
-                NSApp.appearance = appearance
-            }
-        }
+        NSApp.appearance = appearancePreference.nsAppearance
     }
 
     private var isRunningFromAppBundle: Bool {

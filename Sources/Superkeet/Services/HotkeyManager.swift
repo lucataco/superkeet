@@ -4,7 +4,7 @@ import os.log
 
 private let hotkeyLog = Logger(subsystem: "com.superkeet.app", category: "HotkeyManager")
 
-final class HotkeyManager: ObservableObject {
+final class HotkeyManager: ObservableObject, @unchecked Sendable {
     static let shared = HotkeyManager()
 
     @Published var isListening: Bool = false
@@ -13,6 +13,7 @@ final class HotkeyManager: ObservableObject {
     var onToggleHotkeyPressed: (() -> Void)?
     var onPushToTalkStarted: (() -> Void)?
     var onPushToTalkEnded: (() -> Void)?
+    var onCommandHotkeyPressed: (() -> Void)?
     var onEscapePressed: (() -> Void)?
 
     fileprivate var eventTap: CFMachPort?
@@ -38,7 +39,7 @@ final class HotkeyManager: ObservableObject {
     @discardableResult
     func checkAccessibility() -> Bool {
         let trusted = AXIsProcessTrustedWithOptions(
-            [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         )
         self.accessibilityGranted = trusted
         return trusted
@@ -161,8 +162,8 @@ final class HotkeyManager: ObservableObject {
         let flags = event.flags
         let eventType = event.type
 
-        if eventType == .keyDown && keyCode == 53 && settings.isRecording {
-            hotkeyLog.info("Escape pressed while recording — cancelling")
+        if eventType == .keyDown && keyCode == 53 && (settings.isRecording || settings.isActionSessionActive) {
+            hotkeyLog.info("Escape pressed while active — cancelling")
             onEscapePressed?()
             return true
         }
@@ -200,6 +201,23 @@ final class HotkeyManager: ObservableObject {
             }
 
             return false
+        }
+
+        if settings.actionsEnabled, Int(keyCode) == settings.commandHotkeyKeyCode && settings.commandHotkeyKeyCode != 63 {
+            switch ToggleHotkeyPolicy.action(
+                isKeyDown: eventType == .keyDown,
+                matchesShortcut: Self.modifiersMatch(flags, required: settings.commandHotkeyModifierFlags),
+                isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            ) {
+            case .toggle:
+                hotkeyLog.info("Command hotkey pressed (keyCode=\(keyCode))")
+                onCommandHotkeyPressed?()
+                return true
+            case .consumeRepeat:
+                return true
+            case .ignore:
+                break
+            }
         }
 
         switch ToggleHotkeyPolicy.action(

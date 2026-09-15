@@ -4,6 +4,7 @@ import os.log
 
 private let appLog = Logger(subsystem: "com.superkeet.app", category: "AppDelegate")
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarManager = MenuBarManager.shared
     private let parakeetService = ParakeetService.shared
@@ -25,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.syncLaunchAtLoginStatus()
 
         menuBarManager.setup()
+
+        ActionHUDWindowController.shared.start()
 
         setupHotkeys()
 
@@ -55,10 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.menuBarManager.stopPushToTalk()
             }
         }
+        hotkeyManager.onCommandHotkeyPressed = { [weak self] in
+            DispatchQueue.main.async {
+                appLog.info("Command hotkey callback fired")
+                self?.menuBarManager.toggleCommandRecording()
+            }
+        }
         hotkeyManager.onEscapePressed = { [weak self] in
             DispatchQueue.main.async {
                 appLog.info("Escape callback fired — cancelling recording")
                 self?.menuBarManager.cancelRecordingOnly()
+                AgentSessionController.shared.cancel()
             }
         }
     }

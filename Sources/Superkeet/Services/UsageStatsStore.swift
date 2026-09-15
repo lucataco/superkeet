@@ -3,7 +3,7 @@ import os.log
 
 private let usageStatsLog = Logger(subsystem: "com.superkeet.app", category: "UsageStatsStore")
 
-final class UsageStatsStore: ObservableObject {
+final class UsageStatsStore: ObservableObject, @unchecked Sendable {
     static let shared = UsageStatsStore()
 
     private static let assumedTypingWPM = 40.0

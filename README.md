@@ -26,6 +26,7 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - Visible transcription completion, partial-result warnings, and last/original transcript recovery
 - App-scoped phrase replacements and opt-in spoken correction commands with undo
 - Setup diagnostics for microphone access, engine presence, runtime directory, and daemon state
+- Optional **Actions Mode** that turns a spoken command into tool calls on local MCP servers, planned on-device and approved by you
 - 100% local transcription via `parakeet`
 
 ## Requirements
@@ -35,6 +36,7 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - ~1.3 GB free disk space and a network connection for the one-time speech-model download on first run
 - Full Xcode recommended for `swift run`
 - For building from source: a runnable `parakeet` binary available at build time so `./install.sh` can embed it in the app bundle (end users installing a release do **not** need this — the engine is bundled and the model is downloaded automatically)
+- Actions Mode additionally requires macOS 26 with Apple Intelligence enabled
 
 ### Permissions
 
@@ -153,18 +155,21 @@ for command grammar, audio regression results and release dependencies.
 
 ### Shortcuts
 
-Superkeet supports two configurable shortcuts:
+Superkeet supports three configurable shortcuts:
 
 - Toggle Recording: press once to start, press again to stop
 - Push to Talk: hold to record, release to stop
+- Command Mode: speak a task for Actions Mode (visible when Actions Mode is
+  enabled)
 
-Shortcut configuration lives in `Settings > Setup`.
+Shortcut configuration lives in `Settings > General`. Escape cancels a recording
+or an in-flight action.
 
 ### Settings
 
-The settings window currently has four tabs:
+The settings window currently has five tabs:
 
-- Setup
+- General
   - readiness checks
   - shortcut configuration
   - daemon diagnostics
@@ -172,12 +177,19 @@ The settings window currently has four tabs:
   - overlay style
   - clipboard and auto-paste behavior
   - local history retention
+- Actions
+  - Actions Mode enablement and on-device model availability
+  - MCP server management (add, edit, test, reconnect)
+  - approval policy, step budget, timeout, and the local action log
 - Advanced
   - audio device selection
   - model directory override
   - idle daemon timeout
 - About
   - version and credits
+
+See [Actions Mode](docs/actions-mode.md) for the MCP setup, safety model, and
+known limitations.
 
 ### Output behavior
 
@@ -196,6 +208,8 @@ This keeps the default flow safer and simpler. Auto-paste is available, but it d
 | App settings | `UserDefaults` |
 | History | `~/Library/Application Support/Superkeet/history.json` |
 | Usage stats | `~/Library/Application Support/Superkeet/usage-stats.json` |
+| MCP servers | `~/Library/Application Support/Superkeet/mcp-servers.json` |
+| Action audit log | `~/Library/Application Support/Superkeet/action-audit.log` |
 | Bundled engine | `Superkeet.app/Contents/Resources/bin/parakeet` |
 | Runtime directory | `~/Library/Caches/com.superkeet.app/Runtime/` |
 | Daemon socket | `~/Library/Caches/com.superkeet.app/Runtime/parakeet.sock` |
@@ -244,6 +258,9 @@ superkeet/
 - The public app bundle only launches the embedded `parakeet` binary.
 - Transcript history is off by default and must be enabled explicitly.
 - History is stored locally with restricted file permissions.
+- Actions Mode is off by default, plans on-device, and asks before running each
+  tool call. MCP servers are local processes you configure; the action log is
+  local and redacts sensitive-looking fields.
 - There is no in-app auto-update channel.
 
 ## Troubleshooting

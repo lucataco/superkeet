@@ -75,24 +75,35 @@ final class NDJSONLineBufferTests: XCTestCase {
         let queue = DispatchQueue(label: "test", attributes: .concurrent)
         let expectation = expectation(description: "all chunks consumed")
         let chunkCount = 100
-        var totalLines: Int = 0
-        var completed: Int = 0
-        let lock = NSLock()
+        let box = CounterBox()
 
         for index in 0..<chunkCount {
             queue.async {
                 let lines = buffer.consume(Data("line\(index)\n".utf8))
-                lock.lock()
-                totalLines += lines.count
-                completed += 1
-                if completed == chunkCount {
+                box.record(lineCount: lines.count, target: chunkCount) {
                     expectation.fulfill()
                 }
-                lock.unlock()
             }
         }
 
         wait(for: [expectation], timeout: 5)
-        XCTAssertEqual(totalLines, chunkCount)
+        XCTAssertEqual(box.totalLines, chunkCount)
+    }
+}
+
+private final class CounterBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var totalLines = 0
+    private var completed = 0
+
+    func record(lineCount: Int, target: Int, fulfill: () -> Void) {
+        lock.lock()
+        totalLines += lineCount
+        completed += 1
+        let isComplete = completed == target
+        lock.unlock()
+        if isComplete {
+            fulfill()
+        }
     }
 }

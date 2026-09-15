@@ -4,6 +4,7 @@ import Combine
 
 private let pointerTrackingInterval: TimeInterval = 1.0 / 15.0
 
+@MainActor
 final class RecordingOverlayWindowController: ObservableObject {
     static let shared = RecordingOverlayWindowController()
 
@@ -16,13 +17,13 @@ final class RecordingOverlayWindowController: ObservableObject {
 
     private init() {}
 
-    static let compactSize = NSSize(width: 260, height: 50)
-    static let expandedSize = NSSize(width: 310, height: 94)
-    static let cursorWaveformSize = NSSize(width: 248, height: 44)
-    static let gradientIslandSize = NSSize(width: 200, height: 40)
-    static let notchShelfSize = NSSize(width: 560, height: 32)
+    nonisolated static let compactSize = NSSize(width: 260, height: 50)
+    nonisolated static let expandedSize = NSSize(width: 310, height: 94)
+    nonisolated static let cursorWaveformSize = NSSize(width: 248, height: 44)
+    nonisolated static let gradientIslandSize = NSSize(width: 200, height: 40)
+    nonisolated static let notchShelfSize = NSSize(width: 560, height: 32)
 
-    static func size(for style: OverlayAnimationStyle) -> NSSize {
+    nonisolated static func size(for style: OverlayAnimationStyle) -> NSSize {
         switch style {
         case .mini: return compactSize
         case .classic: return expandedSize
@@ -33,7 +34,7 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
     }
 
-    static func windowLevel(for style: OverlayAnimationStyle) -> NSWindow.Level {
+    nonisolated static func windowLevel(for style: OverlayAnimationStyle) -> NSWindow.Level {
         switch style {
         case .gradientIsland, .notchShelf:
             return .statusBar
@@ -42,7 +43,7 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
     }
 
-    static func ignoresMouseEvents(for style: OverlayAnimationStyle) -> Bool {
+    nonisolated static func ignoresMouseEvents(for style: OverlayAnimationStyle) -> Bool {
         style == .gradientIsland || style == .notchShelf
     }
 
@@ -198,31 +199,33 @@ final class RecordingOverlayWindowController: ObservableObject {
         }
     }
 
-    static func shouldTrackPointer(for style: OverlayAnimationStyle) -> Bool {
+    nonisolated static func shouldTrackPointer(for style: OverlayAnimationStyle) -> Bool {
         style == .cursorWaveform
     }
 
     private func startPointerTrackingIfNeeded(for style: OverlayAnimationStyle) {
         guard Self.shouldTrackPointer(for: style) else { return }
         let size = Self.size(for: style)
-        pointerTracker = Timer.scheduledTimer(withTimeInterval: pointerTrackingInterval, repeats: true) { [weak self] timer in
-            guard let self = self, let window = self.window else { return }
-            guard Self.shouldTrackPointer(for: AppSettings.shared.overlayAnimationStyle) else {
-                timer.invalidate()
-                self.pointerTracker = nil
-                return
-            }
-            let pointer = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
-            guard let screen else { return }
-            let origin = OverlayGeometry.pointerFollowingOrigin(
-                pointer: pointer,
-                size: size,
-                screenFrame: screen.frame,
-                visibleFrame: screen.visibleFrame
-            )
-            if origin != window.frame.origin {
-                window.setFrameOrigin(origin)
+        pointerTracker = Timer.scheduledTimer(withTimeInterval: pointerTrackingInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self = self, let window = self.window else { return }
+                guard Self.shouldTrackPointer(for: AppSettings.shared.overlayAnimationStyle) else {
+                    self.pointerTracker?.invalidate()
+                    self.pointerTracker = nil
+                    return
+                }
+                let pointer = NSEvent.mouseLocation
+                let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
+                guard let screen else { return }
+                let origin = OverlayGeometry.pointerFollowingOrigin(
+                    pointer: pointer,
+                    size: size,
+                    screenFrame: screen.frame,
+                    visibleFrame: screen.visibleFrame
+                )
+                if origin != window.frame.origin {
+                    window.setFrameOrigin(origin)
+                }
             }
         }
     }

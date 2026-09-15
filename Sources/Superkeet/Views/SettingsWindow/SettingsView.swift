@@ -6,6 +6,7 @@ struct SettingsView: View {
     enum SettingsTab: String, CaseIterable, Identifiable {
         case home = "General"
         case output = "Output & Privacy"
+        case actions = "Actions"
         case recording = "Advanced"
         case about = "About"
 
@@ -15,6 +16,7 @@ struct SettingsView: View {
             switch self {
             case .home: return "gearshape"
             case .output: return "arrow.right.doc.on.clipboard"
+            case .actions: return "wand.and.stars"
             case .recording: return "slider.horizontal.3"
             case .about: return "info.circle"
             }
@@ -47,6 +49,8 @@ struct SettingsView: View {
             RecordingTabView()
         case .output:
             OutputTabView()
+        case .actions:
+            ActionsTabView()
         case .about:
             AboutTabView()
         }

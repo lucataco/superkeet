@@ -23,15 +23,29 @@ struct OnboardingView: View {
         case model
         case accessibility
         case output
+        case actions
         case ready
+    }
 
-        var next: OnboardingStep? {
-            OnboardingStep(rawValue: rawValue + 1)
-        }
+    private var visibleSteps: [OnboardingStep] {
+        OnboardingStep.allCases.filter { $0 != .actions || actionsFeatureAvailable }
+    }
 
-        var previous: OnboardingStep? {
-            OnboardingStep(rawValue: rawValue - 1)
-        }
+    private func step(after step: OnboardingStep) -> OnboardingStep? {
+        guard let index = visibleSteps.firstIndex(of: step), index + 1 < visibleSteps.count else { return nil }
+        return visibleSteps[index + 1]
+    }
+
+    private func step(before step: OnboardingStep) -> OnboardingStep? {
+        guard let index = visibleSteps.firstIndex(of: step), index > 0 else { return nil }
+        return visibleSteps[index - 1]
+    }
+
+    private var actionsFeatureAvailable: Bool {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) { return true }
+        #endif
+        return false
     }
 
     private enum OnboardingOutputMode {
@@ -48,6 +62,7 @@ struct OnboardingView: View {
                 case .model: modelStep
                 case .accessibility: accessibilityStep
                 case .output: outputStep
+                case .actions: actionsStep
                 case .ready: readyStep
                 }
             }
@@ -57,7 +72,7 @@ struct OnboardingView: View {
 
             HStack {
                 HStack(spacing: 6) {
-                    ForEach(OnboardingStep.allCases, id: \.self) { step in
+                    ForEach(visibleSteps, id: \.self) { step in
                         Circle()
                             .fill(step == currentStep ? Color.accentColor : Color.primary.opacity(0.15))
                             .frame(width: 8, height: 8)
@@ -66,14 +81,14 @@ struct OnboardingView: View {
 
                 Spacer()
 
-                if currentStep.previous != nil {
+                if step(before: currentStep) != nil {
                     Button("Back") {
                         withAnimation { goToPreviousStep() }
                     }
                     .buttonStyle(.bordered)
                 }
 
-                if currentStep.next != nil {
+                if step(after: currentStep) != nil {
                     Button("Continue") {
                         withAnimation { goToNextStep() }
                     }
@@ -179,12 +194,12 @@ struct OnboardingView: View {
     }
 
     private func goToNextStep() {
-        guard let next = currentStep.next else { return }
+        guard let next = step(after: currentStep) else { return }
         currentStep = next
     }
 
     private func goToPreviousStep() {
-        guard let previous = currentStep.previous else { return }
+        guard let previous = step(before: currentStep) else { return }
         currentStep = previous
     }
 
@@ -598,6 +613,77 @@ struct OnboardingView: View {
         .padding(24)
     }
 
+    private var actionsStep: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 24) {
+                ZStack {
+                    Circle()
+                        .fill(Color.purple.opacity(0.12))
+                        .frame(width: 80, height: 80)
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 40))
+                        .foregroundColor(.purple)
+                }
+
+                VStack(spacing: 8) {
+                    Text("Actions Mode (Optional)")
+                        .font(.title)
+                        .fontWeight(.bold)
+
+                    Text("Speak a task and let Superkeet plan and run tools from local MCP servers — with your approval before anything changes.")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: $settings.actionsEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Enable Actions Mode")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Adds a Command Mode shortcut alongside dictation")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .disabled(!AppleIntelligenceAvailability.current.isAvailable)
+
+                    availabilityNote
+                }
+                .padding(14)
+                .background(Color.primary.opacity(0.03))
+                .cornerRadius(10)
+                .frame(maxWidth: 440)
+            }
+
+            Spacer()
+
+            Text("Actions Mode keeps reasoning on-device with Apple Intelligence. Configure MCP servers later in Settings > Actions.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 8)
+        }
+        .padding(24)
+    }
+
+    @ViewBuilder
+    private var availabilityNote: some View {
+        let availability = AppleIntelligenceAvailability.current
+        if !availability.isAvailable {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text(availability.detail)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
     private var readyStep: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 24) {
@@ -639,6 +725,14 @@ struct OnboardingView: View {
                         description: "Hold to record, release to stop",
                         displayName: settings.pttHotkeyDisplayName
                     )
+
+                    if settings.actionsEnabled {
+                        shortcutRow(
+                            title: "Command Mode",
+                            description: "Speak a task for Actions Mode",
+                            displayName: settings.commandHotkeyDisplayName
+                        )
+                    }
 
                     shortcutRow(
                         title: "Cancel Recording",
@@ -871,10 +965,12 @@ struct OnboardingView: View {
     private func startAccessibilityPolling() {
         stopAccessibilityPolling()
         accessibilityPollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            let granted = hotkeyManager.checkAccessibilitySilently()
-            if granted != accessibilityGranted {
-                accessibilityGranted = granted
-                syncAccessibilityState(granted)
+            MainActor.assumeIsolated {
+                let granted = hotkeyManager.checkAccessibilitySilently()
+                if granted != accessibilityGranted {
+                    accessibilityGranted = granted
+                    syncAccessibilityState(granted)
+                }
             }
         }
     }

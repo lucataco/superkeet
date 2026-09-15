@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-final class PhraseReplacementStore: ObservableObject {
+final class PhraseReplacementStore: ObservableObject, @unchecked Sendable {
     static let shared = PhraseReplacementStore()
     @Published private(set) var rules: [PhraseReplacement] = []
     @Published private(set) var errorMessage: String?

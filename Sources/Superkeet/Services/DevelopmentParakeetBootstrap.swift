@@ -110,7 +110,7 @@ enum DevelopmentParakeetBootstrapError: LocalizedError {
     }
 }
 
-private final class BootstrapProcessOutput {
+private final class BootstrapProcessOutput: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
 

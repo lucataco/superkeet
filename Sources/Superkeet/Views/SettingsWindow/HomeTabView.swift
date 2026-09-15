@@ -17,10 +17,12 @@ struct HomeTabView: View {
     @State private var loginItemError: String?
     @State private var shortcutError: String?
     @State private var showAllChecks = false
+    @State private var diagnosticsCopied = false
 
     enum EditingHotkey {
         case toggle
         case pushToTalk
+        case command
     }
 
     var body: some View {
@@ -238,6 +240,27 @@ struct HomeTabView: View {
                 onCancel: { editingHotkey = nil }
             )
         }
+
+        if settings.actionsEnabled {
+            HotkeyRow(
+                title: "Command Mode",
+                description: "Speak a task for Actions Mode, then approve tool calls",
+                displayName: settings.commandHotkeyDisplayName,
+                isEditing: editingHotkey == .command,
+                onClickBadge: {
+                    editingHotkey = editingHotkey == .command ? nil : .command
+                }
+            )
+
+            if editingHotkey == .command {
+                InteractiveHotkeyRecorder(
+                    onRecord: { keyCode, modifiers, name in
+                        assignCommandHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
+                    },
+                    onCancel: { editingHotkey = nil }
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -251,6 +274,14 @@ struct HomeTabView: View {
                 Button("Run Diagnostics") {
                     parakeetService.refreshDiagnostics()
                     refreshReadiness()
+                }
+
+                Button("Copy Diagnostics") {
+                    DiagnosticsExporter.copyToClipboard()
+                    diagnosticsCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        diagnosticsCopied = false
+                    }
                 }
 
                 Button(settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon") {
@@ -275,6 +306,12 @@ struct HomeTabView: View {
                 Text(issue)
                     .font(.caption)
                     .foregroundColor(.orange)
+            }
+
+            if diagnosticsCopied {
+                Text("Diagnostics copied to the clipboard.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             DisclosureGroup("Diagnostic details") {
@@ -523,7 +560,7 @@ struct HomeTabView: View {
     }
 
     private func assignToggleHotkey(keyCode: Int, modifiers: Int, name: String) {
-        guard validateShortcutDoesNotMatchPushToTalk(keyCode: keyCode, modifiers: modifiers) else { return }
+        guard validateShortcut(keyCode: keyCode, modifiers: modifiers, excluding: .toggle) else { return }
 
         settings.toggleHotkeyKeyCode = keyCode
         settings.toggleHotkeyModifierFlags = modifiers
@@ -533,7 +570,7 @@ struct HomeTabView: View {
     }
 
     private func assignPushToTalkHotkey(keyCode: Int, modifiers: Int, name: String) {
-        guard validateShortcutDoesNotMatchToggle(keyCode: keyCode, modifiers: modifiers) else { return }
+        guard validateShortcut(keyCode: keyCode, modifiers: modifiers, excluding: .pushToTalk) else { return }
 
         settings.pttHotkeyKeyCode = keyCode
         settings.pttHotkeyModifierFlags = modifiers
@@ -542,41 +579,50 @@ struct HomeTabView: View {
         editingHotkey = nil
     }
 
-    private func validateShortcutDoesNotMatchPushToTalk(keyCode: Int, modifiers: Int) -> Bool {
-        validateShortcut(
-            keyCode: keyCode,
-            modifiers: modifiers,
-            againstKeyCode: settings.pttHotkeyKeyCode,
-            againstModifiers: settings.pttHotkeyModifierFlags
-        )
+    private func assignCommandHotkey(keyCode: Int, modifiers: Int, name: String) {
+        guard validateShortcut(keyCode: keyCode, modifiers: modifiers, excluding: .command) else { return }
+
+        settings.commandHotkeyKeyCode = keyCode
+        settings.commandHotkeyModifierFlags = modifiers
+        settings.commandHotkeyDisplayName = name
+        shortcutError = nil
+        editingHotkey = nil
     }
 
-    private func validateShortcutDoesNotMatchToggle(keyCode: Int, modifiers: Int) -> Bool {
-        validateShortcut(
-            keyCode: keyCode,
-            modifiers: modifiers,
-            againstKeyCode: settings.toggleHotkeyKeyCode,
-            againstModifiers: settings.toggleHotkeyModifierFlags
-        )
+    private enum HotkeySlot {
+        case toggle
+        case pushToTalk
+        case command
     }
 
-    private func validateShortcut(
-        keyCode: Int,
-        modifiers: Int,
-        againstKeyCode: Int,
-        againstModifiers: Int
-    ) -> Bool {
-        guard !hotkeyAssignmentsConflict(
-            firstKeyCode: keyCode,
-            firstModifiers: modifiers,
-            secondKeyCode: againstKeyCode,
-            secondModifiers: againstModifiers
-        ) else {
-            shortcutError = "Toggle Recording and Push to Talk cannot use the same shortcut."
+    private func assignedShortcuts(excluding slot: HotkeySlot) -> [(keyCode: Int, modifiers: Int)] {
+        var shortcuts: [(keyCode: Int, modifiers: Int)] = []
+        if slot != .toggle {
+            shortcuts.append((settings.toggleHotkeyKeyCode, settings.toggleHotkeyModifierFlags))
+        }
+        if slot != .pushToTalk {
+            shortcuts.append((settings.pttHotkeyKeyCode, settings.pttHotkeyModifierFlags))
+        }
+        if settings.actionsEnabled, slot != .command {
+            shortcuts.append((settings.commandHotkeyKeyCode, settings.commandHotkeyModifierFlags))
+        }
+        return shortcuts
+    }
+
+    private func validateShortcut(keyCode: Int, modifiers: Int, excluding slot: HotkeySlot) -> Bool {
+        let conflict = assignedShortcuts(excluding: slot).contains { assigned in
+            hotkeyAssignmentsConflict(
+                firstKeyCode: keyCode,
+                firstModifiers: modifiers,
+                secondKeyCode: assigned.keyCode,
+                secondModifiers: assigned.modifiers
+            )
+        }
+        guard !conflict else {
+            shortcutError = "Each shortcut must be unique."
             editingHotkey = nil
             return false
         }
-
         return true
     }
 
@@ -933,9 +979,9 @@ private struct InteractiveHotkeyRecorder: View {
 
     @MainActor
     private final class RecorderState: ObservableObject {
-        var eventMonitor: Any?
-        var flagsMonitor: Any?
-        var pendingRecord: DispatchWorkItem?
+        nonisolated(unsafe) var eventMonitor: Any?
+        nonisolated(unsafe) var flagsMonitor: Any?
+        nonisolated(unsafe) var pendingRecord: DispatchWorkItem?
         var isActive = false
 
         deinit {

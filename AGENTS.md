@@ -7,11 +7,11 @@ This file provides guidance to AI coding agents working on the Superkeet codebas
 ```bash
 swift build                 # debug build
 swift build -c release      # release build
-swift test                  # run all tests (86 tests)
+swift test                  # run all tests
 swiftlint lint --strict     # lint (must be zero violations)
 ```
 
-All three must pass before committing changes.
+All of these must pass before committing changes.
 
 ## Project Structure
 
@@ -53,6 +53,10 @@ scripts/                    # Release packaging + Homebrew cask update
 2. `swift build`
 3. `swift build -c release`
 4. `swift test`
+5. `python3 -m unittest discover -s scripts -p 'test_*.py'`
+
+CI and the release workflow both run on the `macos-26` runner so the
+Foundation Models (Actions Mode) code path is compiled in.
 
 ## Release Flow
 

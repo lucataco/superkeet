@@ -3,7 +3,7 @@ import os.log
 
 private let historyLog = Logger(subsystem: "com.superkeet.app", category: "HistoryStore")
 
-final class HistoryStore: ObservableObject {
+final class HistoryStore: ObservableObject, @unchecked Sendable {
     static let shared = HistoryStore()
     private static let maxRecords = 1000
 

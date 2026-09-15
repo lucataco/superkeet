@@ -5,7 +5,7 @@ import os.log
 
 private let parakeetLog = Logger(subsystem: "com.superkeet.app", category: "ParakeetService")
 
-final class ParakeetService: ObservableObject {
+final class ParakeetService: ObservableObject, @unchecked Sendable {
     static let shared = ParakeetService()
     private static let startupPollIntervalNanoseconds: UInt64 = 100_000_000
     private static let startupTimeoutNanoseconds: UInt64 = 20_000_000_000
@@ -41,6 +41,7 @@ final class ParakeetService: ObservableObject {
     private var recordingDuration: TimeInterval = 0
     private var completionTimeout: DispatchWorkItem?
     private var startRequestPending = false
+    private var commandModeArmed = false
     private var idleShutdownTask: DispatchWorkItem?
     private let lifecycleLock = NSLock()
     private var startTask: Task<Void, Error>?
@@ -394,6 +395,18 @@ final class ParakeetService: ObservableObject {
     }
 
     @MainActor
+    func armCommandMode() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        commandModeArmed = true
+    }
+
+    @MainActor
+    func disarmCommandMode() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        commandModeArmed = false
+    }
+
+    @MainActor
     func startRecording() async -> Bool {
         guard daemonState == .idle, outputGate.sessionID == nil, !startRequestPending else { return false }
         startRequestPending = true
@@ -461,6 +474,7 @@ final class ParakeetService: ObservableObject {
     @MainActor
     func cancelRecording() {
         guard let sessionID = outputGate.sessionID else { return }
+        commandModeArmed = false
         outputGate.close()
         completionTimeout?.cancel()
         recordingStartTime = nil
@@ -532,7 +546,7 @@ final class ParakeetService: ObservableObject {
         return try? JSONDecoder().decode(SocketResponseEnvelope.self, from: data)
     }
 
-    private func sendSocketCommand(_ command: String, sessionID: String? = nil, completion: ((String) -> Void)? = nil) {
+    private func sendSocketCommand(_ command: String, sessionID: String? = nil, completion: (@Sendable (String) -> Void)? = nil) {
         Task { [weak self] in
             let response = await self?.sendSocketCommandAsync(command, sessionID: sessionID)
             completion?(response ?? "")
@@ -696,7 +710,18 @@ final class ParakeetService: ObservableObject {
         dispatchPrecondition(condition: .onQueue(.main))
         let raw = event.text ?? ""
         let partial = event.isPartial && !raw.isEmpty
-        if !raw.isEmpty { processTranscription(raw, isPartial: partial) }
+        let shouldRunCommand = commandModeArmed && !partial && !raw.isEmpty
+        commandModeArmed = false
+        if !raw.isEmpty {
+            if shouldRunCommand {
+                lastRawTranscription = raw
+                lastTranscription = raw
+                canUndoTextChanges = false
+                AgentSessionController.shared.handleCommand(raw)
+            } else {
+                processTranscription(raw, isPartial: partial)
+            }
+        }
         if partial {
             let detail = event.message ?? "\(event.failedSegments ?? 0) failed segments, \(event.droppedSamples ?? 0) dropped samples"
             sessionStatus = "Partial transcript — \(detail)"
@@ -704,6 +729,8 @@ final class ParakeetService: ObservableObject {
             settings.runtimeIssue = sessionStatus
         } else if event.status == "error" || (event.isPartial && raw.isEmpty) {
             return failSession(event.message ?? "Transcription failed.")
+        } else if shouldRunCommand {
+            sessionStatus = "Working on it…"
         } else {
             sessionStatus = raw.isEmpty ? "No speech detected" : "Transcription complete"
         }
@@ -770,6 +797,7 @@ final class ParakeetService: ObservableObject {
     @MainActor
     private func failSession(_ message: String) {
         dispatchPrecondition(condition: .onQueue(.main))
+        commandModeArmed = false
         sessionStatus = "Transcription failed"
         lastUserFacingError = message
         settings.runtimeIssue = message
@@ -988,7 +1016,8 @@ final class ParakeetService: ObservableObject {
         var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         let result = proc_pidpath(pid, &buffer, UInt32(buffer.count))
         guard result > 0 else { return nil }
-        return String(cString: buffer)
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(bytes: bytes, encoding: .utf8)
     }
 
     private func diagnosticSummary(readiness: AppReadinessReport) -> String {

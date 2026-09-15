@@ -1,6 +1,6 @@
 import Foundation
 
-final class DebouncedStoreWriter<Snapshot> {
+final class DebouncedStoreWriter<Snapshot: Sendable>: @unchecked Sendable {
     typealias SaveResult = Result<URL?, Error>
 
     private let queue: DispatchQueue

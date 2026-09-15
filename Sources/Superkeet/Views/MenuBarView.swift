@@ -5,6 +5,7 @@ import os.log
 
 private let menuBarLog = Logger(subsystem: "com.superkeet.app", category: "MenuBar")
 
+@MainActor
 final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     static let shared = MenuBarManager()
 
@@ -20,10 +21,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var pttSessionActive: Bool = false
     private var recordingStateCancellable: AnyCancellable?
     private var sessionStatusCancellable: AnyCancellable?
-    private var statusClearTask: DispatchWorkItem?
+    private var actionStateCancellable: AnyCancellable?
 
     func setup() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Superkeet")
@@ -52,13 +53,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         sessionStatusCancellable = parakeetService.$sessionStatus
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in self?.showSessionStatus(status) }
+
+        actionStateCancellable = settings.$isActionSessionActive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] active in self?.updateMenuBarIconForAction(active: active) }
     }
 
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
         let statusText: String
-        if parakeetService.daemonState == .transcribing {
+        if settings.isActionSessionActive {
+            statusText = settings.actionStatusText.isEmpty ? "Working on it…" : settings.actionStatusText
+        } else if parakeetService.daemonState == .transcribing {
             statusText = "Transcribing…"
         } else if settings.isRecording {
             statusText = "Recording..."
@@ -89,6 +96,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        if settings.isActionSessionActive {
+            let stopItem = NSMenuItem(title: "Stop Action", action: #selector(stopAction), keyEquivalent: "")
+            stopItem.target = self
+            stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: "Stop Action")
+            menu.addItem(stopItem)
+            menu.addItem(NSMenuItem.separator())
+        }
+
         if settings.isRecording {
             let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecording), keyEquivalent: "")
             stopItem.target = self
@@ -109,6 +124,13 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         addRecoveryItems(to: menu)
+
+        if settings.actionsEnabled {
+            let commandItem = NSMenuItem(title: "Ask Superkeet…", action: #selector(askSuperkeet), keyEquivalent: "")
+            commandItem.target = self
+            commandItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "Ask Superkeet")
+            menu.addItem(commandItem)
+        }
 
         let historyItem = NSMenuItem(title: "History", action: #selector(openHistory), keyEquivalent: "h")
         historyItem.target = self
@@ -163,22 +185,20 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         parakeetService.undoLastTextChanges()
     }
 
+    @MainActor
+    @objc private func askSuperkeet() {
+        toggleCommandRecording()
+    }
+
     private func showSessionStatus(_ status: String) {
         dispatchPrecondition(condition: .onQueue(.main))
-        statusClearTask?.cancel()
         guard let button = statusItem?.button else { return }
-        let isPartial = status.hasPrefix("Partial transcript")
-        button.title = status == "Ready" || status == "Recording…" ? "" : " " + (isPartial ? "Partial transcript" : status)
+        button.title = ""
         button.toolTip = status
         button.setAccessibilityLabel("Superkeet: \(status)")
         NSAccessibility.post(element: button, notification: .announcementRequested, userInfo: [
             .announcement: status, .priority: NSAccessibilityPriorityLevel.high.rawValue
         ])
-        if status == "Transcription complete" || status == "No speech detected" || status == "Recording cancelled" {
-            let task = DispatchWorkItem { [weak button] in button?.title = "" }
-            statusClearTask = task
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: task)
-        }
     }
 
     @MainActor
@@ -204,16 +224,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             })
         } catch {
             menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription)")
+            parakeetService.disarmCommandMode()
             guard recordingStart.isCurrent(requestID) else { return }
             teardownRecordingUI()
             return
         }
 
         guard recordingStart.isCurrent(requestID) else {
+            parakeetService.disarmCommandMode()
             if started { parakeetService.cancelRecording() }
             return
         }
         guard started else {
+            parakeetService.disarmCommandMode()
             teardownRecordingUI()
             return
         }
@@ -397,6 +420,30 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
+    func updateMenuBarIconForAction(active: Bool) {
+        guard !settings.isRecording else { return }
+        if active {
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemPurple])
+            if let image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "Superkeet - Working")?
+                .withSymbolConfiguration(config) {
+                image.size = NSSize(width: 18, height: 18)
+                image.isTemplate = false
+                statusItem?.button?.image = image
+            }
+            statusItem?.button?.contentTintColor = nil
+        } else {
+            let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Superkeet")
+            image?.size = NSSize(width: 18, height: 18)
+            statusItem?.button?.image = image
+            statusItem?.button?.contentTintColor = nil
+        }
+    }
+
+    @MainActor
+    @objc private func stopAction() {
+        AgentSessionController.shared.cancel()
+    }
+
     @MainActor
     func toggleRecording() {
         if settings.isRecording {
@@ -433,5 +480,28 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     func cancelRecordingOnly() {
         guard settings.isRecording || recordingRequested else { return }
         cancelRecording()
+    }
+
+    @MainActor
+    func toggleCommandRecording() {
+        switch CommandModeTogglePolicy.action(
+            actionsEnabled: settings.actionsEnabled,
+            isRecording: settings.isRecording,
+            recordingRequested: recordingRequested,
+            agentActive: AgentSessionController.shared.phase.isActive
+        ) {
+        case .ignore:
+            return
+        case .stop:
+            if settings.isRecording {
+                stopRecording()
+            } else {
+                cancelRecording()
+            }
+        case .start:
+            parakeetService.armCommandMode()
+            pttSessionActive = false
+            startRecording()
+        }
     }
 }

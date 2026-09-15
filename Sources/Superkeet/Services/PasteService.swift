@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 import Carbon
 
-final class PasteService {
+final class PasteService: @unchecked Sendable {
     static let shared = PasteService()
 
     struct Environment {
@@ -16,7 +16,7 @@ final class PasteService {
             return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
         }
         var sendPaste: () -> Bool = { PasteService.simulatePaste() }
-        var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
+        var schedule: (TimeInterval, @escaping @Sendable () -> Void) -> Void = { delay, action in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
         }
         var reportIssue: (String) -> Void = { AppSettings.shared.runtimeIssue = $0 }

@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -9,11 +9,15 @@ let package = Package(
     products: [
         .executable(name: "Superkeet", targets: ["Superkeet"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.11.0")
+    ],
     targets: [
         .executableTarget(
             name: "Superkeet",
-            dependencies: [],
+            dependencies: [
+                .product(name: "MCP", package: "swift-sdk")
+            ],
             path: "Sources/Superkeet"
         ),
         .testTarget(
@@ -21,5 +25,6 @@ let package = Package(
             dependencies: ["Superkeet"],
             path: "Tests/SuperkeetTests"
         )
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

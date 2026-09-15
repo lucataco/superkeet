@@ -10,6 +10,7 @@ enum AppReadinessIssue: String {
     case runtimeDirectory
     case accessibility
     case architecture
+    case appleIntelligence
 
     var detail: String {
         switch self {
@@ -27,6 +28,8 @@ enum AppReadinessIssue: String {
             return "Accessibility enables global shortcuts and automatic paste."
         case .architecture:
             return "Superkeet's bundled speech engine is built for Apple Silicon. An Intel Mac cannot run it."
+        case .appleIntelligence:
+            return "Actions Mode needs macOS 26 with Apple Intelligence enabled."
         }
     }
 }
@@ -127,6 +130,10 @@ enum AppReadiness {
 
         if !HotkeyManager.shared.checkAccessibilitySilently() {
             issues.append(.accessibility)
+        }
+
+        if settings.actionsEnabled, !AppleIntelligenceAvailability.current.isAvailable {
+            issues.append(.appleIntelligence)
         }
 
         return AppReadinessReport(issues: issues, diagnostics: diagnostics)

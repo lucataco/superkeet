@@ -18,12 +18,15 @@ Security issues include but are not limited to:
 - Privilege escalation through the global hotkey event tap or auto-paste
   functionality
 - Unsafe handling of transcript history or usage stats on disk
+- Unsafe handling of MCP server configuration, tool arguments, or the local
+  action audit log (for example, redaction bypass or unexpected process launch)
 - Code-signing or notarization bypass in the release pipeline
 
 ## Out of Scope
 
 - The bundled `parakeet-cli` engine — report issues there to
   [lucataco/parakeet-cli](https://github.com/lucataco/parakeet-cli)
+- Third-party MCP servers you configure, and the permissions they request
 - Behavior that requires physical access to an unlocked Mac
 
 ## Disclosure
