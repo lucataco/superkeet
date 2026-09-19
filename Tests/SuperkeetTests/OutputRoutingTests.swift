@@ -3,122 +3,35 @@ import XCTest
 
 final class OutputRoutingTests: XCTestCase {
 
-    func testOutputRoutingDecisionMatrix() {
-        struct Case {
-            let name: String
-            let clipboard: Bool
-            let autoPaste: Bool
-            let history: Bool
-            let expected: OutputRoutingDecision
+    func testEveryTakeIsCopiedToTheClipboard() {
+        // There is no configuration that strands text inside the app.
+        for keep in [false, true] {
+            for paste in [false, true] {
+                for history in [false, true] {
+                    let decision = OutputRouting.decision(
+                        keepOnClipboardAfterPaste: keep, autoPasteEnabled: paste, saveHistoryEnabled: history
+                    )
+                    XCTAssertTrue(decision.shouldCopyToClipboard, "keep=\(keep) paste=\(paste) history=\(history)")
+                    XCTAssertEqual(decision.shouldAutoPaste, paste)
+                    XCTAssertEqual(decision.shouldSaveHistory, history)
+                }
+            }
         }
+    }
 
-        let cases = [
-            Case(
-                name: "all disabled",
-                clipboard: false,
-                autoPaste: false,
-                history: false,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: false,
-                    shouldAutoPaste: false,
-                    shouldSaveHistory: false,
-                    shouldKeepClipboardAfterPaste: false
-                )
-            ),
-            Case(
-                name: "history only",
-                clipboard: false,
-                autoPaste: false,
-                history: true,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: false,
-                    shouldAutoPaste: false,
-                    shouldSaveHistory: true,
-                    shouldKeepClipboardAfterPaste: false
-                )
-            ),
-            Case(
-                name: "clipboard only",
-                clipboard: true,
-                autoPaste: false,
-                history: false,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: true,
-                    shouldAutoPaste: false,
-                    shouldSaveHistory: false,
-                    shouldKeepClipboardAfterPaste: true
-                )
-            ),
-            Case(
-                name: "clipboard and history",
-                clipboard: true,
-                autoPaste: false,
-                history: true,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: true,
-                    shouldAutoPaste: false,
-                    shouldSaveHistory: true,
-                    shouldKeepClipboardAfterPaste: true
-                )
-            ),
-            Case(
-                name: "auto-paste only",
-                clipboard: false,
-                autoPaste: true,
-                history: false,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: true,
-                    shouldAutoPaste: true,
-                    shouldSaveHistory: false,
-                    shouldKeepClipboardAfterPaste: false
-                )
-            ),
-            Case(
-                name: "auto-paste and history",
-                clipboard: false,
-                autoPaste: true,
-                history: true,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: true,
-                    shouldAutoPaste: true,
-                    shouldSaveHistory: true,
-                    shouldKeepClipboardAfterPaste: false
-                )
-            ),
-            Case(
-                name: "auto-paste with clipboard",
-                clipboard: true,
-                autoPaste: true,
-                history: false,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: true,
-                    shouldAutoPaste: true,
-                    shouldSaveHistory: false,
-                    shouldKeepClipboardAfterPaste: true
-                )
-            ),
-            Case(
-                name: "all enabled",
-                clipboard: true,
-                autoPaste: true,
-                history: true,
-                expected: OutputRoutingDecision(
-                    shouldCopyToClipboard: true,
-                    shouldAutoPaste: true,
-                    shouldSaveHistory: true,
-                    shouldKeepClipboardAfterPaste: true
-                )
-            )
-        ]
-
-        for testCase in cases {
-            let decision = OutputRouting.decision(
-                clipboardCopyEnabled: testCase.clipboard,
-                autoPasteEnabled: testCase.autoPaste,
-                saveHistoryEnabled: testCase.history
-            )
-
-            XCTAssertEqual(decision, testCase.expected, testCase.name)
-        }
+    func testClipboardIsOnlyRestoredWhenAutoPasteIsOnAndKeepIsOff() {
+        XCTAssertFalse(
+            OutputRouting.decision(keepOnClipboardAfterPaste: false, autoPasteEnabled: true, saveHistoryEnabled: false)
+                .shouldKeepClipboardAfterPaste
+        )
+        XCTAssertTrue(
+            OutputRouting.decision(keepOnClipboardAfterPaste: true, autoPasteEnabled: true, saveHistoryEnabled: false)
+                .shouldKeepClipboardAfterPaste
+        )
+        // Without auto-paste there is no paste to restore after; the transcript simply stays copied.
+        XCTAssertTrue(
+            OutputRouting.decision(keepOnClipboardAfterPaste: false, autoPasteEnabled: false, saveHistoryEnabled: false)
+                .shouldKeepClipboardAfterPaste
+        )
     }
 }

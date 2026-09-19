@@ -34,7 +34,7 @@ final class PasteServiceTests: XCTestCase {
         func deliver(target: pid_t? = 42, autoPaste: Bool = true) {
             let deliveries = self.deliveries
             service.deliverText("transcript", decision: OutputRouting.decision(
-                clipboardCopyEnabled: !autoPaste, autoPasteEnabled: autoPaste, saveHistoryEnabled: false
+                keepOnClipboardAfterPaste: false, autoPasteEnabled: autoPaste, saveHistoryEnabled: false
             ), targetProcessIdentifier: target, onDelivered: { deliveries.append($0) })
         }
 

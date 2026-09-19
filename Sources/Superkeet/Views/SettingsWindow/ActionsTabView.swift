@@ -77,28 +77,13 @@ struct ActionsTabView: View {
                     } label: {
                         rowLabel("Approval", settings.actionApprovalPolicy.subtitle)
                     }
-                    Stepper(
-                        "Maximum steps: \(settings.actionMaxSteps)",
-                        value: $settings.actionMaxSteps,
-                        in: 1...50
-                    )
-                    Stepper(
-                        "Tool timeout: \(settings.actionTimeoutSeconds)s",
-                        value: $settings.actionTimeoutSeconds,
-                        in: 15...600,
-                        step: 15
-                    )
-                    Stepper(
-                        "Command deadline: \(settings.actionRunDeadlineSeconds)s",
-                        value: $settings.actionRunDeadlineSeconds,
-                        in: 30...900,
-                        step: 30
-                    )
                     Toggle(isOn: $settings.actionAuditEnabled) {
                         rowLabel("Keep Action Log", "Record tool calls locally for review")
                     }
                 } header: {
                     Text("Safety")
+                } footer: {
+                    Text("Step, timeout, and deadline limits are under Advanced.")
                 }
 
                 Section {

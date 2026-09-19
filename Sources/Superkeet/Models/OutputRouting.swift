@@ -8,16 +8,19 @@ struct OutputRoutingDecision: Equatable {
 }
 
 enum OutputRouting {
+    /// The clipboard is the floor: every take is copied so text can never be stranded inside the
+    /// app. `keepOnClipboardAfterPaste` only matters with auto-paste, where turning it off restores
+    /// whatever the user had copied before the paste.
     static func decision(
-        clipboardCopyEnabled: Bool,
+        keepOnClipboardAfterPaste: Bool,
         autoPasteEnabled: Bool,
         saveHistoryEnabled: Bool
     ) -> OutputRoutingDecision {
         OutputRoutingDecision(
-            shouldCopyToClipboard: clipboardCopyEnabled || autoPasteEnabled,
+            shouldCopyToClipboard: true,
             shouldAutoPaste: autoPasteEnabled,
             shouldSaveHistory: saveHistoryEnabled,
-            shouldKeepClipboardAfterPaste: clipboardCopyEnabled
+            shouldKeepClipboardAfterPaste: !autoPasteEnabled || keepOnClipboardAfterPaste
         )
     }
 }

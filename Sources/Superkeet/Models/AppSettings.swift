@@ -42,6 +42,8 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     @AppStorage("appearancePreference") var appearancePreference: AppearancePreference = .system
 
     @AppStorage("autoPasteEnabled") var autoPasteEnabled: Bool = false
+    /// With auto-paste on, leave the transcript on the clipboard after pasting (off restores the
+    /// previous clipboard). Every take is copied regardless; see `OutputRouting`.
     @AppStorage("clipboardCopyEnabled") var clipboardCopyEnabled: Bool = true
     @AppStorage("saveHistoryEnabled") var saveHistoryEnabled: Bool = false
     @AppStorage("fillerWordRemovalEnabled") var fillerWordRemovalEnabled: Bool = false

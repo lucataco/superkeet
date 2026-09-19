@@ -862,7 +862,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         UsageStatsStore.shared.record(wordCount: record.wordCount, durationSeconds: duration)
 
         let outputDecision = OutputRouting.decision(
-            clipboardCopyEnabled: settings.clipboardCopyEnabled,
+            keepOnClipboardAfterPaste: settings.clipboardCopyEnabled,
             autoPasteEnabled: settings.autoPasteEnabled,
             saveHistoryEnabled: settings.saveHistoryEnabled
         )

@@ -11,88 +11,52 @@ struct OutputTabView: View {
         VStack(spacing: 0) {
             SettingsTabHeader(
                 title: "Output & Privacy",
-                subtitle: "Transcribe, copy to clipboard, and keep automatic paste and saved history opt-in."
+                subtitle: "Every transcript is copied to the clipboard. Automatic paste and saved history are opt-in."
             )
 
             Form {
-                Section("Last Transcript & Recovery") {
-                    LastTranscriptView()
-                }
-                Section {
-                    LazyVGrid(
-                        columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
-                        alignment: .leading,
-                        spacing: 12
-                    ) {
-                        ForEach(OverlayAnimationStyle.allCases) { style in
-                            VisualizationOption(
-                                title: style.title,
-                                description: style.subtitle,
-                                icon: style.symbolName,
-                                location: style.locationLabel,
-                                isSelected: settings.overlayAnimationStyle == style
-                            ) {
-                                settings.recordingOverlayStyle = style.rawValue
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                } header: {
-                    Text("Recording Overlay")
-                } footer: {
-                    Text("Choose how the recording overlay appears while you're speaking.")
-                }
-
-                Section {
-                    Picker(selection: $settings.captureSoundStyle) {
-                        ForEach(CaptureSoundStyle.allCases) { style in
-                            Label(style.title, systemImage: style.symbolName).tag(style.rawValue)
-                        }
-                    } label: {
-                        rowLabel("Recording Sounds", "Start and stop cues while recording")
-                    }
-                } header: {
-                    Text("Sound Cues")
-                }
-
                 Section {
                     settingToggle(
                         isOn: $settings.fillerWordRemovalEnabled,
                         title: "Remove Filler Words",
-                        subtitle: "Remove ‘uh’ and ‘um’; preserve er, err, hmm, ah, like, and ER"
-                    )
-                    settingToggle(
-                        isOn: $settings.clipboardCopyEnabled,
-                        title: "Copy to Clipboard",
-                        subtitle: "Copy each transcription so you can paste it where you want"
+                        subtitle: "Drop ‘uh’ and ‘um’ from transcripts"
                     )
                     settingToggle(
                         isOn: $settings.spokenCorrectionsEnabled,
                         title: "Spoken Correction Commands",
-                        subtitle: "Interpret standalone ‘scratch that’, ‘replace orange with yellow’, and ‘undo last correction’ clauses within this recording"
+                        subtitle: "Say ‘scratch that’, ‘replace X with Y’, or ‘undo last correction’ as its own sentence"
                     )
                 } header: {
                     Text("Transcription")
                 } footer: {
-                    Text("Commands are off by default and must be separated by punctuation or a line break. ‘Scratch that’ removes the previous clause. Replacements require one unambiguous earlier match. Natural er/err/or stays literal. Copy Original or Undo Text Changes recovers the recognizer’s output.")
+                    Text("Commands must stand alone, separated by punctuation or a pause. The original transcript is always recoverable from the menu bar.")
                 }
-
-                PhraseReplacementsView()
 
                 Section {
                     settingToggle(
                         isOn: $settings.autoPasteEnabled,
                         title: "Paste Automatically",
-                        subtitle: "Paste into the previous app after transcription"
+                        subtitle: "Paste into the app you were using when you started recording"
                     )
+                    if settings.autoPasteEnabled {
+                        settingToggle(
+                            isOn: $settings.clipboardCopyEnabled,
+                            title: "Keep Transcript on Clipboard",
+                            subtitle: "Off restores whatever you had copied before the paste"
+                        )
+                    }
                 } header: {
-                    Text("Auto-Paste")
+                    Text("Output")
                 } footer: {
-                    Label(
-                        "Best for power users. Depends on Accessibility access and can paste into the wrong place if focus changes.",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .foregroundStyle(.orange)
+                    if settings.autoPasteEnabled {
+                        Label(
+                            "Needs Accessibility access. If focus changes before the paste lands, the text stays on the clipboard.",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .foregroundStyle(.orange)
+                    } else {
+                        Text("Every transcript is copied to the clipboard, so ⌘V pastes it wherever you are.")
+                    }
                 }
 
                 Section {
@@ -145,25 +109,21 @@ struct OutputTabView: View {
                         if settings.saveHistoryEnabled {
                             behaviorRow("Then", detail: "Text is saved in local history")
                         }
-                        if settings.clipboardCopyEnabled {
-                            behaviorRow("Then", detail: "Text is copied to clipboard")
-                        }
+                        behaviorRow("Then", detail: "Text is copied to the clipboard")
                         if settings.autoPasteEnabled {
                             behaviorRow("Then", detail: "Text is pasted (⌘V) into the previously active app")
-                        }
-                        if !settings.clipboardCopyEnabled && !settings.autoPasteEnabled {
-                            behaviorRow(
-                                "Note",
-                                detail: settings.saveHistoryEnabled
-                                    ? "Text will only appear in History. Enable clipboard copy for an easier default flow."
-                                    : "The last transcript remains available here and in the menu bar until the next result or app exit."
-                            )
-                            .foregroundColor(.orange)
+                            if !settings.clipboardCopyEnabled {
+                                behaviorRow("Finally", detail: "Your previous clipboard is restored")
+                            }
                         }
                     }
                     .padding(.vertical, 2)
                 } header: {
                     Text("What Happens After Recording")
+                }
+
+                Section("Last Transcript & Recovery") {
+                    LastTranscriptView()
                 }
             }
             .formStyle(.grouped)
@@ -212,55 +172,5 @@ struct OutputTabView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-    }
-}
-
-private struct VisualizationOption: View {
-    let title: String
-    let description: String
-    let icon: String
-    var location: String?
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 20))
-                    .foregroundColor(isSelected ? .accentColor : .secondary)
-                    .frame(height: 24)
-
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(isSelected ? .primary : .secondary)
-
-                Text(description)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-
-                if let location {
-                    Text(location.uppercased())
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.primary.opacity(0.06))
-                        .clipShape(Capsule())
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .padding(.horizontal, 8)
-            .background(isSelected ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.03))
-            .cornerRadius(10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.primary.opacity(0.08), lineWidth: 1.5)
-            )
-        }
-        .buttonStyle(.plain)
     }
 }

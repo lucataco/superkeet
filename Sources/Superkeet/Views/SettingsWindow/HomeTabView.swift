@@ -20,6 +20,7 @@ struct HomeTabView: View {
     @State private var shortcutError: String?
     @State private var showAllChecks = false
     @State private var diagnosticsCopied = false
+    @State private var confirmRedownload = false
 
     enum EditingHotkey {
         case toggle
@@ -87,6 +88,8 @@ struct HomeTabView: View {
                     }
                 }
 
+                RecordingFeedbackSection()
+
                 Section {
                     diagnosticsContent
                 } header: {
@@ -105,19 +108,16 @@ struct HomeTabView: View {
             // Re-probe only on state transitions, not on every download progress tick.
             refreshReadiness()
         }
+        .alert("Re-download the speech model?", isPresented: $confirmRedownload) {
+            Button("Re-download") { modelProvisioning.redownload() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces the installed model with a fresh ~670 MB download. Only needed if transcription is failing with a corrupt-model error.")
+        }
     }
 
     private var checks: [SetupCheck] {
         [
-            SetupCheck(
-                title: "Setup verification",
-                detail: settings.hasVerifiedSetup
-                    ? "Startup test passed."
-                    : "Run the daemon once to verify.",
-                isComplete: settings.hasVerifiedSetup,
-                buttonTitle: settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon",
-                action: { runSetupVerification() }
-            ),
             SetupCheck(
                 title: "Microphone access",
                 detail: microphoneDetail,
@@ -127,10 +127,10 @@ struct HomeTabView: View {
             ),
             SetupCheck(
                 title: "Speech engine",
-                detail: readiness.diagnostics.engineBinaryExists ? "Bundled engine found." : "Bundled engine not found.",
-                isComplete: !readiness.issues.contains(.engine),
-                buttonTitle: "Refresh",
-                action: { refreshReadiness() }
+                detail: readiness.diagnostics.engineBinaryExists
+                    ? "Bundled engine found."
+                    : "Bundled engine not found. Reinstall Superkeet to restore it.",
+                isComplete: !readiness.issues.contains(.engine)
             ),
             SetupCheck(
                 title: "Speech model",
@@ -143,32 +143,26 @@ struct HomeTabView: View {
                 title: "Input device",
                 detail: inputDeviceDetail,
                 isComplete: !readiness.issues.contains(.inputDevice),
-                buttonTitle: "Refresh",
+                buttonTitle: readiness.issues.contains(.inputDevice) ? "Check Again" : nil,
                 action: { refreshReadiness() }
             ),
             SetupCheck(
                 title: "Runtime directory",
                 detail: runtimeDirectoryDetail,
-                isComplete: !readiness.issues.contains(.runtimeDirectory),
-                buttonTitle: "Refresh",
-                action: { refreshReadiness() }
+                isComplete: !readiness.issues.contains(.runtimeDirectory)
             ),
             SetupCheck(
                 title: "Accessibility access",
                 detail: accessibilityDetail,
                 isComplete: !readiness.issues.contains(.accessibility),
-                buttonTitle: "Open Settings",
+                buttonTitle: readiness.issues.contains(.accessibility) ? "Open Settings" : nil,
                 action: { openAccessibilitySettings() }
             )
         ]
     }
 
-    private var requiredChecks: [SetupCheck] {
-        checks.filter { !$0.isOptional }
-    }
-
     private var incompleteRequiredChecks: [SetupCheck] {
-        requiredChecks.filter { !$0.isComplete }
+        checks.filter { !$0.isComplete }
     }
 
     private var allChecksComplete: Bool {
@@ -177,7 +171,7 @@ struct HomeTabView: View {
 
     @ViewBuilder
     private var checklistHeader: some View {
-        let canToggle = allChecksComplete || incompleteRequiredChecks.count < requiredChecks.count
+        let canToggle = allChecksComplete || incompleteRequiredChecks.count < checks.count
         HStack {
             Text("Setup Checklist")
             Spacer()
@@ -195,7 +189,7 @@ struct HomeTabView: View {
     @ViewBuilder
     private var checklistContent: some View {
         if allChecksComplete {
-            ReadyRow(count: requiredChecks.count)
+            ReadyRow(count: checks.count)
             if showAllChecks {
                 checkRows(checks)
             }
@@ -270,11 +264,7 @@ struct HomeTabView: View {
     private var diagnosticsContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Button("Refresh Status") {
-                    refreshReadiness()
-                }
-
-                Button("Run Diagnostics") {
+                Button("Refresh") {
                     parakeetService.refreshDiagnostics()
                     refreshReadiness()
                 }
@@ -287,19 +277,8 @@ struct HomeTabView: View {
                     }
                 }
 
-                Button(settings.isDaemonRunning ? "Restart Daemon" : "Start Daemon") {
-                    Task {
-                        do {
-                            if settings.isDaemonRunning {
-                                try await parakeetService.restartDaemon()
-                            } else {
-                                try await parakeetService.startDaemon()
-                            }
-                        } catch {
-                            homeTabLog.error("Failed to start/restart daemon: \(error.localizedDescription)")
-                        }
-                        refreshReadiness()
-                    }
+                Button(settings.isDaemonRunning ? "Restart Speech Engine" : "Start Speech Engine") {
+                    runSetupVerification()
                 }
             }
             .buttonStyle(.bordered)
@@ -382,7 +361,9 @@ struct HomeTabView: View {
                 return issue
             }
             if isReadyForSelectedConfiguration {
-                return "Run the daemon once to finish setup."
+                return parakeetService.daemonState == .starting
+                    ? "Starting the speech engine…"
+                    : "Start the speech engine from Diagnostics below to finish setup."
             }
             if configuredOutputBlocked {
                 return "Grant Accessibility to enable \(selectedOutputModeName)."
@@ -455,9 +436,9 @@ struct HomeTabView: View {
 
     private var accessibilityDetail: String {
         if settings.autoPasteEnabled {
-            return "Required for \(selectedOutputModeName) and shortcuts."
+            return "Needed for global shortcuts and \(selectedOutputModeName)."
         }
-        return "Optional. Enables global shortcuts and auto-paste."
+        return "Needed for global shortcuts. Without it, record from the menu bar."
     }
 
     private var microphoneDetail: String {
@@ -475,12 +456,12 @@ struct HomeTabView: View {
         }
     }
 
-    private var microphoneButtonTitle: String {
+    private var microphoneButtonTitle: String? {
         switch readiness.diagnostics.microphoneStatus {
         case .notDetermined:
             return "Request Access"
         case .authorized:
-            return "Refresh"
+            return nil
         default:
             return "Open Settings"
         }
@@ -532,7 +513,7 @@ struct HomeTabView: View {
 
     private func downloadModel() {
         if modelProvisioning.state.isInstalled {
-            modelProvisioning.redownload()
+            confirmRedownload = true
         } else {
             modelProvisioning.startDownloadIfNeeded()
         }
@@ -731,8 +712,8 @@ private struct SetupRow: View {
     let title: String
     let detail: String
     let isComplete: Bool
-    let buttonTitle: String
-    let action: () -> Void
+    var buttonTitle: String?
+    var action: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -751,9 +732,11 @@ private struct SetupRow: View {
 
             Spacer()
 
-            Button(buttonTitle, action: action)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+            if let buttonTitle {
+                Button(buttonTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
     }
 }
@@ -763,9 +746,8 @@ private struct SetupCheck: Identifiable {
     let title: String
     let detail: String
     let isComplete: Bool
-    var isOptional: Bool = false
-    let buttonTitle: String
-    let action: () -> Void
+    var buttonTitle: String?
+    var action: () -> Void = {}
 }
 
 private struct ReadyRow: View {
@@ -871,9 +853,6 @@ private struct InteractiveHotkeyRecorder: View {
             HStack {
                 Button("⌥ Space") {
                     applyHotkey(keyCode: 49, modifiers: Int(CGEventFlags.maskAlternate.rawValue), name: "⌥ Space")
-                }
-                Button("fn") {
-                    applyHotkey(keyCode: 63, modifiers: 0, name: "fn")
                 }
                 Button("⌃ Space") {
                     applyHotkey(keyCode: 49, modifiers: Int(CGEventFlags.maskControl.rawValue), name: "⌃ Space")
