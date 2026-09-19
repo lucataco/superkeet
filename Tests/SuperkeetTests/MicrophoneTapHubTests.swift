@@ -34,6 +34,12 @@ final class MicrophoneTapHubTests: XCTestCase {
             handler = nil
         }
 
+        private(set) var prewarmedDevices: [String] = []
+
+        func prewarm(deviceName: String) {
+            prewarmedDevices.append(deviceName)
+        }
+
         func emit(_ buffer: AVAudioPCMBuffer) {
             handler?(buffer, AVAudioTime(sampleTime: 0, atRate: 48_000))
         }
@@ -62,6 +68,28 @@ final class MicrophoneTapHubTests: XCTestCase {
         while !condition() && Date() < deadline {
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
+    }
+
+    func testPrewarmBuildsTheGraphWithoutStartingCapture() throws {
+        let capture = FakeCapture()
+        let hub = makeHub(capture: capture, device: "USB Microphone")
+
+        hub.prewarm()
+        XCTAssertEqual(capture.prewarmedDevices, ["USB Microphone"])
+        XCTAssertEqual(capture.startCount, 0, "prewarm must not open the microphone")
+        XCTAssertFalse(hub.isRunning)
+
+        let subscription = try hub.subscribe { _, _ in }
+        hub.prewarm()
+        XCTAssertEqual(capture.prewarmedDevices.count, 1, "no prewarm while capture is running")
+        hub.unsubscribe(subscription)
+    }
+
+    func testPrewarmRespectsMicrophoneAuthorization() {
+        let capture = FakeCapture()
+        let hub = makeHub(capture: capture, authorized: false)
+        hub.prewarm()
+        XCTAssertTrue(capture.prewarmedDevices.isEmpty)
     }
 
     func testFirstSubscriberStartsCaptureAndLastOneStopsIt() throws {

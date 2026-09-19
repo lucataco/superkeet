@@ -1,9 +1,17 @@
 import Foundation
 import AppKit
-import os.log
+import Combine
+import os
 
 private let hotkeyLog = Logger(subsystem: "com.superkeet.app", category: "HotkeyManager")
 
+/// Global shortcut listener.
+///
+/// The CGEvent tap is a synchronous filter for every keystroke on the system, so it runs on its
+/// own thread: a busy main thread (settings UI, readiness probes, SwiftUI layout) must never delay
+/// typing in other apps or trip macOS's tap-timeout watchdog. The tap thread reads a lock-protected
+/// `HotkeyConfig` snapshot, runs the pure `HotkeyDecider`, returns the consume verdict immediately,
+/// and hops only the resulting actions back to the main thread.
 final class HotkeyManager: ObservableObject, @unchecked Sendable {
     static let shared = HotkeyManager()
 
@@ -16,20 +24,32 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
     var onCommandHotkeyPressed: (() -> Void)?
     var onEscapePressed: (@MainActor () -> Void)?
 
-    fileprivate var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
     private let settings = AppSettings.shared
     private var retryTimer: Timer?
     private var retainedSelf: Unmanaged<HotkeyManager>?
-
-    fileprivate var pttKeyDown: Bool = false
-    fileprivate var fnKeyDown: Bool = false
-    fileprivate var tapReEnableCount: Int = 0
-    fileprivate var tapReEnableWindowStart: Date = .distantPast
+    private var tapThread: EventTapThread?
+    private var configObservers: Set<AnyCancellable> = []
     private var hotkeyCaptureCount: Int = 0
+
+    // Shared with the tap thread.
+    private let decider = OSAllocatedUnfairLock(initialState: HotkeyDecider())
+    private let config = OSAllocatedUnfairLock(initialState: HotkeyConfig.placeholder)
+    private let tapPort = NSLock()
+    private var eventTapStorage: CFMachPort?
+    private let tapHealth = OSAllocatedUnfairLock(initialState: TapHealth())
+
+    private struct TapHealth: Sendable {
+        var reEnableCount = 0
+        var windowStart = Date.distantPast
+    }
 
     private init() {
         self.accessibilityGranted = checkAccessibilitySilently()
+    }
+
+    private var eventTap: CFMachPort? {
+        get { tapPort.withLock { eventTapStorage } }
+        set { tapPort.withLock { eventTapStorage = newValue } }
     }
 
     func checkAccessibilitySilently() -> Bool {
@@ -59,6 +79,9 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
             return
         }
 
+        installConfigObservers()
+        refreshConfigSnapshot()
+
         let eventMask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
@@ -82,14 +105,14 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
 
         self.retainedSelf = retained
         self.eventTap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        self.runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        self.tapReEnableCount = 0
-        self.tapReEnableWindowStart = .distantPast
+        tapHealth.withLock { $0 = TapHealth() }
 
-        hotkeyLog.info("Event tap created and listening. Toggle=\(self.settings.toggleHotkeyDisplayName), PTT=\(self.settings.pttHotkeyDisplayName)")
+        let thread = EventTapThread(tap: tap)
+        thread.start()
+        thread.waitUntilRunning()
+        self.tapThread = thread
+
+        hotkeyLog.info("Event tap listening on its own thread. Toggle=\(self.settings.toggleHotkeyDisplayName), PTT=\(self.settings.pttHotkeyDisplayName)")
 
         self.isListening = true
     }
@@ -99,32 +122,29 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         stopRetryTimer()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            if let source = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
-            }
+            tapThread?.stop()
+            CFMachPortInvalidate(tap)
             retainedSelf?.release()
             retainedSelf = nil
         }
+        tapThread = nil
         eventTap = nil
-        runLoopSource = nil
         self.isListening = false
-        pttKeyDown = false
-        fnKeyDown = false
+        decider.withLock { $0.reset() }
     }
 
     func beginHotkeyCapture() {
         dispatchPrecondition(condition: .onQueue(.main))
         hotkeyCaptureCount += 1
-        if pttKeyDown {
-            pttKeyDown = false
-            fnKeyDown = false
-            onPushToTalkEnded?()
-        }
+        refreshConfigSnapshot()
+        let actions = decider.withLock { $0.releasePushToTalk() }
+        MainActor.assumeIsolated { actions.forEach(perform) }
     }
 
     func endHotkeyCapture() {
         dispatchPrecondition(condition: .onQueue(.main))
         hotkeyCaptureCount = max(0, hotkeyCaptureCount - 1)
+        refreshConfigSnapshot()
     }
 
     func startRetryTimer() {
@@ -153,137 +173,194 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         retryTimer = nil
     }
 
+    // MARK: - Config snapshot (main thread → tap thread)
+
+    private func installConfigObservers() {
+        guard configObservers.isEmpty else { return }
+        // Hotkey assignments and actionsEnabled live in UserDefaults; recording/action state is @Published.
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshConfigSnapshot() }
+            .store(in: &configObservers)
+        settings.$isRecording
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshConfigSnapshot() }
+            .store(in: &configObservers)
+        settings.$isActionSessionActive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshConfigSnapshot() }
+            .store(in: &configObservers)
+    }
+
+    private func refreshConfigSnapshot() {
+        let snapshot = currentConfig()
+        config.withLock { $0 = snapshot }
+    }
+
+    private func currentConfig() -> HotkeyConfig {
+        HotkeyConfig(
+            toggleKeyCode: settings.toggleHotkeyKeyCode,
+            toggleModifiers: settings.toggleHotkeyModifierFlags,
+            pttKeyCode: settings.pttHotkeyKeyCode,
+            pttModifiers: settings.pttHotkeyModifierFlags,
+            commandKeyCode: settings.commandHotkeyKeyCode,
+            commandModifiers: settings.commandHotkeyModifierFlags,
+            actionsEnabled: settings.actionsEnabled,
+            isRecording: settings.isRecording,
+            isActionSessionActive: settings.isActionSessionActive,
+            captureActive: hotkeyCaptureCount > 0
+        )
+    }
+
+    // MARK: - Event handling
+
+    /// Main-thread entry point (tests and direct callers). Reads live settings so state changes
+    /// made moments ago are honoured, and performs the resulting actions synchronously.
     @MainActor
     func handleEvent(_ event: HotkeyEvent) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
-        if hotkeyCaptureCount > 0 {
-            return false
+        let snapshot = currentConfig()
+        let decision = decider.withLock { $0.decide(event, config: snapshot) }
+        decision.actions.forEach(perform)
+        return decision.consume
+    }
+
+    /// Tap-thread entry point. Must return without blocking; actions are dispatched to main.
+    fileprivate nonisolated func handleTapEvent(_ event: HotkeyEvent) -> Bool {
+        let snapshot = config.withLock { $0 }
+        let decision = decider.withLock { $0.decide(event, config: snapshot) }
+        if !decision.actions.isEmpty {
+            let actions = decision.actions
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { actions.forEach { self?.perform($0) } }
+            }
+        }
+        return decision.consume
+    }
+
+    /// The system disabled the tap (timeout or user input). Release any held key, then re-enable
+    /// with a back-off so a wedged tap does not spin.
+    fileprivate nonisolated func handleTapDisabled() {
+        let released = decider.withLock { $0.releasePushToTalk() }
+        if !released.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { released.forEach { self?.perform($0) } }
+            }
         }
 
-        let keyCode = event.keyCode
-        let flags = event.flags
-        let eventType = event.type
+        let shouldReEnable: Bool = tapHealth.withLock { health in
+            let now = Date()
+            if now.timeIntervalSince(health.windowStart) > 10 {
+                health.reEnableCount = 0
+                health.windowStart = now
+            }
+            health.reEnableCount += 1
+            return health.reEnableCount <= 5
+        }
 
-        let escapeModifiers: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift, .maskSecondaryFn]
-        switch EscapeHotkeyPolicy.action(
-            isKeyDown: eventType == .keyDown,
-            matchesEscape: keyCode == 53 && flags.isDisjoint(with: escapeModifiers),
-            isRepeat: event.isRepeat,
-            isRecording: settings.isRecording, actionSessionActive: settings.isActionSessionActive
-        ) {
-        case .ignore: break
-        case .cancelAndPassThrough:
-            hotkeyLog.info("Escape pressed during an action — cancelling and passing through")
-            onEscapePressed?()
-            return false
-        case .cancelAndConsume:
+        if shouldReEnable {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+        } else {
+            hotkeyLog.warning("Event tap disabled repeatedly, backing off. Will retry via timer.")
+            DispatchQueue.main.async { [weak self] in
+                self?.stopListening()
+                self?.startRetryTimer()
+            }
+        }
+    }
+
+    @MainActor
+    private func perform(_ action: HotkeyAction) {
+        switch action {
+        case .escape:
             hotkeyLog.info("Escape pressed while active — cancelling")
             onEscapePressed?()
-            return true
-        }
-
-        if eventType == .flagsChanged && keyCode == 63 {
-            let fnPressed = flags.contains(.maskSecondaryFn)
-
-            if settings.toggleHotkeyKeyCode == 63 && settings.toggleHotkeyModifierFlags == 0 {
-                if fnPressed && !fnKeyDown {
-                    fnKeyDown = true
-                    hotkeyLog.info("fn toggle hotkey pressed")
-                    onToggleHotkeyPressed?()
-                    return true
-                } else if !fnPressed {
-                    fnKeyDown = false
-                }
-                return false
-            }
-
-            if settings.pttHotkeyKeyCode == 63 && settings.pttHotkeyModifierFlags == 0 {
-                if fnPressed && !fnKeyDown {
-                    fnKeyDown = true
-                    pttKeyDown = true
-                    hotkeyLog.info("fn PTT key pressed — starting recording")
-                    onPushToTalkStarted?()
-                    return true
-                } else if !fnPressed && fnKeyDown {
-                    fnKeyDown = false
-                    pttKeyDown = false
-                    hotkeyLog.info("fn PTT key released — stopping recording")
-                    onPushToTalkEnded?()
-                    return true
-                }
-                return false
-            }
-
-            return false
-        }
-
-        if settings.actionsEnabled, Int(keyCode) == settings.commandHotkeyKeyCode && settings.commandHotkeyKeyCode != 63 {
-            switch ToggleHotkeyPolicy.action(
-                isKeyDown: eventType == .keyDown,
-                matchesShortcut: Self.modifiersMatch(flags, required: settings.commandHotkeyModifierFlags),
-                isRepeat: event.isRepeat
-            ) {
-            case .toggle:
-                hotkeyLog.info("Command hotkey pressed (keyCode=\(keyCode))")
-                onCommandHotkeyPressed?()
-                return true
-            case .consumeRepeat:
-                return true
-            case .ignore:
-                break
-            }
-        }
-
-        switch ToggleHotkeyPolicy.action(
-            isKeyDown: eventType == .keyDown,
-            matchesShortcut: Int(keyCode) == settings.toggleHotkeyKeyCode && Self.modifiersMatch(flags, required: settings.toggleHotkeyModifierFlags),
-            isRepeat: event.isRepeat
-        ) {
         case .toggle:
-            hotkeyLog.info("Toggle hotkey pressed (keyCode=\(keyCode))")
+            hotkeyLog.info("Toggle hotkey pressed")
             onToggleHotkeyPressed?()
-            return true
-        case .consumeRepeat:
-            return true
-        case .ignore:
-            break
+        case .pushToTalkStart:
+            hotkeyLog.info("PTT key pressed — starting recording")
+            onPushToTalkStarted?()
+        case .pushToTalkEnd:
+            hotkeyLog.info("PTT key released — stopping recording")
+            onPushToTalkEnded?()
+        case .command:
+            hotkeyLog.info("Command hotkey pressed")
+            onCommandHotkeyPressed?()
         }
-
-        if Int(keyCode) == settings.pttHotkeyKeyCode && settings.pttHotkeyKeyCode != 63 {
-            let modifiersMatch = Self.modifiersMatch(flags, required: settings.pttHotkeyModifierFlags)
-            switch PTTHotkeyPolicy.keyAction(
-                isKeyDown: eventType == .keyDown,
-                pttAlreadyDown: pttKeyDown,
-                modifiersMatch: modifiersMatch
-            ) {
-            case .ignore:
-                break
-            case .start:
-                pttKeyDown = true
-                hotkeyLog.info("PTT key pressed (keyCode=\(keyCode)) — starting recording")
-                onPushToTalkStarted?()
-                return true
-            case .consumeRepeat:
-                return true
-            case .stop:
-                pttKeyDown = false
-                hotkeyLog.info("PTT key released (keyCode=\(keyCode)) — stopping recording")
-                onPushToTalkEnded?()
-                return true
-            }
-        }
-
-        return false
     }
 
     static func modifiersMatch(_ eventFlags: CGEventFlags, required: Int) -> Bool {
-        let significant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-        if required == 0 {
-            return eventFlags.isDisjoint(with: significant)
-        }
-        let requiredFlags = CGEventFlags(rawValue: UInt64(required))
-        return eventFlags.intersection(significant) == requiredFlags.intersection(significant)
+        HotkeyDecider.modifiersMatch(eventFlags, required: required)
     }
+}
+
+extension HotkeyConfig {
+    /// Used only until the first snapshot is taken; matches nothing.
+    static let placeholder = HotkeyConfig(
+        toggleKeyCode: -1, toggleModifiers: 0,
+        pttKeyCode: -1, pttModifiers: 0,
+        commandKeyCode: -1, commandModifiers: 0,
+        actionsEnabled: false, isRecording: false, isActionSessionActive: false, captureActive: false
+    )
+}
+
+/// Hosts the event tap's run loop so keystroke filtering never waits on the main thread.
+private final class EventTapThread: Thread {
+    private let source: CFRunLoopSource
+    private let running = DispatchSemaphore(value: 0)
+    private let loopLock = NSLock()
+    private var loop: CFRunLoop?
+
+    init(tap: CFMachPort) {
+        self.source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        super.init()
+        name = "com.superkeet.hotkey-tap"
+        qualityOfService = .userInteractive
+    }
+
+    override func main() {
+        let current = CFRunLoopGetCurrent()
+        loopLock.withLock { loop = current }
+        CFRunLoopAddSource(current, source, .commonModes)
+        running.signal()
+        CFRunLoopRun()
+        CFRunLoopRemoveSource(current, source, .commonModes)
+    }
+
+    func waitUntilRunning() {
+        running.wait()
+    }
+
+    func stop() {
+        CFRunLoopSourceInvalidate(source)
+        if let loop = loopLock.withLock({ loop }) {
+            CFRunLoopStop(loop)
+        }
+    }
+}
+
+private func hotkeyCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    guard let userInfo = userInfo else {
+        return Unmanaged.passUnretained(event)
+    }
+    let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
+
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        manager.handleTapDisabled()
+        return Unmanaged.passUnretained(event)
+    }
+
+    let keyboard = HotkeyEvent(type: event.type, keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                               flags: event.flags, isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
+    return manager.handleTapEvent(keyboard) ? nil : Unmanaged.passUnretained(event)
 }
 
 func displayNameForHotkey(keyCode: Int, modifierFlags: Int) -> String {
@@ -379,56 +456,6 @@ func keyCodeName(_ keyCode: Int) -> String {
     case 126: return "Up"
     default: return "Key\(keyCode)"
     }
-}
-
-private func hotkeyCallback(
-    proxy: CGEventTapProxy,
-    type: CGEventType,
-    event: CGEvent,
-    userInfo: UnsafeMutableRawPointer?
-) -> Unmanaged<CGEvent>? {
-    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        if let userInfo = userInfo {
-            let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-            if manager.pttKeyDown {
-                manager.pttKeyDown = false
-                manager.fnKeyDown = false
-                manager.onPushToTalkEnded?()
-            }
-            let now = Date()
-            if now.timeIntervalSince(manager.tapReEnableWindowStart) > 10 {
-                manager.tapReEnableCount = 0
-                manager.tapReEnableWindowStart = now
-            }
-            manager.tapReEnableCount += 1
-            if manager.tapReEnableCount <= 5 {
-                if let tap = manager.eventTap {
-                    CGEvent.tapEnable(tap: tap, enable: true)
-                }
-            } else {
-                hotkeyLog.warning("Event tap disabled repeatedly (\(manager.tapReEnableCount) times in 10s), backing off. Will retry via timer.")
-                DispatchQueue.main.async {
-                    manager.stopListening()
-                    manager.startRetryTimer()
-                }
-            }
-        }
-        return Unmanaged.passUnretained(event)
-    }
-
-    guard let userInfo = userInfo else {
-        return Unmanaged.passUnretained(event)
-    }
-
-    let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-    let keyboard = HotkeyEvent(type: event.type, keyCode: event.getIntegerValueField(.keyboardEventKeycode),
-                               flags: event.flags, isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
-    let handled = MainActor.assumeIsolated { manager.handleEvent(keyboard) }
-    if handled {
-        return nil
-    }
-
-    return Unmanaged.passUnretained(event)
 }
 
 func hotkeyAssignmentsConflict(

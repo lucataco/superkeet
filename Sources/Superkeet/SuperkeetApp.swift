@@ -130,6 +130,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyManager.startRetryTimer()
         }
         Task { await SpeculativeLaunchCoordinator.shared.prepare() }
+        // Build the level-meter audio graph once startup has settled so the first recording's
+        // overlay appears without paying for HAL setup on the hot path.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            MicrophoneTapHub.shared.prewarm()
+        }
     }
 
     private func startDaemonWithErrorHandling() {

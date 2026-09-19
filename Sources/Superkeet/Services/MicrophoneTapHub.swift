@@ -29,6 +29,12 @@ protocol MicrophoneCapturing: AnyObject {
         handler: @escaping MicrophoneTapHub.BufferHandler
     ) throws -> MicrophoneTapHub.CaptureInfo
     func stop()
+    /// Set up everything short of opening the device so the first `start` is fast. Optional.
+    func prewarm(deviceName: String)
+}
+
+extension MicrophoneCapturing {
+    func prewarm(deviceName: String) {}
 }
 
 @MainActor
@@ -68,6 +74,14 @@ final class MicrophoneTapHub: ObservableObject {
     }
 
     var subscriberCount: Int { fanout.count }
+
+    /// Builds the audio graph ahead of time (no device IO, so no mic indicator) so the first
+    /// recording's level meter appears without a visible stall.
+    func prewarm() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !isRunning, authorization() else { return }
+        capture.prewarm(deviceName: requestedDeviceName())
+    }
 
     func subscribe(_ handler: @escaping BufferHandler) throws -> Subscription {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -128,9 +142,21 @@ final class BufferFanout: Sendable {
     }
 }
 
+/// Wraps one long-lived `AVAudioEngine`. Building the engine and touching `inputNode` sets up the
+/// HAL audio unit, which is the slow part of opening a microphone; keeping the engine between
+/// takes means each recording only pays for the device start itself.
 @MainActor
 final class AVAudioEngineMicrophone: MicrophoneCapturing {
     private var engine: AVAudioEngine?
+    private var engineDeviceName: String?
+    private var engineWarning: String?
+    private var isTapInstalled = false
+
+    func prewarm(deviceName: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard engine == nil || engineDeviceName != deviceName else { return }
+        _ = prepareEngine(deviceName: deviceName)
+    }
 
     func start(
         deviceName: String,
@@ -138,7 +164,65 @@ final class AVAudioEngineMicrophone: MicrophoneCapturing {
         handler: @escaping MicrophoneTapHub.BufferHandler
     ) throws -> MicrophoneTapHub.CaptureInfo {
         dispatchPrecondition(condition: .onQueue(.main))
-        stop()
+        removeTap()
+
+        var (engine, warning) = reusableEngine(for: deviceName) ?? prepareEngine(deviceName: deviceName)
+        var format = engine.inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            discardEngine()
+            throw MicrophoneTapError.unusableInputFormat
+        }
+
+        do {
+            try engine.start()
+        } catch {
+            // A reused engine can go stale if the hardware configuration changed underneath it.
+            // Rebuild once before giving up.
+            microphoneLog.info("Reused audio engine failed to start; rebuilding: \(error.localizedDescription, privacy: .public)")
+            discardEngine()
+            (engine, warning) = prepareEngine(deviceName: deviceName)
+            format = engine.inputNode.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                discardEngine()
+                throw MicrophoneTapError.unusableInputFormat
+            }
+            do {
+                try engine.start()
+            } catch {
+                discardEngine()
+                throw MicrophoneTapError.engineStartFailed(error.localizedDescription)
+            }
+        }
+
+        engine.inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: format, block: handler)
+        isTapInstalled = true
+        return .init(format: format, warning: warning)
+    }
+
+    func stop() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        removeTap()
+        guard let engine else { return }
+        engine.stop()
+        // Keep the graph allocated so the next take starts quickly; the device itself is closed.
+        engine.prepare()
+    }
+
+    private func removeTap() {
+        guard isTapInstalled else { return }
+        engine?.inputNode.removeTap(onBus: 0)
+        isTapInstalled = false
+    }
+
+    private func reusableEngine(for deviceName: String) -> (AVAudioEngine, String?)? {
+        guard let engine, engineDeviceName == deviceName else {
+            discardEngine()
+            return nil
+        }
+        return (engine, engineWarning)
+    }
+
+    private func prepareEngine(deviceName: String) -> (AVAudioEngine, String?) {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         var warning: String?
@@ -156,27 +240,19 @@ final class AVAudioEngineMicrophone: MicrophoneCapturing {
             }
         }
 
-        let format = inputNode.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw MicrophoneTapError.unusableInputFormat
-        }
-
-        do {
-            try engine.start()
-        } catch {
-            throw MicrophoneTapError.engineStartFailed(error.localizedDescription)
-        }
-
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: format, block: handler)
+        engine.prepare()
         self.engine = engine
-        return .init(format: format, warning: warning)
+        self.engineDeviceName = deviceName
+        self.engineWarning = warning
+        return (engine, warning)
     }
 
-    func stop() {
-        dispatchPrecondition(condition: .onQueue(.main))
-        engine?.inputNode.removeTap(onBus: 0)
+    private func discardEngine() {
+        removeTap()
         engine?.stop()
         engine = nil
+        engineDeviceName = nil
+        engineWarning = nil
     }
 
     static let deviceFallbackWarning = "The selected microphone is unavailable; using the default input."
