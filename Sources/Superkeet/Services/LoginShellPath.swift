@@ -1,7 +1,9 @@
 import Foundation
 
 enum LoginShellPath {
-    static let fallback = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    /// Directories searched after the login shell's `PATH`. `~/.local/bin` is
+    /// where installers such as Cua Driver's place their binaries.
+    static let fallback = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     static let marker = "__SUPERKEET_PATH__"
     static let defaultTimeout: TimeInterval = 5
 

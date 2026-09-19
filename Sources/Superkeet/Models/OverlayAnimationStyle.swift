@@ -18,6 +18,11 @@ enum OverlayAnimationStyle: String, CaseIterable, Identifiable, Codable, Sendabl
         self != .none
     }
 
+    /// Styles drawn at the top edge of the screen, where the action HUD also lives.
+    var anchorsToTop: Bool {
+        self == .gradientIsland || self == .notchShelf
+    }
+
     var title: String {
         switch self {
         case .mini: return "Mini"

@@ -9,14 +9,17 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
 
     private let fileURL: URL
     private let secrets: MCPSecretStoring
+    private let migrationWriter: (Data, URL) throws -> Void
     private let log = Logger(subsystem: "com.superkeet.app", category: "MCPServerConfigStore")
 
     init(
         fileURL: URL = AppPaths.applicationSupportDirectory.appendingPathComponent("mcp-servers.json"),
-        secrets: MCPSecretStoring = KeychainMCPSecretStore()
+        secrets: MCPSecretStoring = KeychainMCPSecretStore(),
+        migrationWriter: @escaping (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .atomic) }
     ) {
         self.fileURL = fileURL
         self.secrets = secrets
+        self.migrationWriter = migrationWriter
         load()
     }
 
@@ -45,13 +48,44 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
         do {
             let data = try Data(contentsOf: fileURL)
             let document = try JSONDecoder().decode(MCPServersDocument.self, from: data)
-            servers = document.configurations().map(mergingSecrets)
+            var loaded = document.configurations().map(mergingSecrets)
+            if let index = loaded.firstIndex(where: MCPDefaultServers.needsChromeAutoConnectMigration) {
+                do {
+                    if let migrated = try Self.chromeAutoConnectMigration(in: data) {
+                        try migrationWriter(migrated, fileURL)
+                        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+                        loaded[index].args = MCPDefaultServers.chromeArguments
+                    }
+                } catch {
+                    // A failed migration must not discard an otherwise readable
+                    // configuration or publish settings that were not persisted.
+                    servers = loaded
+                    errorMessage = "Could not update the default Chrome connection: \(error.localizedDescription)"
+                    log.error("Chrome connection migration failed: \(error.localizedDescription)")
+                    return
+                }
+            }
+            servers = loaded
             errorMessage = nil
         } catch {
             servers = []
             errorMessage = "Could not read MCP servers: \(error.localizedDescription)"
             log.error("Failed to load MCP servers: \(error.localizedDescription)")
         }
+    }
+
+    private static func chromeAutoConnectMigration(in data: Data) throws -> Data? {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var entries = root["mcpServers"] as? [String: Any],
+              var chrome = entries["chrome-devtools"] as? [String: Any],
+              Set(chrome.keys).isSubset(of: ["command", "args", "env", "enabled", "transport"]),
+              chrome["transport"] == nil || chrome["transport"] is NSNull || chrome["transport"] as? String == "stdio" else { return nil }
+        // Patch only the known entry's arguments in the original JSON, retaining
+        // all other entries and unknown top-level fields. Do not re-save secrets.
+        chrome["args"] = MCPDefaultServers.chromeArguments
+        entries["chrome-devtools"] = chrome
+        root["mcpServers"] = entries
+        return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
     }
 
     private func mergingSecrets(_ server: MCPServerConfiguration) -> MCPServerConfiguration {

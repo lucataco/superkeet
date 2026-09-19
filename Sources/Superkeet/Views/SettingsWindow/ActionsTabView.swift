@@ -64,7 +64,12 @@ struct ActionsTabView: View {
                         Text(error).foregroundStyle(.orange)
                     }
                     Text("Superkeet launches these local processes and talks to them over standard input/output. Servers must be installed on this Mac (for example, npx or an absolute path). Some servers prompt for additional macOS permissions such as Accessibility or Screen Recording on first use.")
+                    Text("Test checks the connection. Enable a server with its toggle to make its tools available to Actions Mode.")
                 }
+
+                InstantAppLaunchSettingsView()
+
+                NativeGroundingSettingsView()
 
                 Section {
                     Picker(selection: $settings.actionApprovalPolicy) {
@@ -80,10 +85,16 @@ struct ActionsTabView: View {
                         in: 1...50
                     )
                     Stepper(
-                        "Timeout: \(settings.actionTimeoutSeconds)s",
+                        "Tool timeout: \(settings.actionTimeoutSeconds)s",
                         value: $settings.actionTimeoutSeconds,
                         in: 15...600,
                         step: 15
+                    )
+                    Stepper(
+                        "Command deadline: \(settings.actionRunDeadlineSeconds)s",
+                        value: $settings.actionRunDeadlineSeconds,
+                        in: 30...900,
+                        step: 30
                     )
                     Toggle(isOn: $settings.actionAuditEnabled) {
                         rowLabel("Keep Action Log", "Record tool calls locally for review")
@@ -338,7 +349,7 @@ private struct MCPServerSheet: View {
             Form {
                 TextField("Name", text: $draft.name, prompt: Text("chrome-devtools"))
                 TextField("Command", text: $draft.command, prompt: Text("npx"))
-                TextField("Arguments", text: $draft.argsText, prompt: Text("-y chrome-devtools-mcp@latest"))
+                TextField("Arguments", text: $draft.argsText, prompt: Text("-y chrome-devtools-mcp@latest --autoConnect"))
             }
             .formStyle(.grouped)
 

@@ -17,6 +17,14 @@ final class ActionRedactorTests: XCTestCase {
         XCTAssertFalse(redacted.contains("xyz"))
     }
 
+    func testRedactsNativeLabelsValuesAndCapabilities() {
+        let json = #"{"text":"private entry","value":"private value","label":"private label","element_token":"s00000001:2","window_id":42}"#
+        let redacted = ActionRedactor.redact(json)
+        XCTAssertFalse(redacted.contains("private"))
+        XCTAssertFalse(redacted.contains("s00000001:2"))
+        XCTAssertTrue(redacted.contains("42"))
+    }
+
     func testLeavesNonSensitiveArgumentsUntouched() {
         let json = #"{"url":"https://example.com","count":3}"#
         let redacted = ActionRedactor.redact(json)
@@ -63,5 +71,42 @@ final class ActionRedactorTests: XCTestCase {
 
     func testRedactTextLeavesOrdinaryText() {
         XCTAssertEqual(ActionRedactor.redactText("opened the page successfully"), "opened the page successfully")
+    }
+
+    func testOrdinaryTitlesAndQueriesRemainUsefulInGenericAuditArguments() throws {
+        let json = #"{"title":"Cloudflare DNS","query":"catacolabs.com","nested":[{"TITLE":"Password policy","Query":"token counts"}],"text":"private entry"}"#
+        let output = ActionRedactor.redact(json)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        XCTAssertEqual(object["title"] as? String, "Cloudflare DNS")
+        XCTAssertEqual(object["query"] as? String, "catacolabs.com")
+        XCTAssertTrue(output.contains("Password policy"))
+        XCTAssertTrue(output.contains("token counts"))
+        XCTAssertFalse(output.contains("private entry"))
+    }
+
+    func testGroundingContextStillRedactsTitlesAndQueriesRecursively() {
+        let json = #"{"title":"private window","query":"private target","nested":[{"TITLE":"private title","Query":"private query"}],"window_id":42}"#
+        let output = ActionRedactor.redact(json, context: .groundingUI)
+        XCTAssertFalse(output.contains("private"))
+        XCTAssertTrue(output.contains("42"))
+        XCTAssertEqual(ActionRedactor.redact("private malformed UI content", context: .groundingUI), "***")
+    }
+
+    func testRetainedFieldsAndStringArraysStillMaskInlineSecrets() throws {
+        let json = #"{"title":"Bearer abc+/~==","query":"password=\"two word secret\"","other":["api_key=inline-secret","ordinary"],"url":"https://example.com/?token=url-secret&limit=3"}"#
+        let output = ActionRedactor.redact(json)
+        for secret in ["abc", "two word secret", "inline-secret", "url-secret"] { XCTAssertFalse(output.contains(secret), output) }
+        XCTAssertTrue(output.contains("ordinary"))
+        XCTAssertTrue(output.contains("limit=3"))
+        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(output.utf8)))
+    }
+
+    func testQuotedAndIncompleteSecretValuesDoNotLeak() {
+        for text in [#"{"password":"two word secret"}"#, "token='two word secret'", "password=\"two word secret",
+                     "secret: “two word secret”", "Authorization: Bearer abc+/~=="] {
+            let output = ActionRedactor.redactText(text)
+            XCTAssertFalse(output.contains("two word secret"), output)
+            XCTAssertFalse(output.contains("abc"), output)
+        }
     }
 }

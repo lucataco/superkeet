@@ -13,7 +13,7 @@ PARAKEET_SOURCE_DIR="${PARAKEET_SOURCE_DIR:-}"
 PARAKEET_OVERRIDE="${PARAKEET_CLI_PATH:-}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 PARAKEET_REPOSITORY_URL="https://github.com/lucataco/parakeet-cli.git"
-PARAKEET_REF="${PARAKEET_REF:-v0.1.6}"
+PARAKEET_REF="${PARAKEET_REF:-v0.1.7}"
 LOCAL_PARAKEET_SOURCE_DIR="${SCRIPT_DIR}/.build/parakeet-cli-${PARAKEET_REF}"
 
 if [[ -z "$PARAKEET_SOURCE_DIR" && -f "${SCRIPT_DIR}/../../Formulae/parakeet-cli/Cargo.toml" ]]; then
@@ -138,10 +138,13 @@ if [[ -z "$PARAKEET_BINARY" ]]; then
 fi
 
 verify_parakeet_architecture "$PARAKEET_BINARY"
-if [[ "$("$PARAKEET_BINARY" protocol-version)" != "1" ]]; then
-    printf 'Superkeet requires parakeet-cli v0.1.6 or later with transcript protocol 1. Rebuild the engine or set PARAKEET_SOURCE_DIR.\n' >&2
+case "$("$PARAKEET_BINARY" protocol-version)" in
+    1|2) ;;
+    *)
+    printf 'Superkeet requires parakeet-cli v0.1.6 or later (transcript protocol 1 or 2; v0.1.7 adds interim text). Rebuild the engine or set PARAKEET_SOURCE_DIR.\n' >&2
     exit 1
-fi
+    ;;
+esac
 
 printf '==> Building %s (release)...\n' "$APP_NAME"
 swift build -c release
@@ -156,6 +159,8 @@ cp "$SCRIPT_DIR/Resources/Info.plist" "$BUNDLE_DIR/Contents/"
 cp "$ENTITLEMENTS_PATH" "$BUNDLE_DIR/Contents/Resources/"
 cp "$SCRIPT_DIR/Resources/AppIcon.icns" "$BUNDLE_DIR/Contents/Resources/"
 cp "$PARAKEET_BINARY" "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
+mkdir -p "$BUNDLE_DIR/Contents/Resources/gliner"
+cp "$SCRIPT_DIR/scripts/gliner/serve_grounder.py" "$SCRIPT_DIR/scripts/gliner/gliner_adapter.py" "$BUNDLE_DIR/Contents/Resources/gliner/"
 chmod 755 "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
 
 printf '==> Signing %s...\n' "$BUNDLE_NAME"

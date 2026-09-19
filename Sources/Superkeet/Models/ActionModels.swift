@@ -121,20 +121,28 @@ enum MCPToolRiskClassifier {
 }
 
 enum MCPDefaultServers {
+    static let legacyChromeArguments = ["-y", "chrome-devtools-mcp@latest"]
+    static let chromeArguments = legacyChromeArguments + ["--autoConnect"]
+
     static let all: [MCPServerConfiguration] = [
         MCPServerConfiguration(
             name: "chrome-devtools",
             command: "npx",
-            args: ["-y", "chrome-devtools-mcp@latest"],
+            args: chromeArguments,
             enabled: false
         ),
         MCPServerConfiguration(
-            name: "open-computer-use",
-            command: "open-computer-use",
+            name: "cua-driver",
+            command: "cua-driver",
             args: ["mcp"],
             enabled: false
         )
     ]
+
+    static func needsChromeAutoConnectMigration(_ server: MCPServerConfiguration) -> Bool {
+        server.name == "chrome-devtools" && server.command == "npx"
+            && server.args == legacyChromeArguments && server.env.isEmpty && server.transport == .stdio
+    }
 }
 
 enum MCPEnvironmentParser {

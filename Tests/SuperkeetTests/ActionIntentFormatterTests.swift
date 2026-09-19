@@ -42,6 +42,16 @@ final class ActionIntentFormatterTests: XCTestCase {
         XCTAssertEqual(summary, "Open https://example.com")
     }
 
+    func testNativeOpenApprovalShowsAppAndNamedBrowser() {
+        XCTAssertEqual(ActionIntentFormatter.summary(toolName: "open_app", argumentsJSON: #"{"name":"Discord"}"#), "Open Discord")
+        XCTAssertEqual(ActionIntentFormatter.summary(toolName: "open_url", argumentsJSON: #"{"url":"https://youtube.com","browser":"Helium"}"#),
+                       "Open https://youtube.com in Helium")
+        XCTAssertEqual(ActionIntentFormatter.summary(toolName: "press_shortcut", argumentsJSON: #"{"app":"Notes","keys":["cmd","n"]}"#),
+                       "Press ⌘N in Notes")
+        XCTAssertEqual(ActionIntentFormatter.summary(toolName: "press_shortcut", argumentsJSON: #"{"keys":["cmd","hyper"]}"#),
+                       "Press cmd+hyper", "Unsupported chords are still described rather than hidden.")
+    }
+
     func testUnknownToolReturnsNil() {
         XCTAssertNil(ActionIntentFormatter.summary(toolName: "mystery", argumentsJSON: "{}"))
     }

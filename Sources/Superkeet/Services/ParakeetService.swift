@@ -18,6 +18,15 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @Published var lastUserFacingError: String?
     @Published var lastDiagnosticsSummary: String?
     @Published var startupStatusDetail: String?
+    /// The running daemon's wire protocol, learned when it becomes ready.
+    /// Protocol 2 engines can stream interim text for a recording.
+    @Published private(set) var daemonProtocolVersion: Int?
+
+    /// Wire protocols this client speaks. Protocol 2 is a superset of 1.
+    static let supportedProtocolVersions: Set<Int> = [1, 2]
+    static let interimTextProtocolVersion = 2
+
+    var daemonStreamsInterimText: Bool { daemonProtocolVersion == Self.interimTextProtocolVersion }
 
     enum DaemonState: String {
         case stopped
@@ -48,8 +57,50 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private var stopTask: Task<Void, Never>?
     private var autoRestartTask: Task<Void, Never>?
     private var autoRestartPolicy = AutoRestartPolicy()
+    /// Test seam for the early-launch coordinator; the shared one is used otherwise.
+    @MainActor var speculativeLaunchingOverride: (any SpeculativeLaunching)?
+    /// Consumers of protocol-2 interim text, keyed by session.
+    @MainActor private var interimContinuations: [String: AsyncStream<PartialTranscript>.Continuation] = [:]
 
     private init() {}
+
+    @MainActor
+    private var speculation: any SpeculativeLaunching {
+        speculativeLaunchingOverride ?? SpeculativeLaunchCoordinator.shared
+    }
+
+    @MainActor
+    private func endSpeculation() {
+        guard let sessionID = outputGate.sessionID else { return }
+        speculation.end(sessionID: sessionID)
+    }
+
+    // MARK: Interim text (protocol 2)
+
+    /// The daemon's interim transcripts for one recording, as `partial` events
+    /// arrive. The stream ends when the session completes, fails, or is
+    /// cancelled, or when `endInterimTranscripts` is called. One consumer per
+    /// session; a second call replaces the first.
+    @MainActor
+    func interimTranscripts(sessionID: String) -> AsyncStream<PartialTranscript> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let (stream, continuation) = AsyncStream.makeStream(of: PartialTranscript.self)
+        interimContinuations[sessionID]?.finish()
+        interimContinuations[sessionID] = continuation
+        return stream
+    }
+
+    @MainActor
+    func endInterimTranscripts(sessionID: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        interimContinuations.removeValue(forKey: sessionID)?.finish()
+    }
+
+    @MainActor
+    private func deliverInterim(_ event: TranscriptEvent) {
+        guard daemonState == .recording, let interim = event.interimTranscript else { return }
+        interimContinuations[event.sessionID]?.yield(interim)
+    }
 
     func startDaemon() async throws {
         let pendingStop = lifecycleLock.withLock { stopTask }
@@ -427,7 +478,10 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         recordingDuration = 0
         sessionStatus = "Starting recording…"
 
-        let response = await sendSocketCommandAsync("start", sessionID: sessionID)
+        // Ask a protocol-2 engine for interim text only when something will
+        // act on it: every preview costs an encoder pass.
+        let wantsInterim = commandModeArmed && daemonStreamsInterimText && speculation.wantsInterimTranscripts()
+        let response = await sendSocketCommandAsync("start", sessionID: sessionID, partials: wantsInterim)
         guard outputGate.sessionID == sessionID else { return false }
         guard let envelope = decodeSocketResponse(response ?? ""),
               envelope.status == "ok",
@@ -445,6 +499,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         settings.isRecording = true
         lastUserFacingError = nil
         settings.runtimeIssue = nil
+        // Command Mode may act on interim speech before the transcript is final.
+        if commandModeArmed { speculation.begin(sessionID: sessionID) }
         return true
     }
 
@@ -475,6 +531,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     func cancelRecording() {
         guard let sessionID = outputGate.sessionID else { return }
         commandModeArmed = false
+        speculation.end(sessionID: sessionID)
+        endInterimTranscripts(sessionID: sessionID)
         outputGate.close()
         completionTimeout?.cancel()
         recordingStartTime = nil
@@ -521,6 +579,9 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private struct SocketCommand: Encodable {
         let command: String
         var session_id: String?
+        /// Protocol 2: request interim `partial` events for this session.
+        /// Omitted (not `false`) when not wanted, so the wire stays protocol-1 shaped.
+        var partials: Bool?
     }
 
     private struct SocketCommandResult: Sendable {
@@ -553,7 +614,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func sendSocketCommandAsync(_ command: String, sessionID: String? = nil) async -> String? {
+    private func sendSocketCommandAsync(_ command: String, sessionID: String? = nil, partials: Bool = false) async -> String? {
         let socketPath = settings.socketPath
         let result = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -562,7 +623,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     command,
                     socketPath: socketPath,
                     timeout: timeout,
-                    sessionID: sessionID
+                    sessionID: sessionID,
+                    partials: partials
                 )
                 continuation.resume(returning: result)
             }
@@ -577,7 +639,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         _ command: String,
         socketPath: String,
         timeout requestedTimeout: timeval,
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        partials: Bool = false
     ) -> SocketCommandResult {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
@@ -614,7 +677,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             return SocketCommandResult(response: nil, runtimeIssue: "Superkeet could not reach the speech engine. Try relaunching the app.")
         }
 
-        guard let jsonData = try? JSONEncoder().encode(SocketCommand(command: command, session_id: sessionID)),
+        let request = SocketCommand(command: command, session_id: sessionID, partials: partials ? true : nil)
+        guard let jsonData = try? JSONEncoder().encode(request),
               var json = String(data: jsonData, encoding: .utf8) else {
             parakeetLog.error("Failed to encode socket command")
             return SocketCommandResult(response: nil, runtimeIssue: nil)
@@ -681,9 +745,9 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 return
             }
             for event in try outputStream.append(data) where outputGate.accepts(event) {
-                switch event.type {
-                case "session_started": break
-                case "transcribing":
+                switch event.kind {
+                case .sessionStarted: break
+                case .transcribing:
                     if daemonState == .recording {
                         recordingDuration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
                         armCompletionTimeout(sessionID: event.sessionID)
@@ -691,12 +755,16 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     daemonState = .transcribing
                     settings.isRecording = false
                     sessionStatus = "Transcribing…"
-                case "complete":
+                case .partial:
+                    deliverInterim(event)
+                case .complete:
                     guard ["ok", "partial", "empty", "error"].contains(event.status ?? ""), event.text != nil else {
                         throw TranscriptProtocolError.invalidMessage
                     }
                     completeSession(event)
-                default: throw TranscriptProtocolError.invalidMessage
+                case .unrecognized(let type):
+                    // Newer engines may add event types; they never invalidate the session.
+                    parakeetLog.info("Ignoring unrecognized transcript event type \(type, privacy: .public)")
                 }
             }
         } catch {
@@ -709,19 +777,32 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private func completeSession(_ event: TranscriptEvent) {
         dispatchPrecondition(condition: .onQueue(.main))
         let raw = event.text ?? ""
-        let partial = event.isPartial && !raw.isEmpty
-        let shouldRunCommand = commandModeArmed && !partial && !raw.isEmpty
+        let delivery = CommandTranscriptDelivery.decide(
+            event: event, commandMode: commandModeArmed,
+            replacements: PhraseReplacementStore.shared.rules, bundleID: activeAppAtRecordingStart?.bundleId ?? ""
+        )
         commandModeArmed = false
-        if !raw.isEmpty {
-            if shouldRunCommand {
-                lastRawTranscription = raw
-                lastTranscription = raw
-                canUndoTextChanges = false
-                AgentSessionController.shared.handleCommand(raw)
-            } else {
-                processTranscription(raw, isPartial: partial)
-            }
+        switch delivery {
+        case .command(let corrected):
+            lastRawTranscription = raw
+            lastTranscription = corrected
+            canUndoTextChanges = false
+            let earlyLaunch = speculation.take(sessionID: event.sessionID)
+            AgentSessionController.shared.handleCommand(corrected, speculative: earlyLaunch)
+            sessionStatus = "Working on it…"
+            return finishSession()
+        case .failure(let message):
+            lastRawTranscription = raw
+            lastTranscription = raw
+            canUndoTextChanges = false
+            return failSession(message)
+        case .empty:
+            sessionStatus = "No speech detected"
+            return finishSession()
+        case .dictation: break
         }
+        let partial = event.isPartial && !raw.isEmpty
+        if !raw.isEmpty { processTranscription(raw, isPartial: partial) }
         if partial {
             let detail = event.message ?? "\(event.failedSegments ?? 0) failed segments, \(event.droppedSamples ?? 0) dropped samples"
             sessionStatus = "Partial transcript — \(detail)"
@@ -729,8 +810,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             settings.runtimeIssue = sessionStatus
         } else if event.status == "error" || (event.isPartial && raw.isEmpty) {
             return failSession(event.message ?? "Transcription failed.")
-        } else if shouldRunCommand {
-            sessionStatus = "Working on it…"
         } else {
             sessionStatus = raw.isEmpty ? "No speech detected" : "Transcription complete"
         }
@@ -786,6 +865,9 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private func finishSession() {
         completionTimeout?.cancel()
         completionTimeout = nil
+        // No-op after `take`; stops listening for every other way a session ends.
+        endSpeculation()
+        if let sessionID = outputGate.sessionID { endInterimTranscripts(sessionID: sessionID) }
         outputGate.close()
         recordingStartTime = nil
         activeAppAtRecordingStart = nil
@@ -893,7 +975,11 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             timeout: timeout
         ).response
         guard let envelope = decodeSocketResponse(response ?? ""), envelope.status == "ok" else { return false }
-        guard envelope.protocolVersion == 1 else { throw TranscriptProtocolError.invalidMessage }
+        guard let version = envelope.protocolVersion, Self.supportedProtocolVersions.contains(version) else {
+            throw TranscriptProtocolError.invalidMessage
+        }
+        await MainActor.run { self.daemonProtocolVersion = version }
+        parakeetLog.info("Speech engine ready with protocol \(version)")
         return true
     }
 

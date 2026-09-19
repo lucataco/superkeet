@@ -36,9 +36,11 @@ final class MCPServerConfigStoreTests: XCTestCase {
     func testSeedsDefaultServersWhenFileMissing() {
         let store = makeStore(fileURL: makeURL())
         XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(store.servers.map(\.trimmedName).sorted(), ["chrome-devtools", "open-computer-use"])
+        XCTAssertEqual(store.servers.map(\.trimmedName).sorted(), ["chrome-devtools", "cua-driver"])
         XCTAssertTrue(store.servers.allSatisfy { !$0.enabled }, "Default servers should be disabled until enabled.")
         XCTAssertEqual(store.missingDefaultServerCount, 0)
+        XCTAssertEqual(store.servers.first { $0.name == "chrome-devtools" }?.args,
+                       ["-y", "chrome-devtools-mcp@latest", "--autoConnect"])
     }
 
     func testSaveReloadRoundTrip() {
@@ -138,12 +140,12 @@ final class MCPServerConfigStoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
         let store = makeStore(fileURL: url)
-        guard let openComputerUse = store.servers.first(where: { $0.trimmedName == "open-computer-use" }),
+        guard let cuaDriver = store.servers.first(where: { $0.trimmedName == "cua-driver" }),
               var chrome = store.servers.first(where: { $0.trimmedName == "chrome-devtools" }) else {
             return XCTFail("Expected seeded default servers.")
         }
 
-        store.remove(id: openComputerUse.id)
+        store.remove(id: cuaDriver.id)
         chrome.command = "/custom/chrome"
         store.update(chrome)
         XCTAssertEqual(store.missingDefaultServerCount, 1)
@@ -151,6 +153,8 @@ final class MCPServerConfigStoreTests: XCTestCase {
         store.addDefaultServers()
 
         XCTAssertEqual(store.missingDefaultServerCount, 0)
+        XCTAssertEqual(store.servers.map(\.trimmedName).sorted(), ["chrome-devtools", "cua-driver"])
+        XCTAssertEqual(store.servers.first { $0.trimmedName == "cua-driver" }?.commandSummary, "cua-driver mcp")
         XCTAssertEqual(
             store.servers.first { $0.trimmedName == "chrome-devtools" }?.trimmedCommand,
             "/custom/chrome",

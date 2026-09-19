@@ -120,4 +120,84 @@ final class ActionLimitsTests: XCTestCase {
             ActionLimits.relevanceScore(of: other, task: "navigate to a page")
         )
     }
+
+    func testLaunchAppRanksFirstAgainstReal56ToolCuaInventory() throws {
+        let tools = try CuaToolRankingFixture.tools()
+        XCTAssertEqual(tools.count, 56)
+        XCTAssertEqual(tools.reduce(0) { $0 + $1.description.unicodeScalars.count }, 37_159)
+        let ordered = ActionLimits.prioritizedTools(tools, task: "open discord")
+        XCTAssertEqual(ordered.first?.toolName, "launch_app")
+        XCTAssertEqual(Array(ordered.prefix(3).map(\.toolName)), ["launch_app", "bring_to_front", "list_apps"])
+        XCTAssertEqual(ActionLimits.prioritizedTools(Array(tools.reversed()), task: "open discord"), ordered)
+    }
+
+    func testIntentPreferencesBeatGenericDescriptionNoise() {
+        let server = UUID()
+        for (action, preferred) in [(ActionIntent.Action.openApp, "launch_app"), (.openURL, "new_page"),
+                                    (.click, "get_window_state"), (.readScreen, "get_window_state")] {
+            let intent = ActionIntent(goal: "the and com open", action: action)
+            let noise = makeSpec(server: server, name: "aaa_noise", description: "open and the com " + String(repeating: "open ", count: 200))
+            let match = makeSpec(server: server, name: preferred)
+            XCTAssertEqual(ActionLimits.relevanceScore(of: noise, intent: intent), 0)
+            XCTAssertEqual(ActionLimits.prioritizedTools([noise, match], intent: intent).first, match)
+        }
+    }
+
+    func testEqualScoresRemainStableAcrossInventoryOrderAndRoundRobin() {
+        let serverA = UUID()
+        let serverB = UUID()
+        let tools = [makeSpec(server: serverA, name: "same"), makeSpec(server: serverA, name: "second"),
+                     makeSpec(server: serverB, name: "same"), makeSpec(server: serverB, name: "second")]
+        let ordered = ActionLimits.prioritizedTools(tools, task: "unrelated")
+        XCTAssertEqual(ActionLimits.prioritizedTools(Array(tools.reversed()), task: "unrelated"), ordered)
+        XCTAssertEqual(Set(ordered.prefix(2).map(\.serverID)).count, 2)
+    }
+
+    func testGrounderPreferenceAppliesOnlyToGroundableIntents() {
+        let helper = makeSpec(server: UUID(), name: "superkeet_native_click")
+        XCTAssertEqual(ActionLimits.relevanceScore(of: helper, intent: .init(goal: "unrelated", action: .openApp)), 0)
+        XCTAssertGreaterThan(ActionLimits.relevanceScore(of: helper, intent: .init(goal: "unrelated", action: .click)), 0)
+    }
+
+    func testTokenEstimateClipsToolAndPropertyDescriptionsLikeBridge() {
+        let server = UUID()
+        let base = String(repeating: "x", count: ActionToolSchema.toolDescriptionLimit)
+        let short = makeSpec(server: server, name: "inspect", description: base)
+        let long = makeSpec(server: server, name: "inspect", description: base + String(repeating: "ignored", count: 1_000))
+        XCTAssertEqual(ActionLimits.estimatedTokenCost(of: short), ActionLimits.estimatedTokenCost(of: long))
+        let propertyBase = String(repeating: "x", count: ActionToolSchema.propertyDescriptionLimit)
+        func described(_ text: String) -> ActionToolSpec {
+            makeSpec(server: server, name: "inspect", schema: #"{"type":"object","properties":{"id":{"type":"string","description":"\#(text)"}}}"#)
+        }
+        XCTAssertGreaterThan(ActionLimits.estimatedTokenCost(of: described(propertyBase)), ActionLimits.estimatedTokenCost(of: described("")))
+        XCTAssertEqual(ActionLimits.estimatedTokenCost(of: described(propertyBase)),
+                       ActionLimits.estimatedTokenCost(of: described(propertyBase + String(repeating: "ignored", count: 1_000))))
+    }
+
+    func testProjectionRetainsPropertiesNamedLikeSchemaMetadata() throws {
+        let json = #"{"type":"object","properties":{"description":{"type":"string","description":"User value"},"title":{"type":"integer"}},"required":["description"]}"#
+        let projected = try XCTUnwrap(ActionToolSchema.projected(json, toolName: "test"))
+        let properties = try XCTUnwrap(projected["properties"] as? [String: [String: Any]])
+        XCTAssertEqual(Set(properties.keys), ["description", "title"])
+        XCTAssertEqual(properties["description"]?["description"] as? String, "User value")
+        XCTAssertEqual(projected["required"] as? [String], ["description"])
+    }
+}
+
+enum CuaToolRankingFixture {
+    private struct Document: Decodable {
+        struct Tool: Decodable { let name: String; let description: String }
+        let tools: [Tool]
+    }
+
+    static func tools() throws -> [ActionToolSpec] {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/cua-driver-0.28.2-tools.json")
+        let document = try JSONDecoder().decode(Document.self, from: Data(contentsOf: file))
+        let server = UUID()
+        return document.tools.map { tool in
+            ActionToolSpec(descriptor: MCPToolDescriptor(serverID: server, serverName: "cua-driver", name: tool.name,
+                title: nil, description: tool.description, risk: .mutating, inputSchemaJSON: "{}"))
+        }
+    }
 }

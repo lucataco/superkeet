@@ -87,4 +87,32 @@ final class ActionAuditStoreTests: XCTestCase {
         XCTAssertEqual(entries.last?.toolName, "tool4")
         XCTAssertLessThan(entries.count, 5)
     }
+
+    func testAuditBoundaryPreservesGenericTitleQueryButRedactsSecretsBeforeTruncation() throws {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        store.record(serverName: "fixture", toolName: "search", risk: .readOnly,
+                     argumentsJSON: #"{"title":"DNS records","query":"catacolabs.com","token":"fixture-token"}"#, outcome: "succeeded",
+                     detail: "password=\"" + String(repeating: "private-secret ", count: 1_000) + "\" public suffix")
+        let entry = try XCTUnwrap(store.entries().first)
+        XCTAssertTrue(entry.arguments.contains("catacolabs.com"))
+        XCTAssertTrue(entry.arguments.contains("DNS records"))
+        XCTAssertFalse(entry.arguments.contains("fixture-token"))
+        XCTAssertFalse(entry.detail?.contains("private-secret") == true)
+        XCTAssertTrue(entry.detail?.contains("public suffix") == true)
+    }
+
+    func testGroundingAuditMetadataImpliesUIRedactionAndNoRawDetails() throws {
+        let (dir, store) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let grounding = ActionGroundingDecision(selectedID: "a0", confidence: 0.9, decisionMilliseconds: 10)
+        store.record(serverName: "cua-driver", toolName: "click", risk: .mutating,
+                     argumentsJSON: #"{"title":"private title","query":"private query","element_token":"s00000001:2"}"#,
+                     outcome: "succeeded", detail: "private output", grounding: grounding)
+        let entry = try XCTUnwrap(store.entries().first)
+        XCTAssertEqual(entry.grounding, grounding)
+        XCTAssertFalse(entry.arguments.contains("private"))
+        XCTAssertFalse(entry.arguments.contains("s00000001"))
+        XCTAssertNil(entry.detail)
+    }
 }

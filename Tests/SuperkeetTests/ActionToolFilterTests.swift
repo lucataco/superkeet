@@ -34,6 +34,15 @@ final class ActionToolFilterTests: XCTestCase {
         XCTAssertEqual(filtered.count, 2)
     }
 
+    func testUsesExtractedIntentInsteadOfReparsingGoal() {
+        let tools = [
+            makeSpec(server: "chrome-devtools", name: "new_page"),
+            makeSpec(server: "commands", name: "run_process")
+        ]
+        let intent = ActionIntent(goal: "Open the requested page", action: .openURL, browser: "helium")
+        XCTAssertEqual(ActionToolFilter.filtering(tools, intent: intent).map(\.serverName), ["commands"])
+    }
+
     func testKeepsAllToolsWhenNoBrowserNamed() {
         let tools = [
             makeSpec(server: "chrome-devtools", name: "new_page"),

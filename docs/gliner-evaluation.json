@@ -1,0 +1,229 @@
+{
+  "date": "2026-09-17",
+  "host": {
+    "chip": "Apple M5 Max",
+    "memory_gib": 128,
+    "macos": "27.0 (26A428)",
+    "python": "3.13.15"
+  },
+  "cua_driver_version": "0.28.2",
+  "cua_example_revision": "201732fffd81a40818be7ce2e04269aec962bc42",
+  "model_revisions": {
+    "fastino/gliner2.5-small-v1": "f1e4d8fdd6fe328f45dee6aca3e6a07c9db4296e",
+    "fastino/gliner2.5-base-v1": "78cea040597df251eedefa9d7ee2a756af39fe64",
+    "fastino/gliner2.5-multi-v1": "235cf92d6d4318da9bfca0d08975c8fa7250d13b"
+  },
+  "latency_fixture": [
+    {
+      "model": "fastino/gliner2.5-small-v1",
+      "device": "cpu",
+      "iterations": 20,
+      "load_ms": 3352.894916009973,
+      "warm_p50_ms": 30.101791497145314,
+      "warm_p95_ms": 31.137208003201522,
+      "submit_correct": 20,
+      "ambiguous_selected": "abstain",
+      "confidence": 0.8998090028762817,
+      "probabilities": {
+        "submit-form": 0.8390084004338545,
+        "reobserve": 0.07953135256042045,
+        "abstain": 0.08146024700572506
+      }
+    },
+    {
+      "model": "fastino/gliner2.5-small-v1",
+      "device": "mps",
+      "iterations": 20,
+      "load_ms": 1956.417749999673,
+      "warm_p50_ms": 12.563687996589579,
+      "warm_p95_ms": 13.737000001128763,
+      "submit_correct": 20,
+      "ambiguous_selected": "abstain",
+      "confidence": 0.8998088836669922,
+      "probabilities": {
+        "submit-form": 0.839008213506399,
+        "reobserve": 0.07953133843057965,
+        "abstain": 0.08146044806302134
+      }
+    },
+    {
+      "model": "fastino/gliner2.5-base-v1",
+      "device": "cpu",
+      "iterations": 20,
+      "load_ms": 8881.169957996462,
+      "warm_p50_ms": 66.5531455015298,
+      "warm_p95_ms": 68.16237499879207,
+      "submit_correct": 20,
+      "ambiguous_selected": "abstain",
+      "confidence": 0.9952463507652283,
+      "probabilities": {
+        "submit-form": 0.7497368310128839,
+        "reobserve": 0.14507738420404606,
+        "abstain": 0.10518578478307003
+      }
+    },
+    {
+      "model": "fastino/gliner2.5-base-v1",
+      "device": "mps",
+      "iterations": 20,
+      "load_ms": 3020.131291996222,
+      "warm_p50_ms": 18.898437992902473,
+      "warm_p95_ms": 20.164458997896872,
+      "submit_correct": 20,
+      "ambiguous_selected": "abstain",
+      "confidence": 0.9952463507652283,
+      "probabilities": {
+        "submit-form": 0.7497374117193186,
+        "reobserve": 0.14507687918074388,
+        "abstain": 0.10518570909993752
+      }
+    },
+    {
+      "model": "fastino/gliner2.5-multi-v1",
+      "device": "cpu",
+      "iterations": 20,
+      "load_ms": 11472.854042003746,
+      "warm_p50_ms": 88.63202099746559,
+      "warm_p95_ms": 91.76925000792835,
+      "submit_correct": 20,
+      "ambiguous_selected": "abstain",
+      "confidence": 0.8386921286582947,
+      "probabilities": {
+        "submit-form": 0.857983467488407,
+        "reobserve": 0.04648019265379363,
+        "abstain": 0.09553633985779929
+      }
+    },
+    {
+      "model": "fastino/gliner2.5-multi-v1",
+      "device": "mps",
+      "iterations": 20,
+      "load_ms": 4541.571207999368,
+      "warm_p50_ms": 20.138187501288485,
+      "warm_p95_ms": 20.827083993935958,
+      "submit_correct": 20,
+      "ambiguous_selected": "abstain",
+      "confidence": 0.8386894464492798,
+      "probabilities": {
+        "submit-form": 0.8579844184128269,
+        "reobserve": 0.04647957726434651,
+        "abstain": 0.09553600432282652
+      }
+    }
+  ],
+  "synthetic_quality": [
+    {
+      "model": "fastino/gliner2.5-base-v1",
+      "device": "cpu",
+      "dataset": "synthetic-v1",
+      "intent_count": 100,
+      "action_accuracy": 0.7,
+      "slot_micro_f1": 0.5490196078431373,
+      "intent_warm_p50_ms": 92.56404198822565,
+      "click_top1": 1.0,
+      "ambiguous_safe": true,
+      "passed_quality_gate": false,
+      "real_command_accuracy_verified": false
+    },
+    {
+      "model": "fastino/gliner2.5-multi-v1",
+      "device": "cpu",
+      "dataset": "synthetic-v1",
+      "intent_count": 100,
+      "action_accuracy": 0.36,
+      "slot_micro_f1": 0.5497076023391813,
+      "intent_warm_p50_ms": 103.30041700217407,
+      "click_top1": 1.0,
+      "ambiguous_safe": true,
+      "passed_quality_gate": false,
+      "real_command_accuracy_verified": false
+    },
+    {
+      "model": "fastino/gliner2.5-small-v1",
+      "device": "cpu",
+      "dataset": "synthetic-v1",
+      "intent_count": 100,
+      "action_accuracy": 0.66,
+      "slot_micro_f1": 0.5549132947976878,
+      "intent_warm_p50_ms": 42.44691699568648,
+      "click_top1": 1.0,
+      "ambiguous_safe": true,
+      "passed_quality_gate": false,
+      "real_command_accuracy_verified": false
+    }
+  ],
+  "live_fixture": {
+    "mock.jsonl": [
+      {
+        "action_ms": 2778.9,
+        "candidate": "type-verification-value",
+        "confidence": 1.0,
+        "decision_ms": 10.79,
+        "dry_run": false,
+        "event": "step",
+        "probabilities": {
+          "abstain": 0.0,
+          "reobserve": 0.0,
+          "type-verification-value": 1.0
+        },
+        "step": 1
+      },
+      {
+        "action_ms": 2155.99,
+        "candidate": "submit-form",
+        "confidence": 1.0,
+        "decision_ms": 3.1,
+        "dry_run": false,
+        "event": "step",
+        "probabilities": {
+          "abstain": 0.0,
+          "reobserve": 0.0,
+          "submit-form": 1.0
+        },
+        "step": 2
+      },
+      {
+        "event": "outcome",
+        "outcome": "verified",
+        "token": "jev-4ee5b6896b"
+      }
+    ],
+    "gliner-small-cpu.jsonl": [
+      {
+        "action_ms": 2777.14,
+        "candidate": "type-verification-value",
+        "confidence": 0.5169097185134888,
+        "decision_ms": 3437.85,
+        "dry_run": false,
+        "event": "step",
+        "probabilities": {
+          "abstain": 0.21792063074661633,
+          "reobserve": 0.21277347501013705,
+          "type-verification-value": 0.5693058942432466
+        },
+        "step": 1
+      },
+      {
+        "action_ms": 2159.62,
+        "candidate": "submit-form",
+        "confidence": 0.945192277431488,
+        "decision_ms": 81.61,
+        "dry_run": false,
+        "event": "step",
+        "probabilities": {
+          "abstain": 0.12635736766652783,
+          "reobserve": 0.10387504224992763,
+          "submit-form": 0.7697675900835446
+        },
+        "step": 2
+      },
+      {
+        "event": "outcome",
+        "outcome": "verified",
+        "token": "jev-ba9dbc79b3"
+      }
+    ]
+  },
+  "phase_0_quality_gate_passed": false,
+  "real_command_accuracy_verified": false
+}

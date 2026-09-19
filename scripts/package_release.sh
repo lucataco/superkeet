@@ -188,10 +188,13 @@ EOF
 fi
 
 verify_parakeet_architecture "$PARAKEET_BINARY"
-if [[ "$("$PARAKEET_BINARY" protocol-version)" != "1" ]]; then
-    printf 'Bundled engine must support transcript protocol 1 (parakeet-cli v0.1.6 or later).\n' >&2
+case "$("$PARAKEET_BINARY" protocol-version)" in
+    1|2) ;;
+    *)
+    printf 'Bundled engine must support transcript protocol 1 or 2 (parakeet-cli v0.1.6 or later; v0.1.7 for interim text).\n' >&2
     exit 1
-fi
+    ;;
+esac
 
 printf '==> Building %s (release)...\n' "$APP_NAME"
 swift build -c release --package-path "$REPO_DIR"
@@ -206,6 +209,8 @@ cp "$INFO_PLIST" "$BUNDLE_DIR/Contents/"
 cp "$ENTITLEMENTS_PATH" "$BUNDLE_DIR/Contents/Resources/"
 cp "$REPO_DIR/Resources/AppIcon.icns" "$BUNDLE_DIR/Contents/Resources/"
 cp "$PARAKEET_BINARY" "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
+mkdir -p "$BUNDLE_DIR/Contents/Resources/gliner"
+cp "$REPO_DIR/scripts/gliner/serve_grounder.py" "$REPO_DIR/scripts/gliner/gliner_adapter.py" "$BUNDLE_DIR/Contents/Resources/gliner/"
 chmod 755 "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
 
 printf '==> Signing %s...\n' "$BUNDLE_NAME"

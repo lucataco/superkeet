@@ -8,17 +8,53 @@ struct TranscriptEvent: Codable, Equatable {
     var failedSegments: Int?
     var droppedSamples: Int?
     var message: String?
+    /// Protocol 2 `partial` events: 1-based order within the session.
+    var sequence: Int?
+    /// Protocol 2 `partial` events: the preview window left out older audio.
+    var truncated: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case type, text, status, message
+        case type, text, status, message, sequence, truncated
         case sessionID = "session_id"
         case failedSegments = "failed_segments"
         case droppedSamples = "dropped_samples"
     }
 
+    /// Whether a `complete` event reports loss or failure. Unrelated to the
+    /// protocol-2 `partial` event type, which is interim text.
     var isPartial: Bool {
         status == "partial" || status == "error" || (failedSegments ?? 0) > 0 || (droppedSamples ?? 0) > 0
     }
+
+    var kind: TranscriptEventKind {
+        switch type {
+        case "session_started": return .sessionStarted
+        case "transcribing": return .transcribing
+        case "partial": return .partial
+        case "complete": return .complete
+        default: return .unrecognized(type)
+        }
+    }
+
+    /// The interim transcript a protocol-2 `partial` event carries, or `nil`
+    /// for any other event or a malformed one.
+    var interimTranscript: PartialTranscript? {
+        guard kind == .partial, let text, let sequence, sequence > 0 else { return nil }
+        return PartialTranscript(text: text, isFinal: false, sequence: sequence)
+    }
+}
+
+/// Event types the client understands, plus a bucket for anything newer. The
+/// client ignores event types it does not know instead of failing the session,
+/// so an engine upgrade never has to be lock-stepped with the app.
+enum TranscriptEventKind: Equatable {
+    case sessionStarted
+    case transcribing
+    /// Protocol 2: interim text while the session still records. Advisory; only
+    /// `complete` carries the transcript.
+    case partial
+    case complete
+    case unrecognized(String)
 }
 
 struct TranscriptEventStream {

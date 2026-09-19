@@ -4,6 +4,48 @@ import XCTest
 final class MCPClientIntegrationTests: XCTestCase {
 
     @MainActor
+    func testPreservesStructuredContentSeparatelyFromTextSummary() async throws {
+        let script = #"""
+        import json, sys
+        for line in sys.stdin:
+            request = json.loads(line)
+            if "id" not in request:
+                continue
+            method = request["method"]
+            if method == "initialize":
+                result = {"protocolVersion":request["params"]["protocolVersion"], "capabilities":{"tools":{}},
+                          "serverInfo":{"name":"fixture","version":"1"}}
+            elif method == "tools/list":
+                result = {"tools":[{"name":"observe","inputSchema":{"type":"object"}}]}
+            elif method == "tools/call":
+                result = {"content":[{"type":"text","text":"short summary"}],
+                          "structuredContent":{"snapshot_id":"s00000001","value":"x" * 2000}}
+            else:
+                result = {}
+            print(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}), flush=True)
+        """#
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".py")
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let server = MCPServerConfiguration(name: "structured-fixture", command: "/usr/bin/python3", args: ["-u", file.path])
+        let manager = MCPClientManager()
+        await manager.connect(server)
+        do {
+            XCTAssertTrue(manager.state(for: server.id).isConnected)
+            let plain = try await manager.callTool(serverID: server.id, toolName: "observe", argumentsJSON: "{}")
+            XCTAssertEqual(plain, "short summary")
+            let structured = try await manager.callTool(serverID: server.id, toolName: "observe", argumentsJSON: "{}", structured: true)
+            let root = try NativeGroundingJSON.object(structured)
+            XCTAssertEqual(root["snapshot_id"] as? String, "s00000001")
+            XCTAssertEqual((root["value"] as? String)?.count, 2000)
+        } catch {
+            await manager.disconnect(server.id)
+            throw error
+        }
+        await manager.disconnect(server.id)
+    }
+
+    @MainActor
     func testConnectsToListedServer() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let command = environment["SUPERKEET_MCP_TEST_COMMAND"], !command.isEmpty else {

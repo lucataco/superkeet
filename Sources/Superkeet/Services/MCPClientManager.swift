@@ -36,7 +36,7 @@ enum MCPConnectionError: LocalizedError {
 }
 
 @MainActor
-final class MCPClientManager: ObservableObject {
+final class MCPClientManager: ObservableObject, ActionMCPManaging {
     static let shared = MCPClientManager()
 
     enum ConnectionState: Equatable {
@@ -60,12 +60,23 @@ final class MCPClientManager: ObservableObject {
     @Published private(set) var states: [UUID: ConnectionState] = [:]
     @Published private(set) var toolsByServer: [UUID: [MCPToolDescriptor]] = [:]
 
-    private let configStore: MCPServerConfigStore
+    // Explicit connections already carry their configuration; load the store for connectAllEnabled.
+    private let injectedConfigStore: MCPServerConfigStore?
+    private var configStore: MCPServerConfigStore { injectedConfigStore ?? .shared }
     private var connections: [UUID: Connection] = [:]
+    private var connectionGenerations: [UUID: UUID] = [:]
+    private let connector: (@MainActor (MCPServerConfiguration, UUID) async throws -> Connection)?
+    private let toolLoader: (@MainActor (MCPServerConfiguration, Connection, UUID) async throws -> [MCPToolDescriptor])?
     private let connectTimeoutSeconds: Double = 60
 
-    init(configStore: MCPServerConfigStore = .shared) {
-        self.configStore = configStore
+    init(
+        configStore: MCPServerConfigStore? = nil,
+        connector: (@MainActor (MCPServerConfiguration, UUID) async throws -> Connection)? = nil,
+        toolLoader: (@MainActor (MCPServerConfiguration, Connection, UUID) async throws -> [MCPToolDescriptor])? = nil
+    ) {
+        self.injectedConfigStore = configStore
+        self.connector = connector
+        self.toolLoader = toolLoader
     }
 
     func state(for id: UUID) -> ConnectionState {
@@ -91,26 +102,65 @@ final class MCPClientManager: ObservableObject {
     }
 
     func disconnectAll() async {
-        for id in connections.keys {
+        for id in Set(connections.keys).union(connectionGenerations.keys) {
             await disconnect(id)
         }
     }
 
     func connect(_ server: MCPServerConfiguration) async {
-        await disconnect(server.id)
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !Task.isCancelled else { return }
+        let generation = UUID()
+        connectionGenerations[server.id] = generation
+        await withTaskCancellationHandler {
+            await connect(server, generation: generation)
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, self.connectionGenerations[server.id] == generation else { return }
+                await self.disconnect(server.id)
+            }
+        }
+    }
+
+    private func connect(_ server: MCPServerConfiguration, generation: UUID) async {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard connectionGenerations[server.id] == generation, !Task.isCancelled else { return }
+        await disconnectConnection(server.id)
+        guard connectionGenerations[server.id] == generation, !Task.isCancelled else { return }
         states[server.id] = .connecting
         do {
-            let connection = try await performConnect(server)
+            let connection: Connection
+            if let connector {
+                connection = try await connector(server, generation)
+            } else {
+                connection = try await performConnect(server, generation: generation)
+            }
+            guard connectionGenerations[server.id] == generation, !Task.isCancelled else {
+                connection.cleanup()
+                await connection.client.disconnect()
+                return
+            }
             connections[server.id] = connection
-            let tools = try await loadTools(server, client: connection.client)
+            let tools: [MCPToolDescriptor]
+            if let toolLoader {
+                tools = try await toolLoader(server, connection, generation)
+            } else {
+                tools = try await loadTools(server, client: connection.client)
+            }
+            guard connectionGenerations[server.id] == generation, connections[server.id] === connection,
+                  !Task.isCancelled else { return }
             toolsByServer[server.id] = tools
             states[server.id] = .connected
             mcpLog.info("Connected MCP server \(server.trimmedName, privacy: .public) with \(tools.count) tools")
         } catch {
+            guard connectionGenerations[server.id] == generation else { return }
             let message = error.localizedDescription
             let excerpt = connections[server.id]?.stderrExcerpt
             let combined = [message, excerpt].compactMap { $0 }.joined(separator: "\n")
-            await disconnect(server.id)
+            await disconnectConnection(server.id)
+            guard connectionGenerations[server.id] == generation else { return }
+            connectionGenerations[server.id] = nil
+            if Task.isCancelled || ActionErrorHandling.isCancellation(error) { return }
             toolsByServer[server.id] = nil
             states[server.id] = .failed(combined)
             mcpLog.error("MCP connect failed for \(server.trimmedName, privacy: .public): \(message, privacy: .public)")
@@ -118,6 +168,13 @@ final class MCPClientManager: ObservableObject {
     }
 
     func disconnect(_ id: UUID) async {
+        dispatchPrecondition(condition: .onQueue(.main))
+        connectionGenerations[id] = nil
+        await disconnectConnection(id)
+    }
+
+    private func disconnectConnection(_ id: UUID) async {
+        dispatchPrecondition(condition: .onQueue(.main))
         states[id] = .disconnected
         toolsByServer[id] = nil
         guard let connection = connections.removeValue(forKey: id) else { return }
@@ -125,21 +182,40 @@ final class MCPClientManager: ObservableObject {
         await connection.client.disconnect()
     }
 
-    func callTool(serverID: UUID, toolName: String, argumentsJSON: String) async throws -> String {
+    func callTool(serverID: UUID, toolName: String, argumentsJSON: String, structured: Bool = false) async throws -> String {
+        try Task.checkCancellation()
         guard let connection = connections[serverID], states[serverID]?.isConnected == true else {
             throw MCPConnectionError.notConnected
         }
         let arguments = Self.decodeArguments(argumentsJSON)
         do {
-            let (content, isError) = try await connection.client.callTool(name: toolName, arguments: arguments)
-            let text = Self.summarize(content)
-            if isError == true {
+            let context = try await connection.client.send(CallTool.request(.init(name: toolName, arguments: arguments)))
+            let result = try await context.value
+            try Task.checkCancellation()
+            let text = Self.summarize(result.content)
+            if result.isError == true {
                 throw MCPConnectionError.toolReportedError(text)
+            }
+            if structured {
+                // A server without structured content answers with its text.
+                // Callers that require JSON (native grounding) validate the
+                // result and reject text; planner-facing observations fall
+                // back to the ordinary text result.
+                guard let content = result.structuredContent else { return text }
+                let data = try JSONEncoder().encode(content)
+                guard data.count <= NativeGroundingJSON.maximumObservationBytes else {
+                    throw ActionChoiceError.invalid("Driver observation exceeds 1 MB; narrow the window")
+                }
+                guard let json = String(data: data, encoding: .utf8) else {
+                    throw ActionChoiceError.invalid("invalid structured result encoding")
+                }
+                return json
             }
             return text
         } catch let error as MCPConnectionError {
             throw error
         } catch {
+            if ActionErrorHandling.isCancellation(error) { throw CancellationError() }
             throw MCPConnectionError.toolFailed(error.localizedDescription)
         }
     }
@@ -175,8 +251,11 @@ final class MCPClientManager: ObservableObject {
         .joined(separator: "\n")
     }
 
-    private func performConnect(_ server: MCPServerConfiguration) async throws -> Connection {
+    private func performConnect(_ server: MCPServerConfiguration, generation: UUID) async throws -> Connection {
+        dispatchPrecondition(condition: .onQueue(.main))
         let searchPath = await LoginShellPath.current()
+        try Task.checkCancellation()
+        guard connectionGenerations[server.id] == generation else { throw CancellationError() }
         guard let executable = MCPExecutableResolver.resolve(command: server.command, searchPath: searchPath) else {
             throw MCPConnectionError.commandNotFound(server.trimmedCommand)
         }
@@ -219,9 +298,13 @@ final class MCPClientManager: ObservableObject {
 
         process.terminationHandler = { [weak self] proc in
             Task { @MainActor in
-                self?.handleTermination(serverID: server.id, status: proc.terminationStatus)
+                self?.handleTermination(serverID: server.id, generation: generation, status: proc.terminationStatus)
             }
         }
+
+        // Register the pending process too, so cancellation/reconnect can close
+        // a transport still waiting for its initial handshake.
+        connections[server.id] = connection
 
         do {
             try process.run()
@@ -254,7 +337,9 @@ final class MCPClientManager: ObservableObject {
         var descriptors: [MCPToolDescriptor] = []
         var cursor: String?
         while true {
+            try Task.checkCancellation()
             let (page, nextCursor) = try await client.listTools(cursor: cursor)
+            try Task.checkCancellation()
             for tool in page {
                 let annotations = MCPToolAnnotations(
                     readOnlyHint: tool.annotations.readOnlyHint,
@@ -280,12 +365,14 @@ final class MCPClientManager: ObservableObject {
         return descriptors
     }
 
-    private func handleTermination(serverID: UUID, status: Int32) {
-        guard connections[serverID] != nil else { return }
+    func handleTermination(serverID: UUID, generation: UUID, status: Int32) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard connectionGenerations[serverID] == generation, let connection = connections.removeValue(forKey: serverID) else { return }
+        connectionGenerations[serverID] = nil
         states[serverID] = .failed("The MCP server exited (code \(status)).")
         toolsByServer[serverID] = nil
-        connections[serverID]?.cleanup()
-        connections[serverID] = nil
+        connection.cleanup()
+        Task { await connection.client.disconnect() }
     }
 
     final class Connection: @unchecked Sendable {

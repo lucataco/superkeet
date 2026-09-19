@@ -27,6 +27,7 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - App-scoped phrase replacements and opt-in spoken correction commands with undo
 - Setup diagnostics for microphone access, engine presence, runtime directory, and daemon state
 - Optional **Actions Mode** that turns a spoken command into tool calls on local MCP servers, planned on-device and approved by you
+- **Instant app launch** in Actions Mode: “open Notes and…” opens Notes while you are still speaking, spotting the app name in the engine's own interim text (parakeet-cli 0.1.7) or, on older engines, Apple's on-device recogniser
 - 100% local transcription via `parakeet`
 
 ## Requirements
@@ -54,7 +55,7 @@ cd superkeet
 open ~/Applications/Superkeet.app
 ```
 
-`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`. It requires a protocol-1 engine (v0.1.6). If no local engine is found, it clones the pinned tag into `.build/parakeet-cli-v0.1.6` and builds it with Cargo. Source installs therefore require `git` and Rust/Cargo. To use an existing engine checkout, set `PARAKEET_SOURCE_DIR=/path/to/parakeet-cli`.
+`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`. It requires a protocol-1 or protocol-2 engine (v0.1.6 or later; v0.1.7 adds the interim text used by instant app launch). If no local engine is found, it clones the pinned tag into `.build/parakeet-cli-v0.1.7` and builds it with Cargo. Source installs therefore require `git` and Rust/Cargo. To use an existing engine checkout, set `PARAKEET_SOURCE_DIR=/path/to/parakeet-cli`.
 
 By default, local installs are ad-hoc signed. To keep the same macOS privacy identity across local installs, pass a Developer ID identity:
 
@@ -106,7 +107,7 @@ If you use `swift run` during development, make sure the active developer direct
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-`swift run` also needs a protocol-1 `parakeet` engine because the release app bundle is not assembled. It builds `PARAKEET_SOURCE_DIR`, an adjacent Formulae/sibling checkout, or the version-specific `.build/parakeet-cli-v0.1.6` checkout using Cargo with `--locked`. Explicit binary overrides skip the build. Existing source checkouts are not reset.
+`swift run` also needs a `parakeet` engine (protocol 1 or 2) because the release app bundle is not assembled. It builds `PARAKEET_SOURCE_DIR`, an adjacent Formulae/sibling checkout, or the version-specific `.build/parakeet-cli-v0.1.7` checkout using Cargo with `--locked`. Explicit binary overrides skip the build. Existing source checkouts are not reset.
 
 If you already have a local engine, you can still point Superkeet at it directly:
 
@@ -222,7 +223,9 @@ This keeps the default flow safer and simpler. Auto-paste is available, but it d
 SuperkeetApp (SwiftUI + AppKit)
     ├── MenuBarManager
     ├── HotkeyManager
-    ├── AudioLevelMonitor
+    ├── MicrophoneTapHub (one shared input tap)
+    │       ├── AudioLevelMonitor
+    │       └── SpeechAnalyzerPartialSource (macOS 26, live command text)
     ├── RecordingOverlayWindowController
     ├── PasteService
     ├── HistoryStore

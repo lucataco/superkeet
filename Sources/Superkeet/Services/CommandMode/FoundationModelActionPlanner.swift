@@ -7,129 +7,77 @@ import FoundationModels
 private let plannerLog = Logger(subsystem: "com.superkeet.app", category: "ActionPlanner")
 
 @available(macOS 26.0, *)
-enum MCPGenerationSchemaConverter {
-    static func schema(fromJSON json: String) -> GenerationSchema? {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let root = dynamicSchema(from: object) else {
-            return nil
-        }
-        return try? GenerationSchema(root: root, dependencies: [])
-    }
-
-    static func dynamicSchema(from object: [String: Any]) -> DynamicGenerationSchema? {
-        let type = object["type"] as? String
-
-        if type == "array" || object["items"] != nil {
-            let items = (object["items"] as? [String: Any]) ?? ["type": "string"]
-            guard let item = dynamicSchema(from: items) else { return nil }
-            return DynamicGenerationSchema(
-                arrayOf: item,
-                minimumElements: object["minItems"] as? Int,
-                maximumElements: object["maxItems"] as? Int
-            )
-        }
-
-        if let choices = object["enum"] as? [String], !choices.isEmpty {
-            return DynamicGenerationSchema(
-                name: uniqueName(object["title"] as? String ?? "value"),
-                anyOf: choices
-            )
-        }
-
-        switch type {
-        case "string":
-            return DynamicGenerationSchema(type: String.self)
-        case "integer":
-            return DynamicGenerationSchema(type: Int.self)
-        case "number":
-            return DynamicGenerationSchema(type: Double.self)
-        case "boolean":
-            return DynamicGenerationSchema(type: Bool.self)
-        case "object", .none:
-            return objectSchema(from: object)
-        default:
-            return DynamicGenerationSchema(type: String.self)
-        }
-    }
-
-    private static func objectSchema(from object: [String: Any]) -> DynamicGenerationSchema {
-        let properties = object["properties"] as? [String: Any] ?? [:]
-        let required = Set(object["required"] as? [String] ?? [])
-        let props: [DynamicGenerationSchema.Property] = properties
-            .sorted { $0.key < $1.key }
-            .compactMap { key, value in
-                guard let sub = value as? [String: Any], let schema = dynamicSchema(from: sub) else { return nil }
-                return DynamicGenerationSchema.Property(
-                    name: key,
-                    schema: schema,
-                    isOptional: !required.contains(key)
-                )
-            }
-        return DynamicGenerationSchema(
-            name: uniqueName(object["title"] as? String ?? "parameters"),
-            properties: props
-        )
-    }
-
-    private static func uniqueName(_ raw: String) -> String {
-        let sanitized = raw.map { character -> Character in
-            character.isLetter || character.isNumber || character == "_" ? character : "_"
-        }
-        let base = sanitized.isEmpty ? "value" : String(sanitized)
-        return "\(base)_\(UUID().uuidString.prefix(8))"
-    }
-}
-
-@available(macOS 26.0, *)
-struct MCPToolBridge: Tool, CustomStringConvertible {
-    typealias Arguments = GeneratedContent
-    typealias Output = String
-
-    let spec: ActionToolSpec
-    let execute: @Sendable (ActionToolSpec, String) async throws -> String
-
-    var name: String { spec.toolName }
-
-    var description: String {
-        let base = spec.description.isEmpty ? spec.displayName : spec.description
-        let singleLine = base.replacingOccurrences(of: "\n", with: " ")
-        return singleLine.count > 140 ? String(singleLine.prefix(140)) : singleLine
-    }
-
-    var parameters: GenerationSchema {
-        MCPGenerationSchemaConverter.schema(fromJSON: spec.inputSchemaJSON)
-            ?? MCPGenerationSchemaConverter.dynamicSchema(from: [:])
-                .flatMap { try? GenerationSchema(root: $0, dependencies: []) }
-            ?? String.generationSchema
-    }
-
-    func call(arguments: GeneratedContent) async throws -> String {
-        try await execute(spec, arguments.jsonString)
-    }
-}
-
-@available(macOS 26.0, *)
-final class FoundationModelActionPlanner: ActionPlanning {
+final class FoundationModelActionPlanner: ContextualActionPlanning {
     /// Context the model needs to keep free for instructions, the spoken task,
     /// streamed replies, and tool results. Tools are only allowed to use what is
     /// left of `SystemLanguageModel.default.contextSize`.
     private static let reservedContextTokens = 2_400
     private static let minimumToolBudgetTokens = 400
     private static let maximumOverflowRetries = 2
+    /// How many times one step may resume in a fresh session after its
+    /// transcript overflowed mid-way. Each continuation carries a condensed record
+    /// of the calls made so far.
+    static let maximumContinuations = 1
 
-    private static let instructions = """
+    private static let baseInstructions = """
     You are Superkeet, an on-device assistant that carries out the user's spoken request by calling the provided tools.
     Call a tool only when it is needed to complete the request, and prefer read-only tools when possible.
-    To open a macOS app, run the command `open -a "App Name"` (for example, `open -a Helium`).
-    To open a URL in the browser the user names, run the command `open -a "Browser Name" "https://example.com"`.
     Always give URLs a scheme such as `https://`; never pass a bare domain like `youtube.com`.
     Use the app or browser the user names. Do not drive a different browser's automation tools instead.
-    Never call the same tool with the same arguments more than once; reuse the result you already received.
+    Never repeat a mutating tool with the same arguments; reuse its result. Reuse read-only results unless fresh page state is required.
     Do not invent tool results. When the request is complete, reply with a short, plain-language summary.
     Only report that something happened if a tool result actually shows it happened.
     If none of the available tools can accomplish the request, say so plainly instead of calling an unrelated tool.
     """
+
+    static func instructions(
+        for tools: [ActionToolSpec], intent: ActionIntent? = nil, context: ActionPlanContext? = nil, task: String = ""
+    ) -> String {
+        let names = Set(tools.map(\.toolName))
+        var text = baseInstructions
+        if names.contains("open_app") {
+            text += "\nTo open an app, use open_app with its installed app name."
+        }
+        if names.contains("open_url") {
+            text += "\nTo open a URL, use open_url. Set browser to the browser the user names; omit it only for the default browser."
+        }
+        if names.contains("press_shortcut") {
+            text += "\nTo use a keyboard shortcut in an app that is already open, use press_shortcut with the app name and keys such as [\"cmd\",\"n\"] for New, [\"cmd\",\"s\"] for Save, or [\"cmd\",\"w\"] to close. Prefer it over clicking through menus."
+        }
+        if let context, !context.isEmpty {
+            let progress = context.instructions(for: task)
+            if !progress.isEmpty { text += "\n\n" + progress }
+        }
+        if !names.isDisjoint(with: ["superkeet_native_click", "superkeet_native_set_text"]) {
+            text += """
+
+            For native clicks and text entry, use superkeet_native_click or superkeet_native_set_text when provided.
+            Supply one step, the exact app name, the control label (including its section if needed), and exact replacement text.
+            If a grounded step stops or cannot verify its effect, stop the task. Never try another tool to repeat that action.
+            """
+        }
+        if !names.isDisjoint(with: ["run_process", "run_command"]) {
+            text += "\nIf a native open tool cannot handle the request, the shell tool can run `open -a \"App Name\"` or `open -a \"Browser Name\" \"https://example.com\"`."
+        }
+        if intent?.scope == .activeTab {
+            text += """
+
+            This request targets an existing Chrome tab. Call list_pages first. Use only returned pageId values; never invent IDs.
+            The MCP [selected] marker is its tool context, not proof of the user's active tab. If multiple pages exist, verify focus using evaluate_script with () => ({focused: document.hasFocus(), url: location.href}) on observed pageIds. Do not bring a page to the front to manufacture focus.
+            Use the uniquely focused page, or the only available page. If the active tab cannot be identified from the available results, explain that and stop.
+            Keep that pageId for navigate_page, take_snapshot and click. If a tool has no pageId parameter, use select_page with the observed ID and bringToFront:false to set its context first.
+            Navigate in place with navigate_page; get click uids from take_snapshot. Refresh page lists and snapshots after page changes. Repeating these read-only observations is allowed; never repeat a mutation.
+            """
+        }
+        if let intent, intent.routingTerms.isSuperset(of: ["cloudflare", "dns"]),
+           !names.isDisjoint(with: ["navigate_page", "open_url", "browser_navigate"]) {
+            text += """
+
+            For Cloudflare DNS navigation, use `https://dash.cloudflare.com/?to=/:account/<zone>/dns/records`. Replace <zone> only with the exact domain supplied by the user or verified in tool results; retain :account. If the zone is unclear, ask rather than inventing or correcting a domain. Do not construct /dns URLs on the zone's website or www.cloudflare.com. Navigation alone does not prove that DNS records were read or changed.
+            """
+        }
+        return text
+    }
 
     func run(
         task: String,
@@ -138,20 +86,41 @@ final class FoundationModelActionPlanner: ActionPlanning {
         execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String,
         onEvent: @escaping @Sendable (ActionPlanEvent) -> Void
     ) async throws -> String {
-        let available = ActionToolFilter.filtering(ActionLimits.limitedTools(tools), task: task)
-        let prioritized = ActionLimits.prioritizedTools(available, task: task)
-            .filter { MCPGenerationSchemaConverter.schema(fromJSON: $0.inputSchemaJSON) != nil }
-        guard !prioritized.isEmpty else { throw ActionExecutionError.noTools }
+        try await run(step: ActionPlanStep(task: task), tools: tools, maxSteps: maxSteps, execute: execute, onEvent: onEvent)
+    }
 
+    func run(
+        step: ActionPlanStep,
+        tools: [ActionToolSpec],
+        maxSteps: Int,
+        execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String,
+        onEvent: @escaping @Sendable (ActionPlanEvent) -> Void
+    ) async throws -> String {
+        let task = step.task
+        let context = step.context
+        let intent = HeuristicIntentExtractor.intent(for: task)
         let recorder = ToolExecutionRecorder()
         let recordingExecute: @Sendable (ActionToolSpec, String) async throws -> String = { spec, arguments in
             await recorder.markExecuted()
-            return try await execute(spec, arguments)
+            do {
+                let result = try await execute(spec, arguments)
+                await recorder.record(toolName: spec.toolName, argumentsJSON: arguments, result: result)
+                return result
+            } catch {
+                await recorder.recordFailure(toolName: spec.toolName, argumentsJSON: arguments,
+                                             message: ActionErrorHandling.userFacingMessage(for: error))
+                throw error
+            }
         }
-        let candidates = prioritized.map { MCPToolBridge(spec: $0, execute: recordingExecute) }
+        let candidates = Self.toolBridges(from: tools, intent: intent, execute: recordingExecute)
+        guard !candidates.isEmpty else {
+            throw intent.scope == .activeTab ? ActionExecutionError.activeChromeTabUnavailable : .noTools
+        }
 
         var budget = toolBudgetTokens()
         var attempt = 0
+        var continuations = 0
+        var progress: ActionProgressSummary?
 
         while true {
             let selected = await selectTools(from: candidates, budget: budget)
@@ -163,10 +132,9 @@ final class FoundationModelActionPlanner: ActionPlanning {
 
             onEvent(.planning)
             do {
-                let session = LanguageModelSession(
-                    tools: selected.map { $0 as any Tool },
-                    instructions: Self.instructions
-                )
+                var instructions = Self.instructions(for: selected.map(\.spec), intent: intent, context: context, task: task)
+                if let progress { instructions += "\n\n" + progress.instructions() }
+                let session = LanguageModelSession(tools: selected.map { $0 as any Tool }, instructions: instructions)
                 var latest = ""
                 for try await snapshot in session.streamResponse(to: task) {
                     latest = snapshot.content
@@ -174,18 +142,39 @@ final class FoundationModelActionPlanner: ActionPlanning {
                 }
                 return latest
             } catch let error as LanguageModelSession.GenerationError {
-                let canRetry = await !recorder.hasExecuted
-                    && attempt < Self.maximumOverflowRetries
-                    && selected.count > 1
-                if case .exceededContextWindowSize = error, canRetry {
+                guard case .exceededContextWindowSize = error else { throw error }
+                if await !recorder.hasExecuted {
+                    // Nothing has happened yet, so a smaller tool set is a clean retry.
+                    guard attempt < Self.maximumOverflowRetries, selected.count > 1 else { throw error }
                     attempt += 1
                     budget = max(Self.minimumToolBudgetTokens, budget * 3 / 5)
                     plannerLog.info("Context window exceeded; retrying with a \(budget)-token tool budget")
                     continue
                 }
-                throw error
+                // Tools have run. Condense what happened and continue in a fresh
+                // session rather than losing the step; a repeated identical
+                // mutation is served from the run's cache, never re-executed.
+                guard continuations < Self.maximumContinuations else { throw error }
+                continuations += 1
+                progress = await recorder.progress
+                plannerLog.info("Context window exceeded after tool calls; continuing with a condensed transcript")
+                onEvent(.message("Condensing progress and continuing…"))
+                continue
             }
         }
+    }
+
+    /// Model-free preparation: rank the complete inventory before capping it,
+    /// then reuse these immutable schemas for all budget/overflow attempts.
+    static func toolBridges(
+        from tools: [ActionToolSpec], intent: ActionIntent,
+        execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String
+    ) -> [MCPToolBridge] {
+        let available = ActionToolFilter.filtering(tools, intent: intent)
+        let native = available.filter { $0.serverID == NativeOpenAction.serverID }
+        let external = available.filter { $0.serverID != NativeOpenAction.serverID }
+        let prioritized = native + ActionLimits.prioritizedTools(external, intent: intent)
+        return Array(prioritized.compactMap { MCPToolBridge(spec: $0, execute: execute) }.prefix(ActionLimits.maximumToolsPerAction))
     }
 
     private func toolBudgetTokens() -> Int {
@@ -213,7 +202,7 @@ final class FoundationModelActionPlanner: ActionPlanning {
         var selected: [MCPToolBridge] = []
         var used = 0
         for candidate in candidates {
-            let cost = ActionLimits.estimatedTokenCost(of: candidate.spec)
+            let cost = candidate.estimatedTokenCost
             if selected.isEmpty || used + cost <= budget {
                 selected.append(candidate)
                 used += cost
@@ -222,15 +211,25 @@ final class FoundationModelActionPlanner: ActionPlanning {
         return selected
     }
 
-    /// Tracks whether any tool has actually run. Once a tool has side effects we
-    /// must not silently restart the plan, so overflow retries are disabled.
+    /// Tracks the tool calls a step has made. Once a tool has side effects the
+    /// plan is never silently restarted from scratch; an overflow instead
+    /// continues from this record.
     private actor ToolExecutionRecorder {
         private var executed = false
+        private(set) var progress = ActionProgressSummary()
 
         var hasExecuted: Bool { executed }
 
         func markExecuted() {
             executed = true
+        }
+
+        func record(toolName: String, argumentsJSON: String, result: String) {
+            progress.record(toolName: toolName, argumentsJSON: argumentsJSON, result: result)
+        }
+
+        func recordFailure(toolName: String, argumentsJSON: String, message: String) {
+            progress.recordFailure(toolName: toolName, argumentsJSON: argumentsJSON, message: message)
         }
     }
 }

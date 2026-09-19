@@ -8,6 +8,38 @@ final class TranscriptProtocolTests: XCTestCase {
         return bytes
     }
 
+    func testUnknownEventTypesDecodeAndAreClassifiedAsUnrecognized() throws {
+        var stream = TranscriptEventStream()
+        let bytes = Data(#"{"type":"partial_v3","session_id":"one","text":"open the notes"}"#.utf8 + [0x0A])
+            + (try frame("open the notes app"))
+        let events = try stream.append(bytes)
+        XCTAssertEqual(events.map(\.kind), [.unrecognized("partial_v3"), .complete])
+        XCTAssertEqual(events.first?.text, "open the notes")
+        try stream.finish()
+    }
+
+    func testProtocolTwoPartialEventsCarryInterimTranscripts() throws {
+        var stream = TranscriptEventStream()
+        // Exactly what parakeet-cli 0.1.7 writes for "open the notes app and create a new note".
+        let wire = #"{"sequence":1,"session_id":"one","text":"Open the notes up","truncated":false,"type":"partial"}"# + "\n"
+            + #"{"sequence":2,"session_id":"one","text":"Open the notes app and create a","truncated":true,"type":"partial"}"# + "\n"
+        let events = try stream.append(Data(wire.utf8) + (try frame("Open the notes app and create a new note.")))
+        XCTAssertEqual(events.map(\.kind), [.partial, .partial, .complete])
+        XCTAssertEqual(events[0].interimTranscript, PartialTranscript(text: "Open the notes up", isFinal: false, sequence: 1))
+        XCTAssertEqual(events[1].interimTranscript, PartialTranscript(text: "Open the notes app and create a", isFinal: false, sequence: 2))
+        XCTAssertEqual(events[1].truncated, true)
+        XCTAssertNil(events[2].interimTranscript, "Only partial events carry interim text.")
+        XCTAssertFalse(events[0].isPartial, "An interim event is not a lossy completion.")
+        try stream.finish()
+    }
+
+    func testMalformedPartialEventsYieldNoInterimTranscript() {
+        XCTAssertNil(TranscriptEvent(type: "partial", sessionID: "one", text: "x").interimTranscript, "A partial without a sequence is unusable.")
+        XCTAssertNil(TranscriptEvent(type: "partial", sessionID: "one", sequence: 3).interimTranscript, "A partial without text is unusable.")
+        XCTAssertNil(TranscriptEvent(type: "partial", sessionID: "one", text: "x", sequence: 0).interimTranscript, "Sequences start at one.")
+        XCTAssertEqual(TranscriptEvent(type: "partial", sessionID: "one", text: "x", sequence: 1).kind, .partial)
+    }
+
     func testLongMultilineTranscriptIsDeliveredIntactAsOneMessage() throws {
         let transcript = "BEGIN\n" + String(repeating: "A agreed auth not like 🦜\n", count: 5_000) + "END"
         let bytes = try frame(transcript)
@@ -65,6 +97,13 @@ final class TranscriptProtocolTests: XCTestCase {
     }
 
     func testLossAndFailureCannotBeMistakenForCompleteSuccess() {
+        XCTAssertEqual(TranscriptEvent(type: "session_started", sessionID: "one").kind, .sessionStarted)
+        XCTAssertEqual(TranscriptEvent(type: "transcribing", sessionID: "one").kind, .transcribing)
+        XCTAssertEqual(TranscriptEvent(type: "complete", sessionID: "one", text: "", status: "ok").kind, .complete)
+        XCTAssertEqual(TranscriptEvent(type: "partial", sessionID: "one", text: "open the", sequence: 1).kind, .partial)
+        // A still-newer engine may add more; the client must not treat that as a protocol violation.
+        XCTAssertEqual(TranscriptEvent(type: "word_timing", sessionID: "one").kind, .unrecognized("word_timing"))
+        XCTAssertEqual(TranscriptEvent(type: "", sessionID: "one").kind, .unrecognized(""))
         XCTAssertTrue(TranscriptEvent(type: "complete", sessionID: "one", text: "recovered", status: "error").isPartial)
         XCTAssertTrue(TranscriptEvent(type: "complete", sessionID: "one", text: "recovered", status: "ok", droppedSamples: 1).isPartial)
         XCTAssertFalse(TranscriptEvent(type: "complete", sessionID: "one", text: "full", status: "ok", failedSegments: 0, droppedSamples: 0).isPartial)

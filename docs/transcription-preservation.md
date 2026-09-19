@@ -105,10 +105,23 @@ manifest/runner; voice versions may change the waveform and recorded hashes.
 ## Release dependency
 
 Superkeet v1.6.0 uses the published
-[parakeet-cli v0.1.6 release](https://github.com/lucataco/parakeet-cli/releases/tag/v0.1.6).
-The release, installer and development pins require v0.1.6 and validate transcript
-protocol 1. Local development can use `PARAKEET_SOURCE_DIR` or the adjacent
+[parakeet-cli v0.1.7 release](https://github.com/lucataco/parakeet-cli/releases/tag/v0.1.7).
+The release, installer and development pins target v0.1.7 and accept transcript
+protocol 1 or 2. Local development can use `PARAKEET_SOURCE_DIR` or the adjacent
 Formulae checkout.
+
+The client speaks daemon protocols 1 and 2 (`ParakeetService.supportedProtocolVersions`)
+and records which one the running engine reported. Protocol 2 (parakeet-cli
+0.1.7) adds opt-in interim text: when a Command Mode recording can use it,
+`start` carries `"partials": true` and the engine streams
+`{"type":"partial","session_id":…,"text":…,"sequence":n,"truncated":bool}`
+events, which `ParakeetService.interimTranscripts(sessionID:)` exposes as an
+`AsyncStream<PartialTranscript>`. Partials are advisory and never touch the
+`complete` text, the clipboard, history, or the loss accounting; dictation
+recordings never request them. Any other event type on the daemon's stdout is
+logged and ignored rather than treated as a protocol violation, so a still-newer
+engine can be adopted without lock-stepping the app release. Malformed events
+and an unsupported `protocol_version` in socket replies still fail the session.
 
 Persistent audio retention/replay/retry remains the explicitly later recovery
 phase. The app keeps no audio archive; persistent transcript history stays opt-in.

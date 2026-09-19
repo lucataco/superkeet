@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 DESCRIPTION = "Exercise the actual daemon transport and capture-failure completion, without recording audio."
+SUPPORTED_PROTOCOLS = {1, 2}
 import argparse
 import json
 from pathlib import Path
@@ -35,7 +36,8 @@ def main():
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--runtime-root", type=Path)
     args = parser.parse_args()
-    assert subprocess.check_output([str(args.engine), "protocol-version"], text=True).strip() == "1"
+    protocol = int(subprocess.check_output([str(args.engine), "protocol-version"], text=True).strip())
+    assert protocol in SUPPORTED_PROTOCOLS, f"Unsupported daemon protocol {protocol}"
     with tempfile.TemporaryDirectory(prefix="sk-", dir=args.runtime_root) as directory:
         path = Path(directory) / "s"
         pid = Path(directory) / "p"
@@ -50,7 +52,7 @@ def main():
                 if time.monotonic() > deadline:
                     raise TimeoutError("Engine did not start")
                 time.sleep(0.05)
-            assert request(path, {"command": "status"})["protocol_version"] == 1
+            assert request(path, {"command": "status"})["protocol_version"] == protocol
             with selectors.DefaultSelector() as selector:
                 selector.register(engine.stdout, selectors.EVENT_READ)
                 for session_id in ["first-🦜", "second-中文"]:

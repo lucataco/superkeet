@@ -65,11 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         hotkeyManager.onEscapePressed = { [weak self] in
-            DispatchQueue.main.async {
-                appLog.info("Escape callback fired — cancelling recording")
-                self?.menuBarManager.cancelRecordingOnly()
-                AgentSessionController.shared.cancel()
-            }
+            // The tap calls this on main. Cancel the session observed at key-down
+            // now, rather than queuing a callback that could cancel a later run.
+            appLog.info("Escape callback fired — cancelling active work")
+            self?.menuBarManager.cancelRecordingOnly()
+            AgentSessionController.shared.cancel()
         }
     }
 
@@ -130,6 +130,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !hotkeyManager.isListening {
             hotkeyManager.startRetryTimer()
         }
+        // Reserve speech assets, load the recogniser, and scan installed apps
+        // ahead of the first Command Mode recording. No-op when disabled.
+        Task { await SpeculativeLaunchCoordinator.shared.prepare() }
     }
 
     private func startDaemonWithErrorHandling() {
@@ -206,6 +209,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func performShutdownCleanup() async {
+        AgentSessionController.shared.cancel()
+        await GLiNERChooser.shared.shutdown()
         HistoryStore.shared.flushPendingSave()
         UsageStatsStore.shared.flushPendingSave()
         await parakeetService.cleanupAndWait()

@@ -14,7 +14,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
     var onPushToTalkStarted: (() -> Void)?
     var onPushToTalkEnded: (() -> Void)?
     var onCommandHotkeyPressed: (() -> Void)?
-    var onEscapePressed: (() -> Void)?
+    var onEscapePressed: (@MainActor () -> Void)?
 
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -153,16 +153,30 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         retryTimer = nil
     }
 
-    fileprivate func handleEvent(_ event: CGEvent) -> Bool {
+    @MainActor
+    func handleEvent(_ event: HotkeyEvent) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
         if hotkeyCaptureCount > 0 {
             return false
         }
 
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let keyCode = event.keyCode
         let flags = event.flags
         let eventType = event.type
 
-        if eventType == .keyDown && keyCode == 53 && (settings.isRecording || settings.isActionSessionActive) {
+        let escapeModifiers: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift, .maskSecondaryFn]
+        switch EscapeHotkeyPolicy.action(
+            isKeyDown: eventType == .keyDown,
+            matchesEscape: keyCode == 53 && flags.isDisjoint(with: escapeModifiers),
+            isRepeat: event.isRepeat,
+            isRecording: settings.isRecording, actionSessionActive: settings.isActionSessionActive
+        ) {
+        case .ignore: break
+        case .cancelAndPassThrough:
+            hotkeyLog.info("Escape pressed during an action — cancelling and passing through")
+            onEscapePressed?()
+            return false
+        case .cancelAndConsume:
             hotkeyLog.info("Escape pressed while active — cancelling")
             onEscapePressed?()
             return true
@@ -207,7 +221,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
             switch ToggleHotkeyPolicy.action(
                 isKeyDown: eventType == .keyDown,
                 matchesShortcut: Self.modifiersMatch(flags, required: settings.commandHotkeyModifierFlags),
-                isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                isRepeat: event.isRepeat
             ) {
             case .toggle:
                 hotkeyLog.info("Command hotkey pressed (keyCode=\(keyCode))")
@@ -223,7 +237,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         switch ToggleHotkeyPolicy.action(
             isKeyDown: eventType == .keyDown,
             matchesShortcut: Int(keyCode) == settings.toggleHotkeyKeyCode && Self.modifiersMatch(flags, required: settings.toggleHotkeyModifierFlags),
-            isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            isRepeat: event.isRepeat
         ) {
         case .toggle:
             hotkeyLog.info("Toggle hotkey pressed (keyCode=\(keyCode))")
@@ -407,7 +421,10 @@ private func hotkeyCallback(
     }
 
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-    let handled = manager.handleEvent(event)
+    let keyboard = HotkeyEvent(type: event.type, keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                               flags: event.flags, isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
+    // startListening installs this tap on the main run loop.
+    let handled = MainActor.assumeIsolated { manager.handleEvent(keyboard) }
     if handled {
         return nil
     }

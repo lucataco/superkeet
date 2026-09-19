@@ -1,11 +1,12 @@
 import Foundation
 import AVFoundation
 import CoreAudio
-import os.log
 
-private let audioLevelLog = Logger(subsystem: "com.superkeet.app", category: "AudioLevelMonitor")
-
-final class AudioLevelMonitor: ObservableObject, @unchecked Sendable {
+/// Level meter for the recording overlay. It is one subscriber of the shared
+/// `MicrophoneTapHub`, so it never owns the audio engine and can coexist with
+/// other consumers of the same microphone audio.
+@MainActor
+final class AudioLevelMonitor: ObservableObject {
     static let shared = AudioLevelMonitor()
 
     @Published private(set) var levels: [Float] = Array(repeating: 0, count: 8)
@@ -16,71 +17,38 @@ final class AudioLevelMonitor: ObservableObject, @unchecked Sendable {
 
     private static let publishInterval: TimeInterval = 1.0 / 15.0
 
-    private var audioEngine: AVAudioEngine?
+    private let hub: MicrophoneTapHub
+    private var subscription: MicrophoneTapHub.Subscription?
     private var smoothedLevel: Float = 0
     private var lastPublishedAt = Date.distantPast
 
-    private init() {}
+    init(hub: MicrophoneTapHub? = nil) {
+        self.hub = hub ?? .shared
+    }
 
     func startMonitoring() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !isMonitoring else { return }
 
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-            errorMessage = micPermissionDeniedMessage
-            return
-        }
-        errorMessage = nil
-
-        let requestedDevice = AppSettings.shared.audioInputDevice
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-
-        if !requestedDevice.isEmpty {
-            if let deviceID = AudioInputDeviceResolver.deviceID(forName: requestedDevice) {
-                do {
-                    try inputNode.auAudioUnit.setDeviceID(deviceID)
-                } catch {
-                    audioLevelLog.error(
-                        "Failed to set input device \(requestedDevice): \(error.localizedDescription)"
-                    )
-                    errorMessage = "The selected microphone is unavailable; metering the default input."
-                }
-            } else {
-                errorMessage = "The selected microphone is unavailable; metering the default input."
-            }
-        }
-
-        let format = inputNode.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            errorMessage = "Audio engine reported no usable input format."
-            return
-        }
-
         do {
-            try engine.start()
+            subscription = try hub.subscribe { [weak self] buffer, _ in
+                let level = Self.normalizedLevel(from: buffer)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.update(level: level) }
+                }
+            }
         } catch {
-            audioLevelLog.error("Failed to start audio engine: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             return
         }
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            let level = Self.normalizedLevel(from: buffer)
-            DispatchQueue.main.async {
-                self?.update(level: level)
-            }
-        }
-
-        self.audioEngine = engine
-        self.isMonitoring = true
+        errorMessage = hub.warning
+        isMonitoring = true
     }
 
     func stopMonitoring() {
         dispatchPrecondition(condition: .onQueue(.main))
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
+        if let subscription { hub.unsubscribe(subscription) }
+        subscription = nil
         smoothedLevel = 0
         lastPublishedAt = .distantPast
         isMonitoring = false
@@ -97,9 +65,9 @@ final class AudioLevelMonitor: ObservableObject, @unchecked Sendable {
         levels = Self.bands(for: smoothedLevel)
     }
 
-    static let bandWeights: [Float] = [0.7, 0.85, 1.0, 1.1, 1.05, 0.95, 0.8, 0.65]
+    nonisolated static let bandWeights: [Float] = [0.7, 0.85, 1.0, 1.1, 1.05, 0.95, 0.8, 0.65]
 
-    static var bandCount: Int {
+    nonisolated static var bandCount: Int {
         bandWeights.count
     }
 
@@ -119,7 +87,7 @@ final class AudioLevelMonitor: ObservableObject, @unchecked Sendable {
         return pow(min(1, rootMeanSquare * 8), 0.65)
     }
 
-    static func bands(for level: Float) -> [Float] {
+    nonisolated static func bands(for level: Float) -> [Float] {
         let clamped = min(max(level, 0), 1)
         return bandWeights.map { weight in min(1, clamped * weight) }
     }
@@ -222,5 +190,3 @@ enum AudioInputDeviceResolver {
         return buffers.contains { $0.mNumberChannels > 0 }
     }
 }
-
-private let micPermissionDeniedMessage = "Microphone access is required to meter audio levels."

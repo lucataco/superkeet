@@ -1,6 +1,6 @@
 import Foundation
 
-struct ActionToolSpec: Identifiable, Equatable {
+struct ActionToolSpec: Identifiable, Equatable, Sendable {
     let serverID: UUID
     let serverName: String
     let toolName: String
@@ -8,6 +8,15 @@ struct ActionToolSpec: Identifiable, Equatable {
     let description: String
     let risk: ActionToolRisk
     let inputSchemaJSON: String
+    // Local execution policy; never part of the model's tool schema.
+    var nativeObservation = false
+    var requiresFreshObservation = false
+    /// A read-only observation whose structured result is projected into
+    /// compact text for the planner (see `ObservationProjection`).
+    var compactObservation = false
+    var groundingDecision: ActionGroundingDecision?
+    var approvalSummary: String?
+    var nativePreflight: NativeActionPreflight?
 
     var id: String { "\(serverID.uuidString)/\(toolName)" }
 
@@ -22,7 +31,13 @@ struct ActionToolSpec: Identifiable, Equatable {
     }
 }
 
-struct ActionApprovalRequest: Identifiable, Equatable {
+struct ActionGroundingDecision: Codable, Equatable, Sendable {
+    let selectedID: String
+    let confidence: Double
+    let decisionMilliseconds: Double
+}
+
+struct ActionApprovalRequest: Identifiable, Equatable, Sendable {
     let id = UUID()
     let tool: ActionToolSpec
     let argumentsJSON: String
@@ -46,9 +61,13 @@ enum ActionPlanEvent: Equatable {
 enum ActionExecutionError: LocalizedError, Equatable {
     case unavailable
     case noTools
+    case noMCPServersEnabled
+    case activeChromeTabUnavailable
     case approvalDenied(String)
+    case planDenied
     case stepBudgetExceeded
     case timedOut
+    case runDeadlineExceeded(seconds: Int)
     case cancelled
     case argumentsTooLarge
 
@@ -58,12 +77,20 @@ enum ActionExecutionError: LocalizedError, Equatable {
             return "Actions Mode needs macOS 26 with Apple Intelligence enabled."
         case .noTools:
             return "No MCP tools are available. Add and enable an MCP server in Settings > Actions."
+        case .noMCPServersEnabled:
+            return "No MCP servers are enabled. Enable a server in Settings > Actions for this request."
+        case .activeChromeTabUnavailable:
+            return "Active-tab requests require one enabled Chrome DevTools server connected to your running Chrome profile. Enable chrome-devtools in Settings > Actions and allow the connection in Chrome."
         case .approvalDenied(let tool):
             return "The action was not approved, so '\(tool)' did not run."
+        case .planDenied:
+            return "The plan was not approved, so no further steps ran."
         case .stepBudgetExceeded:
             return "The action used too many steps and was stopped."
         case .timedOut:
             return "The action took too long and was stopped."
+        case .runDeadlineExceeded(let seconds):
+            return "The command did not finish within \(seconds) seconds and was stopped."
         case .cancelled:
             return "The action was cancelled."
         case .argumentsTooLarge:
@@ -86,50 +113,26 @@ enum ActionLimits {
         throw ActionExecutionError.argumentsTooLarge
     }
 
-    /// Approximate token cost of a tool definition when the exact framework
-    /// counter is unavailable (macOS 26.0–26.3). The bridge drops schema
-    /// descriptions and titles, so they are pruned first; measurements put the
-    /// framework's real cost at roughly one token per two pruned characters,
-    /// and this rounds up to stay safely inside the context window.
+    /// Estimate the same clipped descriptions and projected schema used by the
+    /// bridge when the framework's exact counter is unavailable (26.0–26.3).
     static func estimatedTokenCost(of tool: ActionToolSpec) -> Int {
-        tool.toolName.count + tool.description.count + prunedSchemaCharacters(tool.inputSchemaJSON) / 2 + 40
-    }
-
-    private static let prunedSchemaKeys: Set<String> = [
-        "description", "title", "$schema", "$comment", "examples", "default",
-        "additionalProperties", "format", "pattern", "deprecated", "readOnly", "writeOnly"
-    ]
-
-    private static func prunedSchemaCharacters(_ json: String) -> Int {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data),
-              JSONSerialization.isValidJSONObject(object),
-              let pruned = try? JSONSerialization.data(withJSONObject: pruneSchema(object)) else {
-            return json.count * 2
-        }
-        return pruned.count
-    }
-
-    private static func pruneSchema(_ value: Any) -> Any {
-        if let dictionary = value as? [String: Any] {
-            var result: [String: Any] = [:]
-            for (key, nested) in dictionary where !prunedSchemaKeys.contains(key) {
-                result[key] = pruneSchema(nested)
-            }
-            return result
-        }
-        if let array = value as? [Any] {
-            return array.map(pruneSchema)
-        }
-        return value
+        ActionToolSchema.estimatedTokenCost(of: tool)
     }
 
     /// Orders tools so the most relevant come first, while still round-robining
     /// across enabled servers. This keeps every server represented even when the
     /// context window can only hold a subset of the available tools.
     static func prioritizedTools(_ tools: [ActionToolSpec], task: String) -> [ActionToolSpec] {
-        let taskTerms = terms(in: task)
+        prioritizedTools(tools, intent: HeuristicIntentExtractor.intent(for: task))
+    }
 
+    static func prioritizedTools(_ tools: [ActionToolSpec], intent: ActionIntent) -> [ActionToolSpec] {
+        var scores: [String: Int] = [:]
+        var preferences: [String: Int] = [:]
+        for tool in tools {
+            scores[tool.id] = relevanceScore(of: tool, intent: intent)
+            preferences[tool.id] = preferenceIndex(of: tool, intent: intent)
+        }
         var byServer: [UUID: [ActionToolSpec]] = [:]
         var serverOrder: [UUID] = []
         for tool in tools {
@@ -141,17 +144,29 @@ enum ActionLimits {
         }
         for id in serverOrder {
             byServer[id]?.sort {
-                let lhs = relevanceScore(of: $0, terms: taskTerms)
-                let rhs = relevanceScore(of: $1, terms: taskTerms)
+                let lhsPreference = preferences[$0.id] ?? Int.max
+                let rhsPreference = preferences[$1.id] ?? Int.max
+                if intent.scope == .activeTab, lhsPreference != rhsPreference { return lhsPreference < rhsPreference }
+                let lhs = scores[$0.id] ?? 0
+                let rhs = scores[$1.id] ?? 0
                 if lhs != rhs { return lhs > rhs }
-                return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                if lhsPreference != rhsPreference { return lhsPreference < rhsPreference }
+                let displayOrder = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                if displayOrder != .orderedSame { return displayOrder == .orderedAscending }
+                return $0.id < $1.id
             }
         }
         serverOrder.sort {
-            let lhs = byServer[$0]?.first.map { relevanceScore(of: $0, terms: taskTerms) } ?? 0
-            let rhs = byServer[$1]?.first.map { relevanceScore(of: $0, terms: taskTerms) } ?? 0
+            let lhs = byServer[$0]?.first.flatMap { scores[$0.id] } ?? 0
+            let rhs = byServer[$1]?.first.flatMap { scores[$0.id] } ?? 0
             if lhs != rhs { return lhs > rhs }
-            return (byServer[$0]?.count ?? 0) < (byServer[$1]?.count ?? 0)
+            let lhsCount = byServer[$0]?.count ?? 0
+            let rhsCount = byServer[$1]?.count ?? 0
+            if lhsCount != rhsCount { return lhsCount < rhsCount }
+            let lhsName = byServer[$0]?.first?.serverName.lowercased() ?? ""
+            let rhsName = byServer[$1]?.first?.serverName.lowercased() ?? ""
+            if lhsName != rhsName { return lhsName < rhsName }
+            return $0.uuidString < $1.uuidString
         }
 
         var ordered: [ActionToolSpec] = []
@@ -170,21 +185,17 @@ enum ActionLimits {
     }
 
     static func relevanceScore(of tool: ActionToolSpec, task: String) -> Int {
-        relevanceScore(of: tool, terms: terms(in: task))
+        relevanceScore(of: tool, intent: HeuristicIntentExtractor.intent(for: task))
     }
 
-    private static func terms(in task: String) -> Set<String> {
-        let words = task.lowercased().split { !$0.isLetter && !$0.isNumber }
-        return Set(words.filter { $0.count >= 3 }.map(String.init))
-    }
-
-    private static func relevanceScore(of tool: ActionToolSpec, terms: Set<String>) -> Int {
-        guard !terms.isEmpty else { return 0 }
+    static func relevanceScore(of tool: ActionToolSpec, intent: ActionIntent) -> Int {
         let name = tool.toolName.lowercased()
         let description = tool.description.lowercased()
         let server = tool.serverName.lowercased()
-        var score = 0
-        for term in terms {
+        var score = preferenceIndex(of: tool, intent: intent) == Int.max ? 0 : 10
+        if intent.scope == .activeTab, ActionToolFilter.isChromeAutomation(tool.serverName) { score += 100 }
+        if [.click, .typeText, .other].contains(intent.action), name.hasPrefix("superkeet_native_") { score += 20 }
+        for term in intent.routingTerms {
             if name == term {
                 score += 6
             } else if name.contains(term) {
@@ -193,11 +204,35 @@ enum ActionLimits {
             if server.contains(term) {
                 score += 3
             }
-            if description.contains(term) {
+            if !descriptionStopwords.contains(term), description.contains(term) {
                 score += 1
             }
         }
         return score
+    }
+
+    private static let descriptionStopwords: Set<String> = [
+        "open", "and", "com", "the", "app", "browser", "please", "for", "with", "this", "that", "then", "from", "into"
+    ]
+
+    private static func preferenceIndex(of tool: ActionToolSpec, intent: ActionIntent) -> Int {
+        if intent.scope == .activeTab, !ActionToolFilter.isChromeAutomation(tool.serverName) { return Int.max }
+        let preferred: [String]
+        switch intent.action {
+        case .openApp: preferred = ["launch_app", "bring_to_front", "list_apps", "run_process", "run_command"]
+        case .openURL: preferred = ["new_page", "navigate_page", "list_pages", "launch_app", "browser_navigate", "get_browser_state"]
+        case .webSearch: preferred = ["new_page", "navigate_page", "list_pages", "browser_navigate", "get_browser_state"]
+        case .navigate: preferred = ["list_pages", "evaluate_script", "navigate_page", "take_snapshot", "select_page", "click"]
+        case .find: preferred = ["list_pages", "evaluate_script", "take_snapshot", "navigate_page", "click", "select_page"]
+        case .switchApp: preferred = ["bring_to_front", "list_windows", "list_apps"]
+        case .click: preferred = ["get_window_state", "click", "list_windows"]
+        case .typeText: preferred = ["get_window_state", "set_value", "type_text", "list_windows"]
+        case .pressKey: preferred = ["press_key", "hotkey", "get_window_state", "list_windows"]
+        case .scroll: preferred = ["scroll", "get_window_state", "list_windows"]
+        case .readScreen: preferred = ["get_window_state", "take_snapshot", "list_windows"]
+        case .other: preferred = []
+        }
+        return preferred.firstIndex(of: tool.toolName.lowercased()) ?? Int.max
     }
 }
 
@@ -229,6 +264,28 @@ enum ActionArgumentNormalizer {
               let string = String(data: output, encoding: .utf8) else {
             return argumentsJSON
         }
+        return string
+    }
+
+    /// The on-device planner cannot see images, so an observation that offers a
+    /// screenshot alongside its element tree is asked for the tree only. This
+    /// skips the capture (and its Screen Recording dependency) unless the model
+    /// explicitly asked for a screenshot.
+    static func applyingObservationDefaults(argumentsJSON: String, schemaJSON: String) -> String {
+        guard let schemaData = schemaJSON.data(using: .utf8),
+              let schema = try? JSONSerialization.jsonObject(with: schemaData) as? [String: Any],
+              let properties = schema["properties"] as? [String: Any],
+              properties["include_screenshot"] != nil else { return argumentsJSON }
+        var arguments: [String: Any] = [:]
+        if !argumentsJSON.isEmpty, let data = argumentsJSON.data(using: .utf8) {
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return argumentsJSON }
+            arguments = object
+        }
+        guard arguments["include_screenshot"] == nil else { return argumentsJSON }
+        arguments["include_screenshot"] = false
+        guard JSONSerialization.isValidJSONObject(arguments),
+              let output = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]),
+              let string = String(data: output, encoding: .utf8) else { return argumentsJSON }
         return string
     }
 
@@ -282,20 +339,32 @@ enum ActionArgumentNormalizer {
 /// is withheld and the model is forced to open the requested browser instead of
 /// silently substituting Chrome.
 enum ActionToolFilter {
-    static let nonChromeBrowsers: Set<String> = [
-        "safari", "helium", "firefox", "edge", "brave", "arc",
-        "opera", "vivaldi", "chromium", "dia", "orion", "floorp", "zen"
-    ]
-
     static func filtering(_ tools: [ActionToolSpec], task: String) -> [ActionToolSpec] {
-        guard namesNonChromeBrowser(task) else { return tools }
+        filtering(tools, intent: HeuristicIntentExtractor.intent(for: task))
+    }
+
+    static func filtering(_ tools: [ActionToolSpec], intent: ActionIntent) -> [ActionToolSpec] {
+        if intent.scope == .activeTab {
+            guard ActionIntentPolicy.targetsActiveChromeTab(intent) else { return [] }
+            let chrome = tools.filter { isChromeAutomation($0.serverName) }
+            guard Set(chrome.map(\.serverID)).count == 1 else { return [] }
+            let names = Set(chrome.map(\.toolName))
+            guard names.contains("list_pages"), names.contains(intent.action == .navigate ? "navigate_page" : "take_snapshot") else { return [] }
+            // Bind this request to existing Chrome pages rather than offering
+            // another browser, a native open, or a tool that creates a new tab.
+            return chrome.filter { $0.toolName != "new_page" }.map { spec in
+                var observed = spec
+                observed.requiresFreshObservation = ["list_pages", "take_snapshot"].contains(spec.toolName)
+                return observed
+            }
+        }
+        guard ActionIntentPolicy.excludesChromeAutomation(intent) else { return tools }
         let filtered = tools.filter { !isChromeAutomation($0.serverName) }
         return filtered.isEmpty ? tools : filtered
     }
 
     static func namesNonChromeBrowser(_ task: String) -> Bool {
-        let tokens = Set(task.lowercased().split { !$0.isLetter }.map(String.init))
-        return !tokens.isDisjoint(with: nonChromeBrowsers)
+        ActionIntentPolicy.excludesChromeAutomation(HeuristicIntentExtractor.intent(for: task))
     }
 
     static func isChromeAutomation(_ serverName: String) -> Bool {
@@ -304,6 +373,7 @@ enum ActionToolFilter {
     }
 }
 
+@MainActor
 protocol ActionPlanning: AnyObject {
     func run(
         task: String,
@@ -314,10 +384,59 @@ protocol ActionPlanning: AnyObject {
     ) async throws -> String
 }
 
+/// One step of a command together with what the earlier steps already did.
+struct ActionPlanStep: Equatable, Sendable {
+    let task: String
+    let context: ActionPlanContext
+
+    init(task: String, context: ActionPlanContext? = nil) {
+        self.task = task
+        self.context = context ?? ActionPlanContext(command: task)
+    }
+}
+
+/// A planner that can be told what earlier steps of the same command already
+/// did. Planners without this conformance receive each step as a plain task.
 @MainActor
-protocol ActionRouting: AnyObject {
+protocol ContextualActionPlanning: ActionPlanning {
+    func run(
+        step: ActionPlanStep,
+        tools: [ActionToolSpec],
+        maxSteps: Int,
+        execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String,
+        onEvent: @escaping @Sendable (ActionPlanEvent) -> Void
+    ) async throws -> String
+}
+
+extension ActionPlanning {
+    /// Runs one step, passing its context when the planner understands it.
+    func run(
+        step: ActionPlanStep,
+        tools: [ActionToolSpec],
+        maxSteps: Int,
+        execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String,
+        onEvent: @escaping @Sendable (ActionPlanEvent) -> Void
+    ) async throws -> String {
+        if let contextual = self as? any ContextualActionPlanning, !step.context.isEmpty {
+            return try await contextual.run(step: step, tools: tools, maxSteps: maxSteps, execute: execute, onEvent: onEvent)
+        }
+        return try await run(task: step.task, tools: tools, maxSteps: maxSteps, execute: execute, onEvent: onEvent)
+    }
+}
+
+@MainActor
+protocol ActionRouting: AnyObject, Sendable {
     func prepareTools() async throws -> [ActionToolSpec]
     func execute(spec: ActionToolSpec, argumentsJSON: String) async throws -> String
+    /// Shows a compound command's plan card before any step runs.
+    func requestPlanApproval(_ plan: ActionPlanApprovalRequest) async -> ActionPlanApprovalDecision
+    func cancelPendingApprovals()
+}
+
+extension ActionRouting {
+    /// Routers without a HUD run every plan step by step.
+    func requestPlanApproval(_ plan: ActionPlanApprovalRequest) async -> ActionPlanApprovalDecision { .stepByStep }
+    func cancelPendingApprovals() {}
 }
 
 enum ActionResultText {
@@ -332,46 +451,54 @@ enum ActionResultText {
 }
 
 enum ActionRedactor {
-    static func redact(_ json: String) -> String {
+    enum Context: Sendable {
+        case toolArguments
+        case groundingUI
+    }
+
+    static func redact(_ json: String, context: Context = .toolArguments) -> String {
         guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) else {
-            return redactText(json)
+               let object = try? JSONSerialization.jsonObject(with: data) else {
+            return context == .groundingUI ? "***" : redactText(json)
         }
-        let redacted = redact(object)
+        let redacted = redact(object, context: context)
         guard JSONSerialization.isValidJSONObject(redacted),
               let output = try? JSONSerialization.data(withJSONObject: redacted, options: [.sortedKeys]),
               let string = String(data: output, encoding: .utf8) else {
-            return redactText(json)
+            return context == .groundingUI ? "***" : redactText(json)
         }
         return string
     }
 
-    private static func redact(_ value: Any) -> Any {
+    private static func redact(_ value: Any, context: Context) -> Any {
         if let dictionary = value as? [String: Any] {
             var result: [String: Any] = [:]
             for (key, nested) in dictionary {
-                result[key] = isSensitive(key) ? "***" : redact(nested)
+                result[key] = isSensitive(key, context: context) ? "***" : redact(nested, context: context)
             }
             return result
         }
         if let array = value as? [Any] {
-            return array.map(redact)
+            return array.map { redact($0, context: context) }
         }
+        if let text = value as? String { return redactText(text) }
         return value
     }
 
-    private static func isSensitive(_ key: String) -> Bool {
-        SensitiveDataPolicy.isSensitiveKey(key)
+    private static func isSensitive(_ key: String, context: Context) -> Bool {
+        ["text", "value", "label", "target", "description"].contains(key.lowercased())
+            || (context == .groundingUI && ["title", "query"].contains(key.lowercased()))
+            || SensitiveDataPolicy.isSensitiveKey(key)
     }
+
+    private static let secretPatterns: [NSRegularExpression] = [
+        #"(?i)(bearer\s+)[A-Za-z0-9._~+/\-]+=*"#,
+        #"(?i)(["']?(?:api[_-]?key|token|secret|password|passwd|authorization)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|“[^”]*(?:”|$)|‘[^’]*(?:’|$)|[^\s,;&"}]+)"#
+    ].compactMap { try? NSRegularExpression(pattern: $0) }
 
     static func redactText(_ text: String) -> String {
         var result = text
-        let patterns = [
-            "(?i)(bearer\\s+)[A-Za-z0-9._\\-]+",
-            "(?i)((?:api[_-]?key|token|secret|password|authorization)\\s*[:=]\\s*)[^\\s,;\"}]+"
-        ]
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+        for regex in secretPatterns {
             let range = NSRange(result.startIndex..., in: result)
             result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "$1***")
         }

@@ -51,7 +51,15 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     @AppStorage("actionApprovalPolicy") var actionApprovalPolicy: ActionApprovalPolicy = .readOnlyAuto
     @AppStorage("actionMaxSteps") var actionMaxSteps: Int = 12
     @AppStorage("actionTimeoutSeconds") var actionTimeoutSeconds: Int = 120
+    /// Whole-command limit, independent of the per-tool timeout, so a run
+    /// cannot stay open for `actionMaxSteps × actionTimeoutSeconds`.
+    @AppStorage("actionRunDeadlineSeconds") var actionRunDeadlineSeconds: Int = 180
     @AppStorage("actionAuditEnabled") var actionAuditEnabled: Bool = true
+    @AppStorage("nativeGroundingEnabled") var nativeGroundingEnabled: Bool = false
+    /// Open or activate a named app as soon as it is recognised while the user
+    /// is still speaking a command, without waiting for the final transcript
+    /// or the approval HUD. Only installed app names can trigger it.
+    @AppStorage("instantAppLaunchEnabled") var instantAppLaunchEnabled: Bool = true
 
     @Published var isRecording: Bool = false
     @Published var isDaemonRunning: Bool = false
