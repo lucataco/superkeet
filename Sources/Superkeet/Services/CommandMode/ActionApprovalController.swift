@@ -1,12 +1,5 @@
 import Foundation
 
-/// Queues approval questions for the HUD and remembers what the user has
-/// already allowed for the current command.
-///
-/// Two kinds of question exist: a **plan card** for a compound command (asked
-/// once, before any step runs) and a **tool call** (asked per call unless a
-/// grant covers it). Grants come from "Approve All" on a plan card or "Approve
-/// similar" on a tool call and are cleared when the command ends.
 @MainActor
 final class ActionApprovalController: ObservableObject {
     static let shared = ActionApprovalController()
@@ -28,8 +21,6 @@ final class ActionApprovalController: ObservableObject {
     private var queue: [Entry] = []
     private var plan: PlanEntry?
     var pendingCount: Int { queue.count }
-
-    // MARK: Tool calls
 
     func request(_ request: ActionApprovalRequest) async -> ActionApprovalDecision {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -56,8 +47,6 @@ final class ActionApprovalController: ObservableObject {
         first.continuation.resume(returning: decision)
     }
 
-    /// Approves the pending call and lets the same tool run again for the same
-    /// app or process during this command without asking.
     func approveSimilar(requestID: UUID? = nil) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let first = queue.first, requestID == nil || requestID == first.request.id else { return }
@@ -67,10 +56,6 @@ final class ActionApprovalController: ObservableObject {
         resolve(.approve, requestID: first.request.id)
     }
 
-    // MARK: Plan cards
-
-    /// Shows the plan card and waits for a decision. Only one plan can be
-    /// pending; a second request while one is open is denied.
     func requestPlan(_ request: ActionPlanApprovalRequest) async -> ActionPlanApprovalDecision {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !Task.isCancelled, plan == nil else { return .deny }
@@ -99,8 +84,6 @@ final class ActionApprovalController: ObservableObject {
         plan.continuation.resume(returning: decision)
     }
 
-    // MARK: Grants
-
     func grant(_ grant: ActionApprovalGrant) {
         dispatchPrecondition(condition: .onQueue(.main))
         grants.insert(grant)
@@ -116,9 +99,6 @@ final class ActionApprovalController: ObservableObject {
         grants.removeAll()
     }
 
-    // MARK: Session end
-
-    /// Denies everything still waiting and forgets this command's grants.
     func cancelPending() {
         dispatchPrecondition(condition: .onQueue(.main))
         let entries = queue

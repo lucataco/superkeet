@@ -44,7 +44,6 @@ final class ActionChecklistTests: XCTestCase {
         checklist.apply(.toolReused(spec("open_app", title: "Open App")))
         XCTAssertEqual(checklist.items.map(\.status), [.reused])
         XCTAssertEqual(checklist.items.first?.detail, "Already done; result reused")
-        // A finish without a matching running row (e.g. after a reuse) still records the outcome.
         checklist.apply(.toolFinished(spec("echo"), "x"))
         XCTAssertEqual(checklist.items.map(\.status), [.reused, .done])
         XCTAssertEqual(checklist.items.last?.title, "echo")

@@ -48,11 +48,6 @@ final class FoundationModelPlannerIntegrationTests: XCTestCase {
         var calls: [(String, String)] = []
     }
 
-    /// Runs only when explicitly requested (`SUPERKEET_FM_LIVE_TESTS=1`): the
-    /// on-device model is not deterministic, so this validates the prompt design
-    /// by hand rather than gating CI. Given that Notes is already open, the
-    /// second step of "open the notes app and create a new note" should be one
-    /// ⌘N through the built-in shortcut tool, with no attempt to reopen Notes.
     @MainActor
     func testModelUsesStepContextAndShortcutToolForSecondStep() async throws {
         guard ProcessInfo.processInfo.environment["SUPERKEET_FM_LIVE_TESTS"] == "1" else {

@@ -3,6 +3,11 @@ import XCTest
 @testable import Superkeet
 
 final class PasteServiceTests: XCTestCase {
+    private final class Deliveries: @unchecked Sendable {
+        private(set) var values: [PasteDelivery] = []
+        func append(_ delivery: PasteDelivery) { values.append(delivery) }
+    }
+
     private final class Harness {
         let pasteboard = NSPasteboard.withUniqueName()
         var activationSucceeds = true
@@ -24,10 +29,13 @@ final class PasteServiceTests: XCTestCase {
             reportIssue: { [unowned self] in issues.append($0) }
         ))
 
-        func deliver(target: pid_t? = 42) {
+        let deliveries = Deliveries()
+
+        func deliver(target: pid_t? = 42, autoPaste: Bool = true) {
+            let deliveries = self.deliveries
             service.deliverText("transcript", decision: OutputRouting.decision(
-                clipboardCopyEnabled: false, autoPasteEnabled: true, saveHistoryEnabled: false
-            ), targetProcessIdentifier: target)
+                clipboardCopyEnabled: !autoPaste, autoPasteEnabled: autoPaste, saveHistoryEnabled: false
+            ), targetProcessIdentifier: target, onDelivered: { deliveries.append($0) })
         }
 
         func advance() { scheduled.removeFirst()() }
@@ -94,5 +102,44 @@ final class PasteServiceTests: XCTestCase {
         harness.service.copyToClipboard("new clipboard")
         harness.advance()
         XCTAssertEqual(harness.pasteboard.string(forType: .string), "new clipboard")
+    }
+
+    func testDeliveryCallbackReportsCopyImmediately() {
+        let harness = Harness()
+        harness.deliver(autoPaste: false)
+        XCTAssertEqual(harness.deliveries.values, [.copied])
+        XCTAssertTrue(harness.scheduled.isEmpty)
+    }
+
+    func testDeliveryCallbackReportsPasteOnlyAfterKeystrokeIsSent() {
+        let harness = Harness()
+        harness.deliver()
+        XCTAssertTrue(harness.deliveries.values.isEmpty, "paste is not confirmed until the delayed keystroke fires")
+        harness.advance()
+        XCTAssertEqual(harness.deliveries.values, [.pasted])
+    }
+
+    func testDeliveryCallbackReportsEveryPasteFailureExactlyOnce() {
+        let unactivatable = Harness()
+        unactivatable.activationSucceeds = false
+        unactivatable.deliver()
+        XCTAssertEqual(unactivatable.deliveries.values, [.pasteFailed])
+
+        let untrusted = Harness()
+        untrusted.trusted = false
+        untrusted.deliver()
+        XCTAssertEqual(untrusted.deliveries.values, [.pasteFailed])
+
+        let lostFocus = Harness()
+        lostFocus.deliver()
+        lostFocus.targetReady = false
+        lostFocus.advance()
+        XCTAssertEqual(lostFocus.deliveries.values, [.pasteFailed])
+
+        let clipboardChanged = Harness()
+        clipboardChanged.deliver()
+        clipboardChanged.service.copyToClipboard("something else")
+        clipboardChanged.advance()
+        XCTAssertEqual(clipboardChanged.deliveries.values, [.pasteFailed])
     }
 }

@@ -164,13 +164,13 @@ final class MCPGenerationSchemaConverterTests: XCTestCase {
     }
 
     @MainActor
-    func testActiveTabPlannerUsesChromePagesWithoutNativeOpenOrGroundingTools() throws {
+    func testActiveTabPlannerUsesChromePagesWithoutNativeOpenTools() throws {
         let tools = NativeOpenAction.tools + ActiveTabToolFixture.chrome() + (try CuaToolRankingFixture.tools())
         let intent = HeuristicIntentExtractor.intent(for: "In the current tab, open Cloudflare DNS for catacolabs.com")
         let bridges = FoundationModelActionPlanner.toolBridges(from: tools, intent: intent, execute: { _, _ in "" })
         XCTAssertEqual(bridges.prefix(3).map(\.name), ["list_pages", "evaluate_script", "navigate_page"])
         XCTAssertTrue(bridges.allSatisfy { ActionToolFilter.isChromeAutomation($0.spec.serverName) })
-        XCTAssertFalse(bridges.contains { $0.name == "new_page" || $0.name == "open_url" || $0.name.hasPrefix("superkeet_native_") })
+        XCTAssertFalse(bridges.contains { $0.name == "new_page" || $0.name == "open_url" })
         let prompt = FoundationModelActionPlanner.instructions(for: bridges.map(\.spec), intent: intent)
         XCTAssertTrue(prompt.contains("Call list_pages first"))
         XCTAssertTrue(prompt.contains("not proof of the user's active tab"))

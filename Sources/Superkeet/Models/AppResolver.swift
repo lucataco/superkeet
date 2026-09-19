@@ -1,8 +1,6 @@
 import Foundation
 import os
 
-/// Name matching and directory precedence are independent of Launch Services.
-/// Tests supply a directory inventory and a bundle lookup without opening apps.
 struct AppResolver: Sendable {
     static var defaultDirectories: [URL] {
         [URL(fileURLWithPath: "/Applications", isDirectory: true),
@@ -57,9 +55,6 @@ struct AppResolver: Sendable {
         return nil
     }
 
-    /// Display names of every installed app across the search directories,
-    /// de-duplicated case-insensitively and sorted. Used to bias speech
-    /// recognition toward names the user can actually open.
     func installedApplicationNames() -> [String] {
         var seen = Set<String>()
         var names: [String] = []
@@ -73,10 +68,6 @@ struct AppResolver: Sendable {
         return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
-    /// A resolver that scans each directory once and answers later lookups from
-    /// memory. Scanning `/Applications` takes hundreds of milliseconds, so anything
-    /// that resolves names repeatedly (for example on every interim transcript)
-    /// should use this and recreate it when a fresh inventory is wanted.
     func memoized() -> AppResolver {
         let cache = DirectoryListingCache(lister: applicationsInDirectory)
         return AppResolver(directories: directories, applicationsInDirectory: { cache.applications(in: $0) })

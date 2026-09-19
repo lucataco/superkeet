@@ -60,7 +60,6 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
     @Published private(set) var states: [UUID: ConnectionState] = [:]
     @Published private(set) var toolsByServer: [UUID: [MCPToolDescriptor]] = [:]
 
-    // Explicit connections already carry their configuration; load the store for connectAllEnabled.
     private let injectedConfigStore: MCPServerConfigStore?
     private var configStore: MCPServerConfigStore { injectedConfigStore ?? .shared }
     private var connections: [UUID: Connection] = [:]
@@ -197,17 +196,13 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
                 throw MCPConnectionError.toolReportedError(text)
             }
             if structured {
-                // A server without structured content answers with its text.
-                // Callers that require JSON (native grounding) validate the
-                // result and reject text; planner-facing observations fall
-                // back to the ordinary text result.
                 guard let content = result.structuredContent else { return text }
                 let data = try JSONEncoder().encode(content)
-                guard data.count <= NativeGroundingJSON.maximumObservationBytes else {
-                    throw ActionChoiceError.invalid("Driver observation exceeds 1 MB; narrow the window")
+                guard data.count <= ActionJSON.maximumStructuredResultBytes else {
+                    throw MCPConnectionError.toolFailed("The structured result exceeds 1 MB; narrow the observation.")
                 }
                 guard let json = String(data: data, encoding: .utf8) else {
-                    throw ActionChoiceError.invalid("invalid structured result encoding")
+                    throw MCPConnectionError.toolFailed("The structured result is not valid UTF-8.")
                 }
                 return json
             }
@@ -302,8 +297,6 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
             }
         }
 
-        // Register the pending process too, so cancellation/reconnect can close
-        // a transport still waiting for its initial handshake.
         connections[server.id] = connection
 
         do {

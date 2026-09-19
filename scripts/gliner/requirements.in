@@ -1,6 +1,0 @@
-gliner2[local]==2.0.0
-gliner-cua @ git+https://github.com/lucataco/gliner-cua.git@b0a822ff90a6827247847dc40cd927b4be4f308a
-mcp==1.30.0
-# Transformers masks the tokenizer compatibility exception without protobuf.
-protobuf==7.36.2
-sentencepiece==0.2.2

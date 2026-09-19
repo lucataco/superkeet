@@ -1,29 +1,27 @@
 import SwiftUI
 
-/// The floating Actions Mode panel. It asks for approval (a plan card for a
-/// compound command, or one tool call), shows a live checklist while a
-/// command runs, reports the outcome, and shows an app that opened while the
-/// user was still speaking.
 struct ActionHUDView: View {
+    @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var approvals = ActionApprovalController.shared
     @ObservedObject private var agent = AgentSessionController.shared
     @ObservedObject private var speculation = SpeculativeLaunchCoordinator.shared
 
     @State private var showDetails = false
 
-    /// Rows the checklist shows before folding older ones into a count.
     static let visibleChecklistRows = 6
 
-    /// An early app launch is shown only while nothing else claims the HUD.
-    private var speculativeActivity: SpeculativeLaunchCoordinator.Activity? {
-        guard approvals.pending == nil, approvals.pendingPlan == nil, !agent.phase.showsHUD else { return nil }
-        return speculation.activity
+    private var showsActionContent: Bool {
+        approvals.pending != nil || approvals.pendingPlan != nil || agent.phase.showsHUD
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             content
+            if let listening = speculation.listening, showsActionContent {
+                Divider()
+                listeningFooter(listening)
+            }
         }
         .padding(16)
         .frame(width: 380)
@@ -33,8 +31,6 @@ struct ActionHUDView: View {
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
     }
-
-    // MARK: Header
 
     private var header: some View {
         HStack(spacing: 10) {
@@ -67,20 +63,10 @@ struct ActionHUDView: View {
         } else if agent.phase.isActive {
             ProgressView()
                 .controlSize(.small)
-        } else if let activity = speculativeActivity {
-            switch activity {
-            case .launching:
-                ProgressView()
-                    .controlSize(.small)
-            case .launched:
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.green)
-            case .failed:
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.orange)
-            }
+        } else if speculation.listening != nil, !agent.phase.isOutcome {
+            Image(systemName: "waveform")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
         } else {
             Image(systemName: iconName)
                 .font(.system(size: 16, weight: .semibold))
@@ -110,15 +96,10 @@ struct ActionHUDView: View {
         case .failed: return "Couldn’t finish"
         default: break
         }
-        switch speculativeActivity {
-        case .launching(let name): return "Opening \(name)…"
-        case .launched(let launched): return "Opened \(launched.name)"
-        case .failed(let name, _): return "Couldn’t open \(name)"
-        case nil: return "Superkeet"
-        }
+        guard speculation.listening != nil else { return "Superkeet" }
+        return settings.isRecording ? "Listening…" : "Transcribing…"
     }
 
-    /// The spoken command while it runs, and progress when it has steps.
     private var subtitle: String? {
         guard approvals.pendingPlan == nil, agent.phase.showsHUD || approvals.pending != nil else { return nil }
         let command = agent.commandText
@@ -152,8 +133,6 @@ struct ActionHUDView: View {
         }
     }
 
-    // MARK: Content
-
     @ViewBuilder
     private var content: some View {
         if let plan = approvals.pendingPlan {
@@ -164,12 +143,10 @@ struct ActionHUDView: View {
             workingContent
         } else if agent.phase.isOutcome {
             outcomeContent
-        } else if let activity = speculativeActivity {
-            speculativeContent(activity)
+        } else if let listening = speculation.listening {
+            listeningContent(listening)
         }
     }
-
-    // MARK: Plan card
 
     private func planContent(_ plan: ActionPlanApprovalRequest) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -232,8 +209,6 @@ struct ActionHUDView: View {
         }
     }
 
-    // MARK: Tool approval
-
     private func approvalContent(_ pending: ActionApprovalRequest) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -280,8 +255,6 @@ struct ActionHUDView: View {
         }
     }
 
-    // MARK: Working and outcome
-
     @ViewBuilder
     private var workingContent: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -293,6 +266,13 @@ struct ActionHUDView: View {
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if settings.actionApprovalPolicy == .autoApprove {
+                Label("Auto-approving · destructive tools still ask", systemImage: "shield")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            queuedContent
         }
     }
 
@@ -315,6 +295,22 @@ struct ActionHUDView: View {
             if !agent.checklist.isEmpty {
                 Divider()
                 checklistView
+            }
+            queuedContent
+        }
+    }
+
+    @ViewBuilder
+    private var queuedContent: some View {
+        if !agent.queuedCommands.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(agent.queuedCommands.enumerated()), id: \.offset) { _, command in
+                    Text("Next: “\(command)”")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -388,34 +384,43 @@ struct ActionHUDView: View {
         }
     }
 
-    // MARK: Speculative launch
-
-    @ViewBuilder
-    private func speculativeContent(_ activity: SpeculativeLaunchCoordinator.Activity) -> some View {
-        switch activity {
-        case .launching:
-            Text("Heard the app name while you were speaking; opening it right away.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        case .launched(let launched):
-            Text(launched.windowReady ? "Ready. Keep talking — the rest of your command runs when you finish."
-                 : "Opening. Keep talking — the rest of your command runs when you finish.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        case .failed(_, let message):
-            Text(message)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private func listeningContent(_ listening: SpeculativeLaunchCoordinator.Listening) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LiveTranscriptText(transcript: listening.transcript, isRecording: settings.isRecording)
+            if let activity = speculation.activity {
+                speculativeStatus(activity)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+            }
         }
     }
 
-    // MARK: Helpers
+    private func listeningFooter(_ listening: SpeculativeLaunchCoordinator.Listening) -> some View {
+        Label("Listening: \(listening.transcript.isEmpty ? "Say a command…" : listening.transcript)", systemImage: "waveform")
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func speculativeStatus(_ activity: SpeculativeLaunchCoordinator.Activity) -> some View {
+        switch activity {
+        case .launching(let name):
+            Label("Opening \(name)…", systemImage: "bolt.fill")
+                .foregroundStyle(.secondary)
+        case .launched(let launched):
+            Label("Opened \(launched.name)", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed(let name, let message):
+            Label("Couldn’t open \(name)", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .help(message)
+        }
+    }
 
     private func intentSummary(_ pending: ActionApprovalRequest) -> String {
-        pending.tool.approvalSummary ?? ActionIntentFormatter.summary(toolName: pending.tool.toolName, argumentsJSON: pending.argumentsJSON)
+        ActionIntentFormatter.summary(toolName: pending.tool.toolName, argumentsJSON: pending.argumentsJSON)
             ?? "Run \(pending.tool.displayName)"
     }
 
@@ -453,5 +458,35 @@ struct ActionHUDView: View {
         case .mutating: return .orange
         case .destructive: return .red
         }
+    }
+}
+
+private struct LiveTranscriptText: View {
+    let transcript: String
+    let isRecording: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var cursorVisible = true
+
+    private var displayedText: String { transcript.isEmpty ? "Say a command…" : transcript }
+
+    var body: some View {
+        (Text(displayedText) + Text(isRecording ? "▍" : "").foregroundColor(cursorVisible ? .primary : .clear))
+            .font(.system(size: 13))
+            .foregroundStyle(.primary)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(displayedText)
+            .task(id: isRecording && !reduceMotion) {
+                cursorVisible = true
+                guard isRecording, !reduceMotion else { return }
+                do {
+                    while !Task.isCancelled {
+                        try await Task.sleep(for: .milliseconds(500))
+                        cursorVisible.toggle()
+                    }
+                } catch is CancellationError {
+                } catch { }
+            }
     }
 }

@@ -21,8 +21,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         )
     }
 
-    /// Feeds scripted partials in order; the last one is final when `finalLast` is set.
-    /// Returns the commit alongside the 1-based sequence that produced it.
     @discardableResult
     private func feed(
         _ detector: inout SpeculativeIntentDetector, _ texts: [String], finalLast: Bool = false
@@ -39,10 +37,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         return result
     }
 
-    // MARK: Recorded recogniser output
-
-    /// Volatile results exactly as SpeechAnalyzer produced them for the target
-    /// command in the design probe, followed by its final result.
     private let notesProbe = [
         "Open", "Open the", "Open the Notes", "Open the Notes app", "Open the Notes app and", "Open the Notes app and create",
         "Open the Notes app and create a", "Open the Notes app and create a new", "Open the Notes app and create a new note",
@@ -70,8 +64,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
     }
 
     func testMisheardAppNameNeverCommits() {
-        // Recorded output for "switch to ghostty and then open discord": the name
-        // was never recognised, so nothing speculative may run.
         var detector = SpeculativeIntentDetector(environment: environment(installed: ["Ghostty", "Discord"], running: ["Ghostty"]))
         let result = feed(&detector, [
             "Switch", "Switch to", "Switch to G", "Switch to Gost", "Switch to Gosti", "Switch to Gosti and", "Switch to Gosti and then",
@@ -82,8 +74,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         XCTAssertNil(detector.commit)
         XCTAssertFalse(detector.disagreement)
     }
-
-    // MARK: Commit rules
 
     func testFinalizedTextCommitsWithoutBoundaryOrStability() {
         var detector = SpeculativeIntentDetector(environment: environment())
@@ -107,7 +97,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
     }
 
     func testPrefixAmbiguityWaitsForBoundaryOrFinal() {
-        // "Safari" could still become "Safari Technology Preview".
         var waiting = SpeculativeIntentDetector(environment: environment())
         XCTAssertNil(feed(&waiting, ["Open Safari", "Open Safari browser"]))
         XCTAssertNil(waiting.commit)
@@ -120,7 +109,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         var finalized = SpeculativeIntentDetector(environment: environment())
         XCTAssertEqual(feed(&finalized, ["Open Safari", "Open Safari"], finalLast: true)?.commit.reason, .finalized)
 
-        // The longer name has no further extension, so stability applies to it.
         var longer = SpeculativeIntentDetector(environment: environment())
         let preview = feed(&longer, ["Open Safari", "Open Safari Tech", "Open Safari Technology Preview", "Open Safari Technology Preview app"])
         XCTAssertEqual(preview?.sequence, 4)
@@ -129,7 +117,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
     }
 
     func testAliasesResolveAndAmbiguityUsesTheSpokenName() {
-        // "Chrome" is an alias for Google Chrome; no installed name extends "chrome".
         var detector = SpeculativeIntentDetector(environment: environment())
         let result = feed(&detector, ["Open Chrome", "Open Chrome browser"])
         XCTAssertEqual(result?.commit.action, .launch(SpeculativeApp(spokenName: "chrome", url: url("Google Chrome"))))
@@ -168,8 +155,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         XCTAssertEqual(feed(&detector, ["Open Notes and"])?.commit.action, .launch(SpeculativeApp(spokenName: "notes", url: url("Notes"))))
     }
 
-    // MARK: Exclusions
-
     func testWebAddressesAndActiveTabScopesNeverCommit() {
         for phrase in ["Open youtube.com and", "Open https://example.com", "Go to youtube.com in Safari and",
                        "In the current Chrome tab, open Notes and", "Open Notes in the active tab and",
@@ -192,14 +177,11 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         }
     }
 
-    // MARK: Session semantics
-
     func testOnlyOneCommitPerSessionAndLaterDisagreementIsRecorded() {
         var detector = SpeculativeIntentDetector(environment: environment())
         let first = feed(&detector, ["Open Notes and"])
         XCTAssertEqual(first?.commit.action.app.name, "Notes")
 
-        // A later revision naming another app cannot undo the launch; it is only recorded.
         XCTAssertNil(detector.observe(PartialTranscript(text: "Open Pages and create", isFinal: false, sequence: 2)))
         XCTAssertEqual(detector.commit?.action.app.name, "Notes")
         XCTAssertTrue(detector.disagreement)
@@ -248,8 +230,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         XCTAssertEqual(feed(&detector, ["Open Notes"])?.commit.reason, .stable(count: 1))
     }
 
-    // MARK: Clause parsing
-
     func testLeadingClauseParsing() {
         typealias Clause = SpeculativeIntentDetector.Clause
         XCTAssertEqual(
@@ -278,8 +258,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         }
     }
 
-    // MARK: Inventory-backed environment
-
     @MainActor
     func testInventoryEnvironmentUsesInstalledAndRunningApps() async {
         let inventory = InstalledAppInventory()
@@ -293,7 +271,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         XCTAssertNil(environment.resolveApp("definitely not an installed application"))
         XCTAssertTrue(environment.installedNames().contains { $0.caseInsensitiveCompare("Notes") == .orderedSame })
 
-        // After the scan, lookups must be cheap enough to run on every interim transcript.
         let clock = ContinuousClock()
         let started = clock.now
         for _ in 0..<50 { _ = environment.resolveApp("the notes app") }

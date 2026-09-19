@@ -16,7 +16,6 @@ final class SpeechAnalyzerEngineTests: XCTestCase {
         let availability = await withoutEngine.availability()
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
-            // The fallback answers; whether it is ready depends on the speech model being installed.
             XCTAssertNotEqual(availability, .unavailable(DaemonPartialSource.unavailableReason(protocolVersion: 1)))
             return
         }
@@ -25,9 +24,6 @@ final class SpeechAnalyzerEngineTests: XCTestCase {
     }
 
     #if canImport(FoundationModels)
-    /// Feeds a synthesized command through the real engine at live cadence and
-    /// checks that the app name shows up before the speech ends. Skips when the
-    /// on-device model is not installed so CI runners never download assets.
     @available(macOS 26.0, *)
     func testRealEngineSpotsAppNameBeforeUtteranceEnds() async throws {
         let engine = SpeechAnalyzerEngine(configuration: .init(
@@ -59,7 +55,6 @@ final class SpeechAnalyzerEngineTests: XCTestCase {
             return nil
         }
 
-        // Stream 100 ms chunks in real time, like the microphone tap would, then a little silence.
         let chunk = AVAudioFrameCount(audio.processingFormat.sampleRate / 10)
         while audio.framePosition < audio.length {
             let frames = min(chunk, AVAudioFrameCount(audio.length - audio.framePosition))
@@ -95,9 +90,6 @@ final class SpeechAnalyzerEngineTests: XCTestCase {
         XCTAssertEqual(converted.format, output)
         XCTAssertGreaterThan(converted.frameLength, 1_000, "The resampler primes on the first buffer but still yields most of it.")
 
-        // The resampler alternates between catching up (filling the output buffer) and
-        // running at rate; what matters is that the deficit stays a fixed latency
-        // rather than growing into a backlog.
         var total = Int(converted.frameLength)
         for _ in 0..<49 {
             let next = try XCTUnwrap(SpeechAnalyzerEngine.convert(buffer, using: converter, to: output))

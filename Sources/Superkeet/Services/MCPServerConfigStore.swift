@@ -57,8 +57,6 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
                         loaded[index].args = MCPDefaultServers.chromeArguments
                     }
                 } catch {
-                    // A failed migration must not discard an otherwise readable
-                    // configuration or publish settings that were not persisted.
                     servers = loaded
                     errorMessage = "Could not update the default Chrome connection: \(error.localizedDescription)"
                     log.error("Chrome connection migration failed: \(error.localizedDescription)")
@@ -80,8 +78,6 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
               var chrome = entries["chrome-devtools"] as? [String: Any],
               Set(chrome.keys).isSubset(of: ["command", "args", "env", "enabled", "transport"]),
               chrome["transport"] == nil || chrome["transport"] is NSNull || chrome["transport"] as? String == "stdio" else { return nil }
-        // Patch only the known entry's arguments in the original JSON, retaining
-        // all other entries and unknown top-level fields. Do not re-save secrets.
         chrome["args"] = MCPDefaultServers.chromeArguments
         entries["chrome-devtools"] = chrome
         root["mcpServers"] = entries

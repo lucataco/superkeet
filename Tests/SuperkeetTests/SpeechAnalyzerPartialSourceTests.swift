@@ -4,7 +4,6 @@ import XCTest
 
 @MainActor
 final class SpeechAnalyzerPartialSourceTests: XCTestCase {
-    /// Scripted recogniser: the test pushes phrases and observes appended buffers.
     final class FakeEngine: StreamingSpeechRecognizing, @unchecked Sendable {
         private let lock = NSLock()
         private var continuation: AsyncThrowingStream<RecognizedPhrase, Error>.Continuation?
@@ -110,8 +109,6 @@ final class SpeechAnalyzerPartialSourceTests: XCTestCase {
         }
     }
 
-    // MARK: Lifecycle
-
     func testStartAttachesMicrophoneAfterRecogniserIsReadyAndStopReleasesBoth() async throws {
         let fixture = makeFixture()
         let stream = try await fixture.source.start(sessionID: "s1")
@@ -187,8 +184,6 @@ final class SpeechAnalyzerPartialSourceTests: XCTestCase {
         XCTAssertEqual(fixture.hub.subscriberCount, 0)
     }
 
-    // MARK: Failures
-
     func testRecogniserStartFailureLeavesMicrophoneUntouched() async {
         let fixture = makeFixture()
         fixture.engine.startFailure = SpeechAnalyzerEngineError.notAvailable(.unsupportedLocale("xx-XX"))
@@ -215,8 +210,6 @@ final class SpeechAnalyzerPartialSourceTests: XCTestCase {
         XCTAssertEqual(fixture.engine.finishCount, 1, "A recogniser session must not be left open without audio.")
         XCTAssertNil(fixture.source.activeSessionID)
     }
-
-    // MARK: Pass-through
 
     func testAvailabilityInstallAndPrewarmDelegateToTheEngine() async throws {
         let fixture = makeFixture()

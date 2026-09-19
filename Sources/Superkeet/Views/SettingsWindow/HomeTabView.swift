@@ -13,7 +13,9 @@ struct HomeTabView: View {
     @ObservedObject var modelProvisioning = ModelProvisioning.shared
 
     @State private var editingHotkey: EditingHotkey?
-    @State private var readiness = AppReadiness.current()
+    // Populated in onAppear; probing CoreAudio/AX/filesystem in the initializer would run on
+    // every tab switch and every parent re-render.
+    @State private var readiness = AppReadinessReport.placeholder
     @State private var loginItemError: String?
     @State private var shortcutError: String?
     @State private var showAllChecks = false
@@ -99,7 +101,8 @@ struct HomeTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshReadiness()
         }
-        .onChange(of: modelProvisioning.state) {
+        .onChange(of: modelProvisioning.state.phase) {
+            // Re-probe only on state transitions, not on every download progress tick.
             refreshReadiness()
         }
     }
@@ -243,7 +246,7 @@ struct HomeTabView: View {
 
         if settings.actionsEnabled {
             HotkeyRow(
-                title: "Command Mode",
+                title: "Run an Action",
                 description: "Speak a task for Actions Mode, then approve tool calls",
                 displayName: settings.commandHotkeyDisplayName,
                 isEditing: editingHotkey == .command,

@@ -30,7 +30,6 @@ enum ActionErrorHandling {
         var causes: [Error] = []
         var current = error
         var visited = Set<ObjectIdentifier>()
-        // Bound malformed/cyclic NSError chains and nested framework wrappers.
         for _ in 0..<16 {
             causes.append(current)
             #if canImport(FoundationModels)

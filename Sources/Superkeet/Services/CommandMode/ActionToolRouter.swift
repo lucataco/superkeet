@@ -13,7 +13,6 @@ final class ActionToolRouter: ActionRouting {
     static let shared = ActionToolRouter()
 
     private let manager: any ActionMCPManaging
-    // Resolve persisted configuration (and its migrations) when discovering MCP tools.
     private let injectedConfigStore: MCPServerConfigStore?
     private var configStore: MCPServerConfigStore { injectedConfigStore ?? .shared }
     private let approvals: ActionApprovalController
@@ -54,8 +53,6 @@ final class ActionToolRouter: ActionRouting {
             await manager.connect(server)
         }
         try Task.checkCancellation()
-        // Test/Reconnect may leave disabled servers connected. Re-read the
-        // configuration after awaits, since a server may have been disabled meanwhile.
         let enabledIDs = settings.actionsEnabled ? Set(configStore.enabledServers.map(\.id)) : []
         guard !enabledIDs.isEmpty else { throw ActionExecutionError.noMCPServersEnabled }
         let tools = manager.allTools().filter { enabledIDs.contains($0.serverID) }.map(ActionToolSpec.init(descriptor:))
@@ -66,23 +63,20 @@ final class ActionToolRouter: ActionRouting {
     func execute(spec: ActionToolSpec, argumentsJSON: String) async throws -> String {
         dispatchPrecondition(condition: .onQueue(.main))
         try Task.checkCancellation()
-        // Built-in tool policy belongs to the app, including its mutating risk.
         let spec = try canonicalSpec(spec)
         var argumentsJSON = ActionArgumentNormalizer.normalize(
             argumentsJSON: argumentsJSON,
             schemaJSON: spec.inputSchemaJSON
         )
-        if spec.compactObservation, !spec.nativeObservation {
+        if spec.compactObservation {
             argumentsJSON = ActionArgumentNormalizer.applyingObservationDefaults(argumentsJSON: argumentsJSON, schemaJSON: spec.inputSchemaJSON)
         }
         try ActionLimits.validateArguments(argumentsJSON)
 
-        var preapproved = false
-        if settings.actionApprovalPolicy.requiresApproval(for: spec.risk) {
+        var successOutcome = "succeeded"
+        if settings.actionApprovalPolicy.requiresApproval(for: spec) {
             if approvals.isGranted(spec, argumentsJSON: argumentsJSON) {
-                // The user already allowed this step on the plan card, or this
-                // kind of call via "Approve similar", during this command.
-                preapproved = true
+                successOutcome = "succeeded (pre-approved)"
             } else {
                 let request = ActionApprovalRequest(tool: spec, argumentsJSON: argumentsJSON)
                 let decision = await approvals.request(request)
@@ -95,23 +89,15 @@ final class ActionToolRouter: ActionRouting {
                     throw ActionExecutionError.approvalDenied(spec.displayName)
                 }
             }
+        } else if spec.risk.meansChange {
+            successOutcome = "succeeded (auto-approved)"
         }
 
         do {
             try Task.checkCancellation()
-            if let preflight = spec.nativePreflight {
-                // Approval can remain open while the UI changes. Observe again and
-                // renew only the exact approved control's capability, never re-ground.
-                argumentsJSON = try await refresh(preflight, spec: spec, argumentsJSON: argumentsJSON)
-            }
-            try Task.checkCancellation()
             let timeout = max(5, settings.actionTimeoutSeconds)
             let finalArguments = argumentsJSON
-            let grounding = spec.nativeObservation || spec.groundingDecision != nil
-            // Planner-facing observations also ask for structured content; the
-            // controller projects it into compact text. Servers without it fall
-            // back to their text result.
-            let structured = grounding || spec.compactObservation
+            let structured = spec.compactObservation
             let output = try await AsyncTimeout.run(
                 seconds: Double(timeout),
                 timeoutError: ActionExecutionError.timedOut
@@ -122,17 +108,13 @@ final class ActionToolRouter: ActionRouting {
                 }
                 return try await callTool(spec.serverID, spec.toolName, finalArguments, structured)
             }
-            if grounding { _ = try NativeGroundingJSON.object(output) }
-            record(spec, argumentsJSON, outcome: preapproved ? "succeeded (pre-approved)" : "succeeded", detail: structured ? nil : output)
-            // Grounding needs the complete observation; a compact observation is
-            // returned whole too, so the controller can project it before truncating.
+            record(spec, argumentsJSON, outcome: successOutcome, detail: structured ? nil : output)
             if structured { return output }
             return ActionResultText.truncate(output, limit: ActionResultText.modelLimit)
         } catch {
             let cancelled = Task.isCancelled || ActionErrorHandling.isCancellation(error)
-            let observation = spec.nativeObservation || spec.groundingDecision != nil || spec.compactObservation
             record(spec, argumentsJSON, outcome: cancelled ? "cancelled" : "failed",
-                   detail: observation ? nil : ActionErrorHandling.userFacingMessage(for: error))
+                   detail: spec.compactObservation ? nil : ActionErrorHandling.userFacingMessage(for: error))
             throw error
         }
     }
@@ -148,7 +130,7 @@ final class ActionToolRouter: ActionRouting {
             case .deny: outcome = "plan denied"
             }
             audit.record(serverName: "superkeet", toolName: "plan", risk: .mutating,
-                         argumentsJSON: (try? NativeGroundingJSON.encode(["steps": plan.steps.map(\.summary)])) ?? "{}",
+                         argumentsJSON: (try? ActionJSON.encode(["steps": plan.steps.map(\.summary)])) ?? "{}",
                          outcome: outcome)
         }
         return decision
@@ -167,19 +149,6 @@ final class ActionToolRouter: ActionRouting {
         return native
     }
 
-    private func refresh(_ preflight: NativeActionPreflight, spec: ActionToolSpec, argumentsJSON: String) async throws -> String {
-        var observation = ActionToolSpec(descriptor: MCPToolDescriptor(
-            serverID: spec.serverID, serverName: spec.serverName, name: "get_window_state", title: nil,
-            description: "Refresh the approved native control", risk: .readOnly, inputSchemaJSON: preflight.observationSchemaJSON
-        ))
-        observation.nativeObservation = true
-        let arguments = try NativeGroundingJSON.encode(["pid": preflight.window.pid, "window_id": preflight.window.windowID,
-                                                       "include_screenshot": false, "session": preflight.session])
-        let json = try await execute(spec: observation, argumentsJSON: arguments)
-        let snapshot = try NativeGroundingSnapshot(json: json, window: preflight.window)
-        return try preflight.refreshedArguments(argumentsJSON, snapshot: snapshot)
-    }
-
     private func record(_ spec: ActionToolSpec, _ argumentsJSON: String, outcome: String, detail: String? = nil) {
         guard settings.actionAuditEnabled else { return }
         audit.record(
@@ -188,9 +157,7 @@ final class ActionToolRouter: ActionRouting {
             risk: spec.risk,
             argumentsJSON: argumentsJSON,
             outcome: outcome,
-            detail: detail.map { ActionResultText.truncate(ActionRedactor.redactText($0)) },
-            grounding: spec.groundingDecision,
-            redactionContext: spec.nativeObservation || spec.nativePreflight != nil || spec.groundingDecision != nil ? .groundingUI : .toolArguments
+            detail: detail.map { ActionResultText.truncate(ActionRedactor.redactText($0)) }
         )
     }
 }

@@ -4,8 +4,6 @@ import XCTest
 
 @MainActor
 final class MicrophoneTapHubTests: XCTestCase {
-    /// Stands in for the audio hardware: records lifecycle calls and lets a
-    /// test push buffers through whatever handler the hub installed.
     final class FakeCapture: MicrophoneCapturing {
         private(set) var startCount = 0
         private(set) var stopCount = 0
@@ -66,8 +64,6 @@ final class MicrophoneTapHubTests: XCTestCase {
         }
     }
 
-    // MARK: Lifecycle
-
     func testFirstSubscriberStartsCaptureAndLastOneStopsIt() throws {
         let capture = FakeCapture()
         let hub = makeHub(capture: capture, device: "USB Microphone")
@@ -120,8 +116,6 @@ final class MicrophoneTapHubTests: XCTestCase {
         XCTAssertEqual(capture.stopCount, 1, "Repeated unsubscribes never stop the capture twice.")
     }
 
-    // MARK: Failures
-
     func testDeniedMicrophoneAccessThrowsWithoutTouchingHardware() {
         let capture = FakeCapture()
         let hub = makeHub(capture: capture, authorized: false)
@@ -159,8 +153,6 @@ final class MicrophoneTapHubTests: XCTestCase {
         XCTAssertNil(hub.warning)
     }
 
-    // MARK: Fan-out
-
     func testBuffersReachEverySubscriberAndStopAfterDetach() throws {
         let capture = FakeCapture()
         let hub = makeHub(capture: capture)
@@ -192,8 +184,6 @@ final class MicrophoneTapHubTests: XCTestCase {
         XCTAssertEqual(calls.value, 3, "Delivery uses a snapshot, so removing a handler mid-dispatch is safe.")
         XCTAssertEqual(fanout.count, 2)
     }
-
-    // MARK: Level meter on the hub
 
     func testLevelMonitorSubscribesAndPublishesLevels() async throws {
         let capture = FakeCapture()
@@ -254,7 +244,6 @@ final class MicrophoneTapHubTests: XCTestCase {
     }
 }
 
-/// Minimal thread-safe box for asserting on values written from handler closures.
 final class OSAllocatedUnfairLockBox<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: Value

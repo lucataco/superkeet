@@ -1,7 +1,5 @@
 import Foundation
 
-/// Recognizes an explicit tab scope before generic "open URL" handling. This
-/// supplies routing/slots only; the planner still observes and chooses page IDs.
 enum ActiveTabIntent {
     private static let browserPattern = (["google chrome", "microsoft edge"] + ActionIntentPolicy.browsers.sorted())
         .map { NSRegularExpression.escapedPattern(for: $0).replacingOccurrences(of: " ", with: "\\s+") }

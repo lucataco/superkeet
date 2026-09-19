@@ -22,7 +22,7 @@ struct ActionsTabView: View {
                     Toggle(isOn: $settings.actionsEnabled) {
                         rowLabel(
                             "Enable Actions Mode",
-                            "Adds a Command Mode shortcut that turns speech into tool actions instead of text"
+                            "Adds a Run an Action shortcut that turns speech into tool actions instead of text"
                         )
                     }
                     availabilityCard
@@ -68,8 +68,6 @@ struct ActionsTabView: View {
                 }
 
                 InstantAppLaunchSettingsView()
-
-                NativeGroundingSettingsView()
 
                 Section {
                     Picker(selection: $settings.actionApprovalPolicy) {

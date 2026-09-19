@@ -8,15 +8,9 @@ private let plannerLog = Logger(subsystem: "com.superkeet.app", category: "Actio
 
 @available(macOS 26.0, *)
 final class FoundationModelActionPlanner: ContextualActionPlanning {
-    /// Context the model needs to keep free for instructions, the spoken task,
-    /// streamed replies, and tool results. Tools are only allowed to use what is
-    /// left of `SystemLanguageModel.default.contextSize`.
     private static let reservedContextTokens = 2_400
     private static let minimumToolBudgetTokens = 400
     private static let maximumOverflowRetries = 2
-    /// How many times one step may resume in a fresh session after its
-    /// transcript overflowed mid-way. Each continuation carries a condensed record
-    /// of the calls made so far.
     static let maximumContinuations = 1
 
     private static let baseInstructions = """
@@ -47,14 +41,6 @@ final class FoundationModelActionPlanner: ContextualActionPlanning {
         if let context, !context.isEmpty {
             let progress = context.instructions(for: task)
             if !progress.isEmpty { text += "\n\n" + progress }
-        }
-        if !names.isDisjoint(with: ["superkeet_native_click", "superkeet_native_set_text"]) {
-            text += """
-
-            For native clicks and text entry, use superkeet_native_click or superkeet_native_set_text when provided.
-            Supply one step, the exact app name, the control label (including its section if needed), and exact replacement text.
-            If a grounded step stops or cannot verify its effect, stop the task. Never try another tool to repeat that action.
-            """
         }
         if !names.isDisjoint(with: ["run_process", "run_command"]) {
             text += "\nIf a native open tool cannot handle the request, the shell tool can run `open -a \"App Name\"` or `open -a \"Browser Name\" \"https://example.com\"`."
@@ -144,16 +130,12 @@ final class FoundationModelActionPlanner: ContextualActionPlanning {
             } catch let error as LanguageModelSession.GenerationError {
                 guard case .exceededContextWindowSize = error else { throw error }
                 if await !recorder.hasExecuted {
-                    // Nothing has happened yet, so a smaller tool set is a clean retry.
                     guard attempt < Self.maximumOverflowRetries, selected.count > 1 else { throw error }
                     attempt += 1
                     budget = max(Self.minimumToolBudgetTokens, budget * 3 / 5)
                     plannerLog.info("Context window exceeded; retrying with a \(budget)-token tool budget")
                     continue
                 }
-                // Tools have run. Condense what happened and continue in a fresh
-                // session rather than losing the step; a repeated identical
-                // mutation is served from the run's cache, never re-executed.
                 guard continuations < Self.maximumContinuations else { throw error }
                 continuations += 1
                 progress = await recorder.progress
@@ -164,8 +146,6 @@ final class FoundationModelActionPlanner: ContextualActionPlanning {
         }
     }
 
-    /// Model-free preparation: rank the complete inventory before capping it,
-    /// then reuse these immutable schemas for all budget/overflow attempts.
     static func toolBridges(
         from tools: [ActionToolSpec], intent: ActionIntent,
         execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String
@@ -182,9 +162,6 @@ final class FoundationModelActionPlanner: ContextualActionPlanning {
         return max(Self.minimumToolBudgetTokens, contextSize - Self.reservedContextTokens)
     }
 
-    /// Greedily keeps tools in priority order while they fit the token budget.
-    /// macOS 26.4+ measures the real framework cost; earlier systems fall back to
-    /// a conservative character estimate.
     private func selectTools(from candidates: [MCPToolBridge], budget: Int) async -> [MCPToolBridge] {
         if #available(macOS 26.4, *) {
             let model = SystemLanguageModel.default
@@ -211,9 +188,6 @@ final class FoundationModelActionPlanner: ContextualActionPlanning {
         return selected
     }
 
-    /// Tracks the tool calls a step has made. Once a tool has side effects the
-    /// plan is never silently restarted from scratch; an overflow instead
-    /// continues from this record.
     private actor ToolExecutionRecorder {
         private var executed = false
         private(set) var progress = ActionProgressSummary()

@@ -2,9 +2,6 @@ import XCTest
 @testable import Superkeet
 
 final class ObservationProjectionTests: XCTestCase {
-    /// A real `get_window_state` result for Notes from Cua Driver 0.28.2,
-    /// trimmed to 80 representative elements (menu bar, toolbar, note list rows,
-    /// the note body, links).
     private func notesJSON() throws -> String {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Fixtures/cua-driver-0.28.2-notes-window-state.json")

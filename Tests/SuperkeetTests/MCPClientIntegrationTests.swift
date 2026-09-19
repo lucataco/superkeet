@@ -35,7 +35,7 @@ final class MCPClientIntegrationTests: XCTestCase {
             let plain = try await manager.callTool(serverID: server.id, toolName: "observe", argumentsJSON: "{}")
             XCTAssertEqual(plain, "short summary")
             let structured = try await manager.callTool(serverID: server.id, toolName: "observe", argumentsJSON: "{}", structured: true)
-            let root = try NativeGroundingJSON.object(structured)
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(structured.utf8)) as? [String: Any])
             XCTAssertEqual(root["snapshot_id"] as? String, "s00000001")
             XCTAssertEqual((root["value"] as? String)?.count, 2000)
         } catch {

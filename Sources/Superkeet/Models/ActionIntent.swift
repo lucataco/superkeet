@@ -65,7 +65,6 @@ struct HeuristicIntentExtractor: ActionIntentExtracting {
         let goal = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let activeTab = ActiveTabIntent.extract(goal) { return activeTab }
         let words = goal.lowercased().split { !$0.isLetter }.map(String.init)
-        // Prefer a named non-Chrome browser, preserving the existing filter's behavior.
         let browser = words.first { ActionIntentPolicy.browsers.contains($0) && $0 != "chrome" }
             ?? words.first { $0 == "chrome" }
         var intent = ActionIntent(goal: goal, action: .other, browser: browser)

@@ -18,11 +18,11 @@ final class NativeOpenRouterTests: XCTestCase {
             if approvals.pending != nil { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTFail("Expected approval before a native open")
+        XCTFail("Expected approval before a native tool runs")
         throw ActionExecutionError.timedOut
     }
 
-    func testNativeOpenRunsOnlyAfterApprovalAndRecordsAudit() async throws {
+    func testNativeOpensSkipDefaultApprovalAndAreAuditedAsAutoApproved() async throws {
         let settings = AppSettings.shared
         let policy = settings.actionApprovalPolicy
         let auditEnabled = settings.actionAuditEnabled
@@ -33,31 +33,72 @@ final class NativeOpenRouterTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: file) }
         let audit = ActionAuditStore(fileURL: file)
         let approvals = ActionApprovalController()
+        defer { approvals.cancelPending() }
         let executor = Executor()
         let router = ActionToolRouter(approvals: approvals, audit: audit, settings: settings, callTool: { _, _, _, _ in
             XCTFail("Native opens must not call MCP")
             return "unexpected"
         }, nativeExecutor: executor)
-        let spec = NativeOpenAction.tools[1]
-        let task = Task { try await router.execute(spec: spec, argumentsJSON: #"{"url":"youtube.com","browser":"Helium"}"#) }
-        try await waitForApproval(approvals)
-        XCTAssertTrue(executor.actions.isEmpty)
-        let pending = try XCTUnwrap(approvals.pending)
-        XCTAssertEqual(try NativeOpenAction.decode(toolName: pending.tool.toolName, argumentsJSON: pending.argumentsJSON),
-                       .openURL(url: try XCTUnwrap(URL(string: "https://youtube.com")), browser: "Helium"))
-        approvals.resolve(.approve)
-        let result = try await task.value
-        XCTAssertEqual(result, "Opened by native fixture.")
-        XCTAssertEqual(executor.actions, [.openURL(url: try XCTUnwrap(URL(string: "https://youtube.com")), browser: "Helium")])
-        let entry = try XCTUnwrap(audit.entries().first)
-        XCTAssertEqual(entry.serverName, "superkeet")
-        XCTAssertEqual(entry.toolName, "open_url")
-        XCTAssertEqual(entry.risk, "mutating")
-        XCTAssertEqual(entry.outcome, "succeeded")
-        XCTAssertTrue(entry.arguments.contains("Helium"))
+        let examples: [(NativeOpenAction, String)] = [
+            (.openApp(name: "Discord"), #"{"name":"Discord"}"#),
+            (.openURL(url: try XCTUnwrap(URL(string: "https://youtube.com")), browser: "Helium"), #"{"url":"youtube.com","browser":"Helium"}"#)
+        ]
+        for (action, arguments) in examples {
+            let result = try await AsyncTimeout.run(seconds: 1, timeoutError: ActionExecutionError.timedOut) {
+                try await router.execute(spec: action.spec, argumentsJSON: arguments)
+            }
+            XCTAssertEqual(result, "Opened by native fixture.")
+            XCTAssertNil(approvals.pending, "Exempt opens never reach the approval HUD.")
+            XCTAssertEqual(approvals.pendingCount, 0)
+        }
+        XCTAssertEqual(executor.actions, examples.map { $0.0 })
+        let entries = audit.entries()
+        XCTAssertEqual(entries.map(\.toolName), ["open_app", "open_url"])
+        XCTAssertTrue(entries.allSatisfy { $0.serverName == "superkeet" && $0.risk == "mutating" })
+        XCTAssertEqual(entries.map(\.outcome), ["succeeded (auto-approved)", "succeeded (auto-approved)"])
+        let urlEntry = try XCTUnwrap(entries.last)
+        let urlArguments = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(urlEntry.arguments.utf8)) as? [String: String])
+        XCTAssertEqual(urlArguments["url"], "https://youtube.com")
+        XCTAssertEqual(urlArguments["browser"], "Helium")
     }
 
-    func testNativeToolRiskCannotBeDowngradedAndDenialOrCancellationPreventsExecution() async throws {
+    func testAlwaysAskRequiresApprovalForEveryNativeToolAndRecordsAudit() async throws {
+        let settings = AppSettings.shared
+        let policy = settings.actionApprovalPolicy
+        let auditEnabled = settings.actionAuditEnabled
+        settings.actionApprovalPolicy = .alwaysAsk
+        settings.actionAuditEnabled = true
+        defer { settings.actionApprovalPolicy = policy; settings.actionAuditEnabled = auditEnabled }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let audit = ActionAuditStore(fileURL: file)
+        let approvals = ActionApprovalController()
+        defer { approvals.cancelPending() }
+        let executor = Executor()
+        let router = ActionToolRouter(approvals: approvals, audit: audit, settings: settings, nativeExecutor: executor)
+        let actions: [NativeOpenAction] = [
+            .openApp(name: "Notes"),
+            .openURL(url: try XCTUnwrap(URL(string: "https://example.com")), browser: nil),
+            .pressShortcut(app: "Notes", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"])))
+        ]
+        for (index, action) in actions.enumerated() {
+            let arguments = try action.argumentsJSON()
+            let task = Task { try await router.execute(spec: action.spec, argumentsJSON: arguments) }
+            defer { task.cancel() }
+            try await waitForApproval(approvals)
+            XCTAssertEqual(executor.actions.count, index, "Each tool must wait for approval.")
+            let pending = try XCTUnwrap(approvals.pending)
+            XCTAssertEqual(pending.tool, action.spec)
+            XCTAssertEqual(pending.argumentsJSON, arguments)
+            approvals.resolve(.approve, requestID: pending.id)
+            let result = try await task.value
+            XCTAssertEqual(result, "Opened by native fixture.")
+        }
+        XCTAssertEqual(executor.actions, actions)
+        XCTAssertEqual(audit.entries().map(\.outcome), ["succeeded", "succeeded", "succeeded"])
+    }
+
+    func testNativeShortcutRiskAndApprovalExemptionCannotBeForged() async throws {
         let settings = AppSettings.shared
         let policy = settings.actionApprovalPolicy
         let auditEnabled = settings.actionAuditEnabled
@@ -69,13 +110,16 @@ final class NativeOpenRouterTests: XCTestCase {
         let audit = ActionAuditStore(fileURL: file)
         for cancel in [false, true] {
             let approvals = ActionApprovalController()
+            defer { approvals.cancelPending() }
             let executor = Executor()
             let router = ActionToolRouter(approvals: approvals, audit: audit, settings: settings, nativeExecutor: executor)
-            let forged = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: NativeActionExecutor.serverID, serverName: "fake",
-                name: "open_app", title: nil, description: nil, risk: .readOnly, inputSchemaJSON: "{}"))
-            let task = Task { try await router.execute(spec: forged, argumentsJSON: #"{"name":"Discord"}"#) }
+            var forged = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: NativeActionExecutor.serverID, serverName: "fake",
+                name: "press_shortcut", title: nil, description: nil, risk: .readOnly, inputSchemaJSON: "{}"))
+            forged.approvalExempt = true
+            let task = Task { try await router.execute(spec: forged, argumentsJSON: #"{"app":"Notes","keys":["cmd","n"]}"#) }
+            defer { task.cancel() }
             try await waitForApproval(approvals)
-            XCTAssertEqual(approvals.pending?.tool, NativeOpenAction.tools[0])
+            XCTAssertEqual(approvals.pending?.tool, NativeOpenAction.tools[2])
             if cancel { task.cancel() }
             approvals.resolve(cancel ? .approve : .deny)
             do { _ = try await task.value; XCTFail("Expected denial or cancellation") } catch { }
@@ -88,7 +132,7 @@ final class NativeOpenRouterTests: XCTestCase {
         let settings = AppSettings.shared
         let policy = settings.actionApprovalPolicy
         let auditEnabled = settings.actionAuditEnabled
-        settings.actionApprovalPolicy = .readOnlyAuto
+        settings.actionApprovalPolicy = .alwaysAsk
         settings.actionAuditEnabled = true
         defer { settings.actionApprovalPolicy = policy; settings.actionAuditEnabled = auditEnabled }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
@@ -106,14 +150,12 @@ final class NativeOpenRouterTests: XCTestCase {
         XCTAssertEqual(executor.actions, [.openApp(name: "Notes")])
         XCTAssertEqual(audit.entries().map(\.outcome), ["succeeded (pre-approved)"])
 
-        // A different app is not covered and asks as usual.
         let task = Task { try await router.execute(spec: spec, argumentsJSON: #"{"name":"Pages"}"#) }
         try await waitForApproval(approvals)
         approvals.resolve(.deny)
         do { _ = try await task.value; XCTFail("Expected denial") } catch { }
         XCTAssertEqual(audit.entries().map(\.outcome), ["succeeded (pre-approved)", "denied"])
 
-        // Ending the session forgets the grant.
         router.cancelPendingApprovals()
         let again = Task { try await router.execute(spec: spec, argumentsJSON: #"{"name":"Notes"}"#) }
         try await waitForApproval(approvals)
@@ -151,7 +193,7 @@ final class NativeOpenRouterTests: XCTestCase {
         XCTAssertTrue(entry.arguments.contains("Press"))
     }
 
-    func testNativeDispatchFailureIsAuditedOnce() async throws {
+    func testExemptNativeDispatchFailureIsAuditedOnce() async throws {
         let settings = AppSettings.shared
         let policy = settings.actionApprovalPolicy
         let auditEnabled = settings.actionAuditEnabled
@@ -162,13 +204,19 @@ final class NativeOpenRouterTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: file) }
         let audit = ActionAuditStore(fileURL: file)
         let approvals = ActionApprovalController()
+        defer { approvals.cancelPending() }
         let executor = Executor()
         executor.failure = NativeOpenActionError.openFailed("fixture failure")
         let router = ActionToolRouter(approvals: approvals, audit: audit, settings: settings, nativeExecutor: executor)
-        let task = Task { try await router.execute(spec: NativeOpenAction.tools[0], argumentsJSON: #"{"name":"Discord"}"#) }
-        try await waitForApproval(approvals)
-        approvals.resolve(.approve)
-        do { _ = try await task.value; XCTFail("Expected failure") } catch { XCTAssertEqual(error as? NativeOpenActionError, .openFailed("fixture failure")) }
+        do {
+            _ = try await AsyncTimeout.run(seconds: 1, timeoutError: ActionExecutionError.timedOut) {
+                try await router.execute(spec: NativeOpenAction.tools[0], argumentsJSON: #"{"name":"Discord"}"#)
+            }
+            XCTFail("Expected failure")
+        } catch {
+            XCTAssertEqual(error as? NativeOpenActionError, .openFailed("fixture failure"))
+        }
+        XCTAssertNil(approvals.pending)
         XCTAssertEqual(executor.actions.count, 1)
         XCTAssertEqual(audit.entries().map(\.outcome), ["failed"])
     }

@@ -2,10 +2,6 @@ import AVFoundation
 import XCTest
 @testable import Superkeet
 
-/// Drives the whole early-launch path with the real on-device recogniser:
-/// fake microphone → shared tap → SpeechAnalyzer → detector → coordinator →
-/// fake launcher. Skips when the speech model is not installed so CI never
-/// downloads assets.
 @MainActor
 final class SpeculativeLaunchIntegrationTests: XCTestCase {
     private nonisolated(unsafe) var savedSettings: (actions: Bool, instant: Bool, audit: Bool)?
@@ -63,7 +59,6 @@ final class SpeculativeLaunchIntegrationTests: XCTestCase {
         while !hub.isRunning && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(hub.isRunning, "The recogniser should be listening through the shared tap.")
 
-        // Stream the utterance at live cadence, then a little silence, like a real microphone.
         let started = ContinuousClock.now
         var launchedAt: Duration?
         let chunk = AVAudioFrameCount(audio.processingFormat.sampleRate / 10)

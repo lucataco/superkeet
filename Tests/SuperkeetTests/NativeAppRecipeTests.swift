@@ -64,7 +64,6 @@ final class NativeAppRecipeTests: XCTestCase {
                        "create a note", "close friends", "undo button", "select the third row", "new", ""] {
             XCTAssertNil(NativeAppRecipe.recipe(for: clause), clause)
         }
-        // A quit target is only text here; whether it names an installed, running app is decided at run time.
         XCTAssertEqual(recipe("quit smoking today")?.target, .named("smoking today"))
     }
 }

@@ -1,17 +1,13 @@
 import Foundation
 
-/// One step of a spoken command, classified on its own.
 struct CommandClause: Equatable, Sendable {
     let index: Int
     let text: String
     let intent: ActionIntent
 
-    /// Words worth matching against tool names and UI labels for this step.
     var focusTerms: Set<String> { intent.routingTerms }
 }
 
-/// A spoken command broken into ordered steps. A single-step command is a
-/// plan with one clause and behaves exactly like the undecomposed request.
 struct CommandPlan: Equatable, Sendable {
     let command: String
     let clauses: [CommandClause]
@@ -20,9 +16,6 @@ struct CommandPlan: Equatable, Sendable {
 }
 
 enum CommandDecomposer {
-    /// Splits at conjunctions and separators (outside quotes) and classifies
-    /// each part. Active-tab requests are never split: their scope qualifier
-    /// binds the whole sentence to one browser tab.
     static func decompose(_ command: String) -> CommandPlan {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let whole = HeuristicIntentExtractor.intent(for: trimmed)
@@ -34,18 +27,13 @@ enum CommandDecomposer {
         return CommandPlan(command: trimmed, clauses: clauses)
     }
 
-    /// Whether an app opened while the user was speaking already carries out
-    /// this clause. Names are compared through the installed-app resolver so
-    /// "the Notes app", "Notes", and aliases all match the launched bundle.
     static func clause(_ clause: CommandClause, isSatisfiedBy launch: SpeculativeLaunchResult, resolveApp: (String) -> URL?) -> Bool {
         guard launch.launched != nil else { return false }
         let named: String?
         if let parsed = SpeculativeIntentDetector.leadingClause(in: clause.text) {
-            // The same parser that triggered the launch, so filler words and
-            // "switch to" phrasing agree with what was heard.
             guard !parsed.hasBoundary, !parsed.containsURL else { return false }
             named = parsed.candidate
-        } else if [.openApp, .switchApp].contains(clause.intent.action), !NativeActionStep.hasSequence(clause.text) {
+        } else if [.openApp, .switchApp].contains(clause.intent.action), !CommandClauses.hasSequence(clause.text) {
             named = clause.intent.app
         } else {
             return false
@@ -55,9 +43,6 @@ enum CommandDecomposer {
     }
 }
 
-/// What earlier steps of the same command have already done. The planner
-/// receives this as instructions so each step runs in a fresh, small model
-/// session without losing track of the apps that are already open.
 struct ActionPlanContext: Equatable, Sendable {
     struct CompletedStep: Equatable, Sendable {
         let clause: String
@@ -76,10 +61,8 @@ struct ActionPlanContext: Equatable, Sendable {
 
     var isFinalStep: Bool { stepNumber >= stepCount }
 
-    /// Nothing an undecomposed, context-free run would not already know.
     var isEmpty: Bool { stepCount <= 1 && completed.isEmpty && openedApps.isEmpty }
 
-    /// The app most recently opened by this command, if any.
     var currentApp: NativeLaunchedApp? { openedApps.last }
 
     mutating func recordOpened(_ app: NativeLaunchedApp) {
@@ -87,7 +70,6 @@ struct ActionPlanContext: Equatable, Sendable {
         openedApps.append(app)
     }
 
-    /// Instructions text appended to the planner's system prompt for this step.
     func instructions(for clause: String) -> String {
         var lines: [String] = []
         if stepCount > 1 {

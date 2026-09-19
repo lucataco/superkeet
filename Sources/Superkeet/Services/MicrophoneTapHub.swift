@@ -21,8 +21,6 @@ enum MicrophoneTapError: LocalizedError, Equatable {
     }
 }
 
-/// Owns the microphone hardware for `MicrophoneTapHub`. The real backend
-/// wraps `AVAudioEngine`; tests substitute a fake that emits buffers on demand.
 @MainActor
 protocol MicrophoneCapturing: AnyObject {
     func start(
@@ -33,16 +31,10 @@ protocol MicrophoneCapturing: AnyObject {
     func stop()
 }
 
-/// One microphone input tap shared by everything that consumes live audio:
-/// the recording overlay's level meter, and the partial-transcript recogniser
-/// that spots app-launch intents while the user is still speaking. The engine
-/// runs while at least one subscriber is attached and stops with the last one,
-/// so command mode can hear audio even when no overlay is shown.
 @MainActor
 final class MicrophoneTapHub: ObservableObject {
     static let shared = MicrophoneTapHub()
 
-    /// Called on the audio tap's thread for every captured buffer.
     typealias BufferHandler = @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
 
     struct Subscription: Hashable, Sendable {
@@ -51,8 +43,6 @@ final class MicrophoneTapHub: ObservableObject {
 
     struct CaptureInfo {
         let format: AVAudioFormat
-        /// Non-fatal note, for example when the selected microphone is missing
-        /// and the default input is used instead.
         let warning: String?
     }
 
@@ -79,8 +69,6 @@ final class MicrophoneTapHub: ObservableObject {
 
     var subscriberCount: Int { fanout.count }
 
-    /// Attaches a handler, starting the microphone if it is not already running.
-    /// Throws when capture cannot start; no subscription is retained in that case.
     func subscribe(_ handler: @escaping BufferHandler) throws -> Subscription {
         dispatchPrecondition(condition: .onQueue(.main))
         if !isRunning { try start() }
@@ -89,8 +77,6 @@ final class MicrophoneTapHub: ObservableObject {
         return subscription
     }
 
-    /// Detaches a handler, stopping the microphone when it was the last one.
-    /// Unknown or already-removed subscriptions are ignored.
     func unsubscribe(_ subscription: Subscription) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard fanout.remove(subscription.id) else { return }
@@ -122,9 +108,6 @@ final class MicrophoneTapHub: ObservableObject {
     }
 }
 
-/// Delivers buffers from the audio thread to every subscriber. Membership
-/// changes on the main actor; delivery reads a snapshot under the lock so a
-/// subscriber can detach while a buffer is in flight.
 final class BufferFanout: Sendable {
     private let handlers = OSAllocatedUnfairLock<[UUID: MicrophoneTapHub.BufferHandler]>(initialState: [:])
 
@@ -145,7 +128,6 @@ final class BufferFanout: Sendable {
     }
 }
 
-/// `AVAudioEngine` input tap honouring the configured input device.
 @MainActor
 final class AVAudioEngineMicrophone: MicrophoneCapturing {
     private var engine: AVAudioEngine?

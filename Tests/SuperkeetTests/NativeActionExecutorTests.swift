@@ -41,8 +41,6 @@ final class NativeActionExecutorTests: XCTestCase {
         )
     }
 
-    // MARK: Shortcuts
-
     func testPressesShortcutInResolvedApp() async throws {
         let shortcuts = Shortcuts()
         let chord = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
@@ -85,7 +83,6 @@ final class NativeActionExecutorTests: XCTestCase {
         environment.accessibilityTrusted = { true }
         environment.runningApplication = { _ in finder }
         environment.frontmostProcessIdentifier = {
-            // Become frontmost on the second poll, as if activation took a moment.
             let current = frontmost.value
             frontmost.mutate { $0 = finder.processIdentifier }
             return current
@@ -156,7 +153,6 @@ final class NativeActionExecutorTests: XCTestCase {
     }
 
     func testWindowProbeIsFalseForWindowlessProcess() {
-        // launchd never owns an ordinary window; the probe must not crash or misreport.
         XCTAssertFalse(SystemNativeWorkspace.hasOrdinaryWindow(processIdentifier: 1))
     }
 

@@ -31,10 +31,8 @@ final class ActionObservationPolicyTests: XCTestCase {
         for name in ["click", "type_text", "set_value", "launch_app", "hotkey", "invoke_menu"] {
             XCTAssertFalse(ActionObservationPolicy.reflectsLiveState(spec(name, risk: .mutating)), name)
         }
-        // A mutating tool with an observation-like name is still a mutation.
         XCTAssertFalse(ActionObservationPolicy.reflectsLiveState(spec("get_window_state", risk: .mutating)))
         XCTAssertFalse(ActionObservationPolicy.reflectsLiveState(spec("list_windows", risk: .destructive)))
-        // Stable read-only lookups may be reused within a run.
         for name in ["search_web", "fetch_url", "read_file", "describe_image", "open_app"] {
             XCTAssertFalse(ActionObservationPolicy.reflectsLiveState(spec(name)), name)
         }

@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Settings for opening apps the moment they are named while speaking a command.
 struct InstantAppLaunchSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var coordinator = SpeculativeLaunchCoordinator.shared

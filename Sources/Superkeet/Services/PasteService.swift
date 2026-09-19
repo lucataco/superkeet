@@ -2,6 +2,13 @@ import Foundation
 import AppKit
 import Carbon
 
+/// How a transcript reached the user. `pasteFailed` means the text is still on the clipboard.
+enum PasteDelivery: Equatable, Sendable {
+    case copied
+    case pasted
+    case pasteFailed
+}
+
 final class PasteService: @unchecked Sendable {
     static let shared = PasteService()
 
@@ -30,12 +37,18 @@ final class PasteService: @unchecked Sendable {
         self.environment = environment
     }
 
-    func deliverText(_ text: String, decision: OutputRoutingDecision, targetProcessIdentifier: pid_t? = nil) {
+    func deliverText(
+        _ text: String,
+        decision: OutputRoutingDecision,
+        targetProcessIdentifier: pid_t? = nil,
+        onDelivered: (@Sendable (PasteDelivery) -> Void)? = nil
+    ) {
         dispatchPrecondition(condition: .onQueue(.main))
         if decision.shouldAutoPaste {
             guard environment.accessibilityTrusted() else {
                 copyToClipboard(text)
                 environment.reportIssue("Paste Automatically needs Accessibility access. Copied to clipboard instead.")
+                onDelivered?(.pasteFailed)
                 return
             }
 
@@ -45,23 +58,28 @@ final class PasteService: @unchecked Sendable {
             let transcriptChangeCount = copyToClipboard(text)
             guard let targetProcessIdentifier, environment.activateTarget(targetProcessIdentifier) else {
                 environment.reportIssue("Automatic paste was cancelled because the original app could not be activated. Use Copy Last Transcript to recover the text.")
+                onDelivered?(.pasteFailed)
                 return
             }
 
             environment.schedule(0.15) {
                 guard self.pasteboard.changeCount == transcriptChangeCount else {
                     self.environment.reportIssue("Automatic paste was cancelled because the clipboard changed. Your new clipboard was preserved; use Copy Last Transcript to recover the text.")
+                    onDelivered?(.pasteFailed)
                     return
                 }
                 guard self.environment.accessibilityTrusted(),
                       self.environment.targetIsFrontmost(targetProcessIdentifier) else {
                     self.environment.reportIssue("Automatic paste was cancelled because the original app is no longer ready for paste. Use Copy Last Transcript to recover the text.")
+                    onDelivered?(.pasteFailed)
                     return
                 }
                 guard self.environment.sendPaste() else {
                     self.environment.reportIssue("Automatic paste could not send the paste command. Use Copy Last Transcript to recover the text.")
+                    onDelivered?(.pasteFailed)
                     return
                 }
+                onDelivered?(.pasted)
                 if !decision.shouldKeepClipboardAfterPaste {
                     self.environment.schedule(0.3) {
                         self.restoreClipboard(savedClipboard, ifCurrentChangeCount: transcriptChangeCount)
@@ -70,6 +88,7 @@ final class PasteService: @unchecked Sendable {
             }
         } else if decision.shouldCopyToClipboard {
             copyToClipboard(text)
+            onDelivered?(.copied)
         }
     }
 

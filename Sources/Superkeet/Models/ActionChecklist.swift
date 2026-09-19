@@ -1,9 +1,5 @@
 import Foundation
 
-/// One row of the HUD checklist: a step of the command, a tool call, an app
-/// opened while the user was speaking, or a note. Unlike the append-only
-/// activity log, a row keeps its identity and its status changes in place, so
-/// the HUD can show `Running…` turn into `✓` rather than two lines.
 struct ActionChecklistItem: Identifiable, Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case speculative
@@ -38,17 +34,12 @@ struct ActionChecklistItem: Identifiable, Equatable, Sendable {
     }
 }
 
-/// The HUD's view of a running command. Pure value type; the session
-/// controller feeds it the same events that drive the activity log.
 struct ActionChecklist: Equatable, Sendable {
     private(set) var items: [ActionChecklistItem] = []
-    /// The tool row that is currently running, if any.
     private var runningToolID: UUID?
 
     var isEmpty: Bool { items.isEmpty }
 
-    /// Rows shown on the HUD when space is short: the newest `limit` rows,
-    /// always keeping the current step header so the list stays oriented.
     func visibleItems(limit: Int) -> (hidden: Int, items: [ActionChecklistItem]) {
         guard items.count > limit, limit > 0 else { return (0, items) }
         var tail = Array(items.suffix(limit))
@@ -75,7 +66,6 @@ struct ActionChecklist: Equatable, Sendable {
         items.append(.init(kind: .step(number: number, total: total), status: .running, title: text))
     }
 
-    /// Marks the current step's outcome; `nil` output means an earlier launch covered it.
     mutating func completeStep(skippedBecause reason: String? = nil) {
         guard let index = items.lastIndex(where: { if case .step = $0.kind { return true }; return false }) else { return }
         if let reason {
@@ -109,7 +99,6 @@ struct ActionChecklist: Equatable, Sendable {
         }
     }
 
-    /// When the command ends, anything still marked running did not complete.
     mutating func finish(succeeded: Bool) {
         for index in items.indices where items[index].status == .running {
             items[index].status = succeeded ? .done : .failed

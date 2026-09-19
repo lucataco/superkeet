@@ -43,7 +43,6 @@ final class ActiveTabRoutingTests: XCTestCase {
         let filtered = ActionToolFilter.filtering(ActiveTabToolFixture.chrome(), task: "Find DNS in the active tab")
         for spec in filtered {
             XCTAssertEqual(spec.requiresFreshObservation, ["list_pages", "take_snapshot"].contains(spec.toolName))
-            XCTAssertFalse(spec.nativeObservation, "Chrome uses text results rather than Cua structured snapshots.")
         }
     }
 

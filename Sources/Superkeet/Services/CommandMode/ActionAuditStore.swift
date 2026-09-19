@@ -9,7 +9,6 @@ struct ActionAuditEntry: Codable, Equatable {
     let arguments: String
     let outcome: String
     let detail: String?
-    var grounding: ActionGroundingDecision?
 }
 
 final class ActionAuditStore: @unchecked Sendable {
@@ -56,20 +55,16 @@ final class ActionAuditStore: @unchecked Sendable {
         risk: ActionToolRisk,
         argumentsJSON: String,
         outcome: String,
-        detail: String? = nil,
-        grounding: ActionGroundingDecision? = nil,
-        redactionContext: ActionRedactor.Context = .toolArguments
+        detail: String? = nil
     ) {
-        let context: ActionRedactor.Context = grounding == nil ? redactionContext : .groundingUI
         let entry = ActionAuditEntry(
             timestamp: Date(),
             serverName: serverName,
             toolName: toolName,
             risk: risk.rawValue,
-            arguments: ActionRedactor.redact(argumentsJSON, context: context),
+            arguments: ActionRedactor.redact(argumentsJSON),
             outcome: outcome,
-            detail: context == .groundingUI ? nil : detail.map { ActionResultText.truncate(ActionRedactor.redactText($0), limit: 500) },
-            grounding: grounding
+            detail: detail.map { ActionResultText.truncate(ActionRedactor.redactText($0), limit: 500) }
         )
         append(entry)
     }

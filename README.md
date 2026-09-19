@@ -26,7 +26,7 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - Visible transcription completion, partial-result warnings, and last/original transcript recovery
 - App-scoped phrase replacements and opt-in spoken correction commands with undo
 - Setup diagnostics for microphone access, engine presence, runtime directory, and daemon state
-- Optional **Actions Mode** that turns a spoken command into tool calls on local MCP servers, planned on-device and approved by you
+- Optional **Actions Mode** that turns a spoken command into tool calls on local MCP servers, planned on-device and approved by you, or auto-approved if you choose
 - **Instant app launch** in Actions Mode: “open Notes and…” opens Notes while you are still speaking, spotting the app name in the engine's own interim text (parakeet-cli 0.1.7) or, on older engines, Apple's on-device recogniser
 - 100% local transcription via `parakeet`
 
@@ -55,7 +55,7 @@ cd superkeet
 open ~/Applications/Superkeet.app
 ```
 
-`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications`. It requires a protocol-1 or protocol-2 engine (v0.1.6 or later; v0.1.7 adds the interim text used by instant app launch). If no local engine is found, it clones the pinned tag into `.build/parakeet-cli-v0.1.7` and builds it with Cargo. Source installs therefore require `git` and Rust/Cargo. To use an existing engine checkout, set `PARAKEET_SOURCE_DIR=/path/to/parakeet-cli`.
+`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications` (set `INSTALL_DIR=/Applications` to install system-wide). It requires a protocol-1 or protocol-2 engine (v0.1.6 or later; v0.1.7 adds the interim text used by instant app launch). If no local engine is found, it clones the pinned tag into `.build/parakeet-cli-v0.1.7` and builds it with Cargo. Source installs therefore require `git` and Rust/Cargo. To use an existing engine checkout, set `PARAKEET_SOURCE_DIR=/path/to/parakeet-cli`.
 
 By default, local installs are ad-hoc signed. To keep the same macOS privacy identity across local installs, pass a Developer ID identity:
 
@@ -143,16 +143,22 @@ After the model is present, Superkeet starts the bundled Parakeet daemon in the 
 Click the menu bar icon to:
 
 - Start or stop recording
+- Run an Action or toggle **Auto-Approve Actions** when Actions Mode is enabled
 - Copy the last transcript, copy the original, or undo text changes and copy
 - Open History
 - Open Settings
 - Quit the app
 
-The icon turns red while recording. After stop, the menu bar shows “Transcribing”
+For dictation, the icon turns red while recording. After stop, the menu bar shows “Transcribing”
 until success, no speech, a partial transcript, or failure is reported. A new
 recording waits for that completion. Recovery and text-processing settings live
 in Output & Privacy. See [transcription preservation](docs/transcription-preservation.md)
 for command grammar, audio regression results and release dependencies.
+
+In Actions Mode, a blue waveform and “Listening…” status indicate live command
+recognition; a purple wand indicates an action is running. The HUD shows the
+words as you speak. You can record another command while an action runs, with
+up to three commands waiting in order.
 
 ### Shortcuts
 
@@ -160,11 +166,11 @@ Superkeet supports three configurable shortcuts:
 
 - Toggle Recording: press once to start, press again to stop
 - Push to Talk: hold to record, release to stop
-- Command Mode: speak a task for Actions Mode (visible when Actions Mode is
+- Run an Action: speak a task for Actions Mode (visible when Actions Mode is
   enabled)
 
 Shortcut configuration lives in `Settings > General`. Escape cancels a recording
-or an in-flight action.
+or an in-flight action and clears queued commands.
 
 ### Settings
 
@@ -181,7 +187,7 @@ The settings window currently has five tabs:
 - Actions
   - Actions Mode enablement and on-device model availability
   - MCP server management (add, edit, test, reconnect)
-  - approval policy, step budget, timeout, and the local action log
+  - approval policy (including **Don't Ask**), step budget, timeout, and the local action log
 - Advanced
   - audio device selection
   - model directory override
@@ -261,8 +267,9 @@ superkeet/
 - The public app bundle only launches the embedded `parakeet` binary.
 - Transcript history is off by default and must be enabled explicitly.
 - History is stored locally with restricted file permissions.
-- Actions Mode is off by default, plans on-device, and asks before running each
-  tool call. MCP servers are local processes you configure; the action log is
+- Actions Mode is off by default and plans on-device. Tool calls are approved
+  by you, or auto-approved if you choose; destructive tools still require
+  approval. MCP servers are local processes you configure; the action log is
   local and redacts sensitive-looking fields.
 - There is no in-app auto-update channel.
 

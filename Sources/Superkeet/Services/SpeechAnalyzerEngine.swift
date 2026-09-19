@@ -2,32 +2,22 @@ import AVFoundation
 import Foundation
 import os
 
-// `SpeechAnalyzer` is declared by the macOS 26 SDK, which is also the first SDK
-// that ships FoundationModels. Gating on that import keeps older SDKs building
-// with this path compiled out, exactly like the Actions Mode planner.
 #if canImport(FoundationModels)
 import Speech
 
 private let engineLog = Logger(subsystem: "com.superkeet.app", category: "SpeechAnalyzerEngine")
 
-/// On-device streaming recogniser built on Apple's `SpeechAnalyzer`. It runs
-/// alongside Parakeet only to spot intents early; the final transcript always
-/// comes from the speech engine. Volatile results are requested with the fast
-/// preset because, measured on macOS 26/27, the first words otherwise arrive
-/// only after the utterance ends.
 @available(macOS 26.0, *)
 @MainActor
 final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
     struct Configuration: Sendable {
         var locale: Locale = .current
-        /// Words the recogniser should favour, such as installed app names.
         var contextualStrings: @Sendable () -> [String] = { AppResolver().installedApplicationNames() }
         var maximumContextualStrings = 300
         var modelRetention: SpeechAnalyzer.Options.ModelRetention = .lingering
         var reportingOptions: Set<SpeechTranscriber.ReportingOption> = [.volatileResults, .fastResults]
     }
 
-    /// State touched from the audio tap's thread.
     private struct AudioState {
         var format: AVAudioFormat?
         var converter: AVAudioConverter?
@@ -48,11 +38,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
         self.configuration = configuration
     }
 
-    // MARK: Availability
-
-    /// Reports whether recognition can start. Speech assets are tracked per
-    /// app, so when the system already holds the model this also reserves the
-    /// locale for Superkeet (a cheap, download-free step). It never downloads.
     func availability() async -> PartialTranscriptAvailability {
         do {
             _ = try await readyTranscriber()
@@ -65,8 +50,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
         }
     }
 
-    /// Downloads the locale's speech model when it is supported but absent.
-    /// Call only after the user has agreed to the download.
     func installAssets() async throws {
         let locale = try await resolveLocale()
         guard let request = try await AssetInventory.assetInstallationRequest(supporting: [makeTranscriber(locale)]) else { return }
@@ -84,8 +67,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
             engineLog.error("Speech prewarm failed: \(error.localizedDescription, privacy: .public)")
         }
     }
-
-    // MARK: Session
 
     func start() async throws -> AsyncThrowingStream<RecognizedPhrase, Error> {
         await finish()
@@ -123,7 +104,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
     }
 
     nonisolated func append(_ buffer: AVAudioPCMBuffer) {
-        // Audio buffers are not Sendable, but they never leave the tap's thread here.
         audio.withLockUnchecked { state in
             guard let format = state.format, let input = state.input else { return }
             if buffer.format == format {
@@ -156,8 +136,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
         await session.analyzer.cancelAndFinishNow()
     }
 
-    // MARK: Helpers
-
     private var options: SpeechAnalyzer.Options {
         .init(priority: .userInitiated, modelRetention: configuration.modelRetention)
     }
@@ -172,7 +150,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
         return locale
     }
 
-    /// A transcriber whose locale assets are installed and reserved for this app.
     private func readyTranscriber() async throws -> SpeechTranscriber {
         let locale = try await resolveLocale()
         let transcriber = makeTranscriber(locale)
@@ -184,8 +161,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
         case .unsupported:
             throw SpeechAnalyzerEngineError.notAvailable(.unsupportedLocale(locale.identifier(.bcp47)))
         case .supported:
-            // A nil request means the system already has the model; asking for
-            // the request reserves the locale for this app without downloading.
             guard try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) == nil else {
                 throw SpeechAnalyzerEngineError.notAvailable(.assetsNotInstalled)
             }
@@ -199,9 +174,6 @@ final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
         SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: configuration.reportingOptions, attributeOptions: [])
     }
 
-    /// Resamples one tap buffer into the analyzer's format. The converter keeps
-    /// its resampling state between calls, so the input block must report
-    /// `noDataNow` rather than `endOfStream` once the buffer has been consumed.
     nonisolated static func convert(_ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
         guard buffer.frameLength > 0 else { return nil }
         let ratio = format.sampleRate / buffer.format.sampleRate

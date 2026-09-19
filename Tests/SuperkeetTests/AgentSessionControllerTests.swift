@@ -8,14 +8,14 @@ final class AgentSessionControllerTests: XCTestCase {
         var specs: [ActionToolSpec]
         var failure: Error?
         var preparationFailure: Error?
-        /// Per-tool results; anything else returns "tool-output".
         var outputs: [String: String] = [:]
-        /// Answer for plan cards; `nil` means "no HUD" (the protocol default, step by step).
         var planDecision: ActionPlanApprovalDecision?
+        var executionGates: [ActionTestGate<String>] = []
         private(set) var executed: [String] = []
         private(set) var arguments: [String] = []
         private(set) var prepareCount = 0
         private(set) var plans: [ActionPlanApprovalRequest] = []
+        private(set) var cancelledApprovals = 0
 
         init(specs: [ActionToolSpec], failure: Error? = nil) {
             self.specs = specs
@@ -37,8 +37,11 @@ final class AgentSessionControllerTests: XCTestCase {
             executed.append(spec.toolName)
             arguments.append(argumentsJSON)
             if let failure { throw failure }
+            if executed.count <= executionGates.count { return try await executionGates[executed.count - 1].wait() }
             return outputs[spec.toolName] ?? "tool-output"
         }
+
+        func cancelPendingApprovals() { cancelledApprovals += 1 }
     }
 
     final class FakePlanner: ActionPlanning {
@@ -48,6 +51,7 @@ final class AgentSessionControllerTests: XCTestCase {
         private(set) var invoked = false
         private(set) var offeredTools: [ActionToolSpec] = []
         private(set) var tasks: [String] = []
+        var startGate: ActionTestGate<Void>?
 
         init(
             calls: Int = 1,
@@ -69,6 +73,7 @@ final class AgentSessionControllerTests: XCTestCase {
             invoked = true
             offeredTools = tools
             tasks.append(task)
+            if let startGate { try await startGate.wait() }
             let spec = tools.first { $0.serverID != NativeOpenAction.serverID } ?? tools[0]
             for index in 0..<calls {
                 _ = try await execute(spec, arguments(index))
@@ -78,8 +83,6 @@ final class AgentSessionControllerTests: XCTestCase {
         }
     }
 
-    /// Calls named tools in a fixed order so cache behaviour across mixed
-    /// read-only and mutating steps can be asserted.
     final class SequencePlanner: ActionPlanning {
         let sequence: [(tool: String, arguments: String)]
         private(set) var offeredTools: [ActionToolSpec] = []
@@ -106,7 +109,6 @@ final class AgentSessionControllerTests: XCTestCase {
         }
     }
 
-    /// Records the context handed to each step and answers from a script.
     final class ContextualPlanner: ContextualActionPlanning {
         struct Call: Equatable {
             let task: String
@@ -135,7 +137,6 @@ final class AgentSessionControllerTests: XCTestCase {
         }
     }
 
-    /// Never returns on its own; only cancellation ends it.
     final class HangingPlanner: ActionPlanning {
         private(set) var cancelled = false
 
@@ -173,6 +174,231 @@ final class AgentSessionControllerTests: XCTestCase {
         while controller.phase.isActive && Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
+    }
+
+    private func waitFor(_ condition: () -> Bool, timeout: TimeInterval = 2) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Timed out waiting for fixture state")
+        throw ActionExecutionError.timedOut
+    }
+
+    func testCommandsQueueWhilePlanningAndRunningThenExecuteInFIFOOrderWithFreshBudgets() async throws {
+        let settings = AppSettings.shared
+        let maxSteps = settings.actionMaxSteps
+        settings.actionMaxSteps = 1
+        defer { settings.actionMaxSteps = maxSteps }
+        let gates = (0..<3).map { _ in ActionTestGate<String>() }
+        let planning = ActionTestGate<Void>()
+        let router = FakeRouter(specs: [makeSpec()])
+        router.executionGates = gates
+        let planner = FakePlanner()
+        planner.startGate = planning
+        let controller = AgentSessionController(settings: settings, router: router, plannerFactory: { planner })
+        defer {
+            controller.cancel()
+            planning.resolve(.success(()))
+            for gate in gates { gate.resolve(.success("cleanup")) }
+        }
+
+        controller.handleCommand("first task")
+        try await waitFor { planning.entered }
+        XCTAssertEqual(controller.phase, .planning)
+        controller.handleCommand(" \nsecond task\t ")
+        XCTAssertEqual(controller.queuedCommands, ["second task"])
+        XCTAssertEqual(controller.commandText, "first task")
+        XCTAssertEqual(planner.tasks, ["first task"])
+        XCTAssertTrue(router.executed.isEmpty)
+
+        planner.startGate = nil
+        planning.resolve(.success(()))
+        try await waitFor { gates[0].entered }
+        XCTAssertEqual(controller.phase, .running)
+        controller.handleCommand("third task")
+        XCTAssertEqual(controller.queuedCommands, ["second task", "third task"])
+
+        gates[0].resolve(.success("first output"))
+        try await waitFor { gates[1].entered }
+        XCTAssertEqual(controller.commandText, "second task")
+        XCTAssertEqual(controller.queuedCommands, ["third task"])
+        XCTAssertEqual(router.cancelledApprovals, 1)
+        XCTAssertEqual(controller.stepIndex, 1)
+        XCTAssertTrue(settings.isActionSessionActive)
+
+        gates[1].resolve(.success("second output"))
+        try await waitFor { gates[2].entered }
+        XCTAssertEqual(controller.commandText, "third task")
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+        XCTAssertEqual(router.cancelledApprovals, 2)
+        gates[2].resolve(.success("third output"))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.phase, .finished("done"))
+        XCTAssertEqual(planner.tasks, ["first task", "second task", "third task"])
+        XCTAssertEqual(router.executed, ["echo", "echo", "echo"], "Each command has its own result cache and step budget.")
+        XCTAssertEqual(controller.stepIndex, 1)
+        XCTAssertEqual(router.cancelledApprovals, 3)
+    }
+
+    func testQueueCapsWaitingCommandsIgnoresEmptyInputAndKeepsRepeatedCommands() async throws {
+        let gate = ActionTestGate<String>()
+        let router = FakeRouter(specs: [makeSpec()])
+        router.executionGates = [gate]
+        let planner = FakePlanner()
+        let controller = AgentSessionController(router: router, plannerFactory: { planner })
+        defer { controller.cancel(); gate.resolve(.success("cleanup")) }
+        controller.handleCommand("first task")
+        try await waitFor { gate.entered }
+        controller.handleCommand(" \n\t ")
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+        let waiting = ["second task", "second task", "third task"]
+        XCTAssertEqual(AgentSessionController.maximumQueuedCommands, waiting.count)
+        for command in waiting { controller.handleCommand(command) }
+        controller.handleCommand("overflow task")
+        XCTAssertEqual(controller.queuedCommands, waiting)
+        XCTAssertTrue(controller.activityLog.contains { $0.contains("queue full") && $0.contains("overflow task") })
+
+        gate.resolve(.success("first output"))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.phase, .finished("done"))
+        XCTAssertEqual(planner.tasks, ["first task"] + waiting)
+        XCTAssertEqual(router.executed.count, 4)
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+    }
+
+    func testCancelClearsTheQueueAndLateCompletionCannotReviveIt() async throws {
+        let gates = (0..<2).map { _ in ActionTestGate<String>() }
+        let router = FakeRouter(specs: [makeSpec()])
+        router.executionGates = gates
+        let planner = FakePlanner()
+        let controller = AgentSessionController(router: router, plannerFactory: { planner })
+        defer {
+            controller.cancel()
+            for gate in gates { gate.resolve(.success("cleanup")) }
+        }
+        controller.handleCommand("first task")
+        try await waitFor { gates[0].entered }
+        controller.handleCommand("discard this task")
+        controller.handleCommand("discard that task")
+        XCTAssertEqual(controller.queuedCommands.count, 2)
+        controller.cancel()
+        XCTAssertEqual(controller.phase, .cancelled)
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+        XCTAssertFalse(AppSettings.shared.isActionSessionActive)
+
+        controller.handleCommand("replacement task")
+        try await waitFor { gates[1].entered }
+        gates[0].resolve(.success("late output"))
+        try await waitFor { gates[0].completed }
+        XCTAssertTrue(gates[0].wasCancelled)
+        XCTAssertEqual(controller.commandText, "replacement task")
+        XCTAssertEqual(controller.phase, .running)
+        gates[1].resolve(.success("replacement output"))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.phase, .finished("done"))
+        XCTAssertEqual(planner.tasks, ["first task", "replacement task"])
+        XCTAssertEqual(router.executed.count, 2)
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+    }
+
+    func testQueuedCommandAdoptsItsSpeculativeLaunchWithoutOpeningAgain() async throws {
+        let gate = ActionTestGate<String>()
+        let router = FakeRouter(specs: [makeSpec()])
+        router.executionGates = [gate]
+        let planner = FakePlanner()
+        let controller = AgentSessionController(router: router, plannerFactory: { planner },
+                                                resolveApp: { [self] in fixtureResolver($0) })
+        defer { controller.cancel(); gate.resolve(.success("cleanup")) }
+        controller.handleCommand("first task")
+        try await waitFor { gate.entered }
+        let launch = speculativeLaunch()
+        controller.handleCommand("open Notes", speculative: launch)
+        let result = await launch.result()
+        XCTAssertEqual(result.launched?.name, "Notes", "Instant App Launch can finish while the command is waiting.")
+        XCTAssertEqual(controller.commandText, "first task")
+        XCTAssertEqual(controller.queuedCommands, ["open Notes"])
+
+        gate.resolve(.success("first output"))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.phase, .finished("Opened Notes (pid 77, com.fixture.notes). Its window is on screen."))
+        XCTAssertEqual(controller.commandText, "open Notes")
+        XCTAssertEqual(router.executed, ["echo"], "The queued command reuses its own early launch.")
+        XCTAssertEqual(planner.tasks, ["first task"])
+        XCTAssertEqual(controller.stepIndex, 0)
+        XCTAssertTrue(controller.activityLog.contains("Opened Notes while you were speaking"))
+        XCTAssertTrue(controller.activityLog.contains("Reused Open App"))
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+    }
+
+    func testFailedCommandAdvancesTheQueueAndKeepsItsRuntimeIssueVisible() async throws {
+        let settings = AppSettings.shared
+        let originalIssue = settings.runtimeIssue
+        defer { settings.runtimeIssue = originalIssue }
+        let gates = (0..<2).map { _ in ActionTestGate<String>() }
+        let router = FakeRouter(specs: [makeSpec()])
+        router.executionGates = gates
+        let planner = FakePlanner()
+        let controller = AgentSessionController(settings: settings, router: router, plannerFactory: { planner })
+        defer {
+            controller.cancel()
+            for gate in gates { gate.resolve(.success("cleanup")) }
+        }
+        controller.handleCommand("first task")
+        try await waitFor { gates[0].entered }
+        controller.handleCommand("second task")
+        let failure = NativeOpenActionError.openFailed("fixture failure")
+        gates[0].resolve(.failure(failure))
+        try await waitFor { gates[1].entered }
+        let issue = "Actions Mode: \(failure.localizedDescription)"
+        XCTAssertEqual(controller.commandText, "second task")
+        XCTAssertEqual(controller.phase, .running)
+        XCTAssertEqual(settings.runtimeIssue, issue)
+
+        gates[1].resolve(.success("second output"))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.phase, .finished("done"))
+        XCTAssertEqual(settings.runtimeIssue, issue)
+        XCTAssertEqual(planner.tasks, ["first task", "second task"])
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+        controller.reset()
+        XCTAssertNil(settings.runtimeIssue)
+    }
+
+    func testDeadlineAdvancesTheQueueAndLateToolResultsCannotChangeTheNextRun() async throws {
+        let settings = AppSettings.shared
+        let originalDeadline = settings.actionRunDeadlineSeconds
+        let originalIssue = settings.runtimeIssue
+        settings.actionRunDeadlineSeconds = 1
+        defer { settings.actionRunDeadlineSeconds = originalDeadline; settings.runtimeIssue = originalIssue }
+        let gates = (0..<2).map { _ in ActionTestGate<String>() }
+        let router = FakeRouter(specs: [makeSpec()])
+        router.executionGates = gates
+        let planner = FakePlanner()
+        let controller = AgentSessionController(settings: settings, router: router, plannerFactory: { planner })
+        defer {
+            controller.cancel()
+            for gate in gates { gate.resolve(.success("cleanup")) }
+        }
+        controller.handleCommand("stalled task")
+        try await waitFor { gates[0].entered }
+        controller.handleCommand("next task")
+        try await waitFor({ gates[1].entered }, timeout: 3)
+        XCTAssertEqual(controller.commandText, "next task")
+        XCTAssertEqual(controller.phase, .running)
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
+        XCTAssertTrue(settings.runtimeIssue?.contains("did not finish within 1 seconds") == true)
+
+        gates[0].resolve(.success("late output"))
+        try await waitFor { gates[0].completed }
+        XCTAssertTrue(gates[0].wasCancelled)
+        XCTAssertEqual(controller.commandText, "next task")
+        XCTAssertEqual(controller.phase, .running)
+        gates[1].resolve(.success("next output"))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.phase, .finished("done"))
+        XCTAssertEqual(planner.tasks, ["stalled task", "next task"])
     }
 
     func testPhaseIsActiveOnlyWhilePlanningOrRunning() {
@@ -251,8 +477,6 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertTrue(AppSettings.shared.runtimeIssue?.contains("No MCP servers are enabled") == true)
     }
 
-    // MARK: Speculative launches
-
     private func fixtureResolver(_ name: String) -> URL? {
         let apps = ["Notes", "Discord"].map { URL(fileURLWithPath: "/fixture/Applications/\($0).app") }
         return AppResolver(directories: [URL(fileURLWithPath: "/fixture/Applications")], applicationsInDirectory: { _ in apps })
@@ -306,10 +530,7 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertTrue(controller.activityLog.contains("Reused Open App"), "A planner call to open the same app is satisfied by the early launch.")
     }
 
-    // MARK: Multi-step commands
-
     func testTargetCommandRunsAsTwoNativeStepsWithoutAnyPlanner() async throws {
-        // "open the notes app and create a new note": open natively, then ⌘N in the app just opened.
         let router = FakeRouter(specs: [])
         router.preparationFailure = ActionExecutionError.noMCPServersEnabled
         router.outputs["open_app"] = NativeLaunchedApp(name: "Notes", bundleIdentifier: "com.apple.Notes", processIdentifier: 91, windowReady: true).summary
@@ -392,7 +613,6 @@ final class AgentSessionControllerTests: XCTestCase {
     }
 
     func testPlannerOpenedAppsFlowIntoLaterStepContext() async throws {
-        // Step 1 is planned (the model opens Pages); step 2's recipe targets Pages.
         let router = FakeRouter(specs: [makeSpec()])
         router.outputs["open_app"] = NativeLaunchedApp(name: "Pages", bundleIdentifier: nil, processIdentifier: 5, windowReady: true).summary
         let planner = SequencePlanner([("open_app", #"{"name":"Pages"}"#)])
@@ -427,7 +647,6 @@ final class AgentSessionControllerTests: XCTestCase {
     func testAStepFailureStopsTheCommandAndKeepsEarlierEffects() async {
         let router = FakeRouter(specs: [makeSpec()])
         router.outputs["open_app"] = NativeLaunchedApp(name: "Notes", bundleIdentifier: nil, processIdentifier: 1, windowReady: true).summary
-        // Step 2 (⌘N) is denied at the approval gate; step 3 must never start.
         let denying = DenyingRouter(after: 1, wrapping: router)
         var plannerCreated = 0
         let controller = AgentSessionController(settings: .shared, router: denying, plannerFactory: { plannerCreated += 1; return ContextualPlanner() },
@@ -443,7 +662,6 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertEqual(plannerCreated, 0, "The planner was never needed before the failure.")
     }
 
-    /// Denies every execution after the first N.
     final class DenyingRouter: ActionRouting {
         let after: Int
         let wrapped: FakeRouter
@@ -470,7 +688,6 @@ final class AgentSessionControllerTests: XCTestCase {
           {"element_index":3,"role":"AXTextArea","label":"","value":"line one\nline two","parent_index":0}
         ]}
         """#
-        /// Captures what the planner is handed back from a tool call.
         final class RecordingPlanner: ActionPlanning {
             var seen: [String] = []
             func run(task: String, tools: [ActionToolSpec], maxSteps: Int,
@@ -508,8 +725,6 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertTrue(logged.hasPrefix("Finished"))
         XCTAssertEqual(controller.phase, .finished("done"))
     }
-
-    // MARK: Plan approval
 
     private func withPolicy(_ policy: ActionApprovalPolicy, _ body: () async throws -> Void) async rethrows {
         let original = AppSettings.shared.actionApprovalPolicy
@@ -578,7 +793,6 @@ final class AgentSessionControllerTests: XCTestCase {
 
     func testPlanCardIsSkippedWhenNoPredictableStepWouldAsk() async throws {
         await withPolicy(.readOnlyAuto) {
-            // Both steps are planned; nothing on the card could be pre-approved.
             let router = FakeRouter(specs: [makeSpec()])
             router.planDecision = .deny
             let planner = ContextualPlanner()
@@ -588,6 +802,30 @@ final class AgentSessionControllerTests: XCTestCase {
             XCTAssertTrue(router.plans.isEmpty, "A card with nothing to approve is just a delay.")
             XCTAssertEqual(planner.calls.map(\.task), ["summarize my day", "draft a reply"])
             XCTAssertEqual(controller.phase, .finished("planned summarize my day planned draft a reply"))
+        }
+    }
+
+    func testOpenOnlyCompoundCommandSkipsDefaultPlanApprovalButHonorsAlwaysAsk() async {
+        for policy in [ActionApprovalPolicy.readOnlyAuto, .alwaysAsk] {
+            await withPolicy(policy) {
+                let router = FakeRouter(specs: [])
+                router.planDecision = .deny
+                let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                        resolveApp: { [self] in fixtureResolver($0) })
+                defer { controller.cancel() }
+                controller.handleCommand("open Notes, then open https://example.com")
+                await waitUntilFinished(controller)
+
+                if policy == .readOnlyAuto {
+                    XCTAssertTrue(router.plans.isEmpty)
+                    XCTAssertEqual(router.executed, ["open_app", "open_url"])
+                    XCTAssertEqual(controller.phase, .finished("tool-output tool-output"))
+                } else {
+                    XCTAssertEqual(router.plans.count, 1)
+                    XCTAssertTrue(router.executed.isEmpty)
+                    XCTAssertEqual(controller.phase, .failed(ActionExecutionError.planDenied.localizedDescription))
+                }
+            }
         }
     }
 
@@ -620,8 +858,6 @@ final class AgentSessionControllerTests: XCTestCase {
             XCTAssertEqual(router.executed, ["press_shortcut"])
         }
     }
-
-    // MARK: Checklist
 
     func testChecklistTracksStepsToolsAndTheEarlyLaunch() async throws {
         await withPolicy(.readOnlyAuto) {
@@ -739,8 +975,6 @@ final class AgentSessionControllerTests: XCTestCase {
             let router = FakeRouter(specs: [])
             router.preparationFailure = missing
             let planner = FakePlanner(calls: 0)
-            // The open step's result is not a recognisable launch, so the recipe has
-            // no target and the second step falls to the planner with native tools only.
             let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
                                                     resolveApp: { [self] in fixtureResolver($0) })
             controller.handleCommand("open the notes app and create a new note")
@@ -778,7 +1012,6 @@ final class AgentSessionControllerTests: XCTestCase {
         await waitUntilFinished(controller, timeout: 5)
 
         XCTAssertEqual(controller.phase, .failed(ActionExecutionError.runDeadlineExceeded(seconds: 1).localizedDescription))
-        // The phase flips synchronously; the planner observes cancellation when its task resumes.
         let deadline = Date().addingTimeInterval(2)
         while !planner.cancelled && Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -909,18 +1142,6 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertEqual(router.executed, ["list_windows", "list_windows"])
     }
 
-    func testNativeObservationsBypassResultCache() async {
-        var spec = makeSpec(name: "get_window_state")
-        spec.nativeObservation = true
-        let router = FakeRouter(specs: [spec])
-        let planner = FakePlanner(calls: 2, arguments: { _ in "{}" })
-        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
-        controller.handleCommand("observe twice")
-        await waitUntilFinished(controller)
-        XCTAssertEqual(router.executed, ["get_window_state", "get_window_state"])
-        XCTAssertFalse(controller.activityLog.contains { $0.hasPrefix("Reused") })
-    }
-
     func testActiveTabChromeObservationsBypassResultCache() async throws {
         let tools = ActionToolFilter.filtering(ActiveTabToolFixture.chrome(), task: "Find DNS records in the current tab")
         let snapshot = try XCTUnwrap(tools.first { $0.toolName == "take_snapshot" })
@@ -945,10 +1166,11 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.phase, .finished("done"))
     }
 
-    func testPreflightObservationConsumesStepBudget() {
+    func testStepBudgetStopsAtItsLimit() {
         let budget = AgentSessionController.StepBudget(limit: 3)
         XCTAssertTrue(budget.consume())
-        XCTAssertTrue(budget.consume(count: 2))
+        XCTAssertTrue(budget.consume())
+        XCTAssertTrue(budget.consume())
         XCTAssertFalse(budget.consume())
         XCTAssertEqual(budget.used, 3)
     }

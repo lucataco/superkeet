@@ -2,7 +2,9 @@
 
 Actions Mode turns a spoken command into tool actions instead of text. You speak
 a task, Superkeet opens apps/URLs natively or plans broader tasks with an
-on-device model and local MCP tools, asking for your approval before changes.
+on-device model and local MCP tools. Calls are approved by you or run
+automatically according to your approval policy; destructive tools still
+require approval.
 
 Actions Mode is **off by default** and completely separate from dictation. A
 normal recording still goes straight to the clipboard.
@@ -21,36 +23,39 @@ step explain the issue and the rest of the app continues to work normally.
 ## How it works
 
 ```text
-Command Mode hotkey (default ⌥⇧Space)
+Run an Action hotkey (default ⌥⇧Space)
     └── Speech → Parakeet (local, unchanged)
             └── AgentSessionController
                     ├── NativeActionExecutor → simple app/URL opens via NSWorkspace
                     ├── MCPClientManager   → local MCP server processes (stdio)
                     ├── On-device model    → plans tool calls
-                    ├── ActionApprovalController → approve / deny each call
+                    ├── ActionApprovalController → confirmations required by policy
                     └── ActionAuditStore   → local, redacted log
 ```
 
-1. Press the **Command Mode** shortcut and speak a task (for example, “open the
-   pricing page and summarize it”).
-2. Superkeet transcribes locally and applies your phrase replacements. Simple
+1. Press the **Run an Action** shortcut and speak a task (for example, “open the
+   pricing page and summarize it”). Press the shortcut again to stop recording.
+2. The HUD displays live words while you speak. After you stop, Superkeet uses
+   Parakeet's final transcript and applies your phrase replacements. Simple
    app/URL commands run directly; broader requests use the on-device planner.
-3. Each tool call is classified as read-only, mutating, or destructive and, by
-   default, shown in a floating HUD for approval. A multi-step command is shown
-   once as a **plan card** instead (see “Approving a whole plan” below). While
-   the action runs the HUD shows a checklist of steps and tool calls, and it
-   shows the result when the action finishes.
-4. Approved calls run through the native executor or MCP server. Planned tool
-   results are truncated and fed back to the model until the task is done.
-5. Press plain **Escape** once to stop an action. During Actions Mode, the event
-   also reaches the focused app, so its normal Escape behavior still applies.
-   Modifier combinations and autorepeat do not cancel a later action. Escape
-   remains a consumed shortcut when only a speech recording is active.
+3. Each tool call is classified as read-only, mutating, or destructive. The
+   default policy runs read-only tools and built-in app/URL opens automatically;
+   other state-changing calls ask in the floating HUD. Multi-step commands show
+   a **plan card** when a predictable step needs approval (see “Approving a whole
+   plan” below). The HUD then shows a checklist and the command's result.
+4. Approved or auto-approved calls run through the native executor or MCP
+   server. Planned tool results are truncated and fed back to the model until
+   the task is done.
+5. Press plain **Escape** once to stop an action and clear its waiting commands.
+   During Actions Mode, the event also reaches the focused app, so its normal
+   Escape behavior still applies. Modifier combinations and autorepeat do not
+   cancel a later action. Escape remains a consumed shortcut when only a speech
+   recording is active.
 
 ### Built-in app and URL opening
 
 These literal commands use native macOS APIs without a shell server, MCP
-connection, planner call, or grounder decision:
+connection, or planner call:
 
 - `open discord`
 - `open Helium browser`
@@ -64,12 +69,18 @@ matches installed app names case-insensitively in `/Applications`,
 “app”/“browser” and punctuation are ignored for app-name matching; aliases such
 as “Chrome” resolve to Google Chrome.
 
-The built-in `open_app {name}` and `open_url {url, browser?}` tools use the same
-approval HUD, timeout, step budget, and audit log as MCP calls. Compound requests
-such as `open Helium and search for cats` go to the planner with these compact
-tools available first. Only a missing-app resolution error permits the simple
-path to fall through to planning. Denial, cancellation, timeout, and launch
-failure stop the command rather than retrying an open operation.
+The built-in `open_app {name}` and `open_url {url, browser?}` tools **run without
+an approval prompt under the default “Only Ask Before Changes” policy**. “Ask
+Before Every Tool” still asks for these calls. Their risk remains “changes
+state”, and automatically approved opens are logged as
+`succeeded (auto-approved)`. They share MCP calls' approval routing, timeout, step budget,
+and audit log; this exemption applies only to these two built-in tools.
+
+Compound requests such as `open Helium and search for cats` run the open natively
+and use the planner for the remaining task, with the compact built-in tools
+available first. Only a missing-app resolution error permits the simple path
+to fall through to planning. Denial, cancellation, timeout, and launch failure
+stop the command rather than retrying an open operation.
 
 `open_app` waits up to four seconds for the app to finish launching and show an
 ordinary window, then reports `Opened Notes (pid 1234, com.apple.Notes). Its
@@ -91,7 +102,9 @@ macOS reports it frontmost (up to 1.5 s), and only then posts the key events —
 the same path automatic paste uses for ⌘V. Nothing is sent if the app is not
 running or does not come to the front, and the key table is fixed (letters,
 digits, return, tab, space, delete, escape, arrows, F-keys, with cmd/shift/
-option/control). Approval shows `Press ⌘N in Notes`.
+option/control). Unlike app/URL opens, this tool requires approval under the
+default policy, with an intent such as `Press ⌘N in Notes`. “Don't Ask” runs it
+automatically because it is classified as mutating, not destructive.
 
 Common verbs never reach the model. `NativeAppRecipe` maps them straight to
 the standard shortcut for the app the step refers to:
@@ -141,10 +154,29 @@ effects stand and the HUD lists “Step 2 of 3: …” lines for what ran.
 
 ### Approving a whole plan
 
-Three approval dialogs for one sentence is a poor fit for a voice command. So
-before a multi-step command runs anything, Superkeet simulates it — the same
+Choose an approval policy in **Settings ▸ Actions ▸ Safety ▸ Approval**:
+
+- **Only Ask Before Changes** (default) runs read-only tools and the built-in
+  `open_app` / `open_url` tools automatically. Other mutating and destructive
+  tools require approval.
+- **Ask Before Every Tool** requires approval for every tool call, including
+  read-only tools and the built-in opening tools.
+- **Don't Ask** runs read-only and mutating tools automatically. **Destructive
+  tools still require approval.** A plan of app opens and keyboard shortcuts
+  therefore runs without a plan card.
+
+The menu-bar **Auto-Approve Actions** item turns “Don't Ask” on. Turning it off
+restores “Only Ask Before Changes”, including if the prior policy was “Ask
+Before Every Tool”. While “Don't Ask” is active, the working card shows a shield
+and “Auto-approving · destructive tools still ask”. State-changing calls that
+skip approval are logged as `succeeded (auto-approved)`; read-only calls that
+skip approval retain the plain `succeeded` outcome.
+
+Before a multi-step command runs, Superkeet simulates it — the same
 routing that will execute it, with opens assumed to succeed so later steps know
-which app they act in — and shows one **plan card**:
+which app they act in — and shows one **plan card** if a predictable native step
+requires approval. Under the default policy, “open Notes and create a new note”
+asks because of ⌘N; the opening step itself is exempt:
 
 ```text
 Approve this plan?          “open the notes app and create a new note”
@@ -154,17 +186,21 @@ Approve this plan?          “open the notes app and create a new note”
 ```
 
 - **Approve All** (Return) grants exactly the shown native steps — tool plus
-  arguments — for this command. Anything different that comes up later still
-  asks. Steps marked *Planned* use the on-device model; its tool calls were not
-  shown, so they ask individually as usual.
-- **Step by Step** runs the plan with a question for every tool call.
-- **Deny** (Escape) stops before anything runs: “The plan was not approved, so
-  no further steps ran.” An app that opened while you were speaking stays open.
+  arguments — for this command. Different calls that come up later follow the
+  selected policy. Steps marked *Planned* use the on-device model; their tool
+  calls were not shown, so each goes through the policy individually.
+- **Step by Step** runs the plan using the selected approval policy for each
+  call instead of pre-approving the native steps. Read-only calls and exempt
+  opens still run automatically under the default policy.
+- **Deny** (Escape) stops the command: “The plan was not approved, so no further
+  steps ran.” An app that opened while you were speaking stays open.
 
-The card only appears when at least one shown step would otherwise ask on its
-own under the current approval policy; a plan made only of model-driven steps
-runs straight away, since the card could not pre-approve anything. Single-step
-commands never show it. Plan decisions are written to the action log as
+An open-only plan skips the card under the default policy, and adding a
+`press_shortcut` step makes it ask. Under “Don't Ask”, only a predictable
+destructive step requires a plan card. A plan made only of model-driven steps
+runs straight away, since the card could not pre-approve anything; its later
+tool calls still follow the policy. Single-step commands never show a plan
+card. Plan decisions are written to the action log as
 `plan approved`, `plan step by step`, or `plan denied` with the step summaries.
 
 ### Approve similar
@@ -176,6 +212,26 @@ lets the same tool run again for the same target during this command without
 asking, so a model that clicks three controls in Notes asks once. Grants are
 forgotten when the command ends. Calls that ran under a grant are logged as
 `succeeded (pre-approved)`.
+
+### Chaining commands
+
+Press **⌥⇧Space** while a command is planning, running, or waiting for approval
+to record the next command; press it again to finish that recording. Completed
+commands queue in arrival order, with up to **three waiting commands** in
+addition to the active one. If the queue is full, the newest command is dropped
+and the activity log notes which command was skipped.
+
+The next command starts immediately when the current one finishes or fails.
+Each command gets its own approval grants, result cache, step budget, and
+deadline; time spent waiting does not count toward that deadline. Errors remain
+visible in Settings, and tool outcomes remain in the action log. The working
+and result cards show waiting commands as **Next: “open Notes”** rows.
+
+**Escape** stops the active run, cancels a next command still being recorded or
+transcribed, and clears the queue. Instant App Launch can still open an app
+while you speak a queued command; that command reuses its early launch when it
+starts. Start and stop each recording with the shortcut — listening is not
+automatically re-armed after a command.
 
 ### The checklist
 
@@ -196,6 +252,28 @@ made so far (tool, clipped arguments, clipped result, outcome) and the planner
 continues once in a fresh session that is told not to repeat them. Overflow
 before any tool ran still retries with a smaller tool set, as before.
 
+### Live transcript in the HUD
+
+The **Listening…** card shows the words as they are recognised, up to three
+lines, with a blinking **▍** cursor while recording. It starts with
+**Say a command…** until the first words arrive. After you stop recording, the title
+becomes **Transcribing…** and the last live text stays visible until the final
+transcript arrives. An early app launch appears as a one-line **Opening Notes…**
+or **Opened Notes** status beneath the words.
+
+If an approval, plan, working, or outcome card is already showing, a compact
+**Listening: …** footer displays the next command being heard. Live text works
+with Instant App Launch turned off, using either Parakeet's interim text or the
+Apple speech fallback. When no action is running, the menu bar also shows
+**Listening…** with a blue waveform icon.
+
+Listening does not take keyboard focus and never auto-hides. A completed
+command's result normally hides after eight seconds; this drops to two seconds
+while another command is listening or queued. If listening is active, only the
+completed-result card is dismissed, revealing the live transcript underneath.
+Partial-text updates do not restart that timer. Failure cards stay until
+dismissed or replaced by the next command.
+
 ### Compact observations
 
 Computer-use observations are far too large for the model: a real
@@ -209,8 +287,7 @@ identifiers dropped, and text bodies reported as `(7897 characters)` rather
 than quoted. `list_windows` and `list_apps` are condensed the same way.
 Superkeet also asks these observations for the element tree only
 (`include_screenshot: false`) unless the model explicitly asked for a
-screenshot, since it cannot see images. The native grounder keeps receiving the
-complete observation.
+screenshot, since it cannot see images.
 
 Command Mode uses **phrase replacements only**, so a rule such as
 `categolabs → catacolabs` can correct a spoken domain. Its app-scoped rules use the
@@ -221,8 +298,8 @@ retry error and never enters the clipboard/paste path.
 ### Live command recognition
 
 Historically Parakeet returned text only after a recording stopped, so nothing
-could react while you were still speaking. Instant app launch needs interim
-text, which Superkeet takes from one of two recognisers behind the
+could react while you were still speaking. The live HUD and Instant App Launch
+use interim text, which Superkeet takes from one of two recognisers behind the
 `PartialTranscriptSource` seam, chosen per recording by `PreferredPartialSource`:
 
 1. **The Parakeet engine itself** (`DaemonPartialSource`), when the running
@@ -230,11 +307,10 @@ text, which Superkeet takes from one of two recognisers behind the
    sends `{"command":"start", …, "partials":true}` and the daemon streams
    `{"type":"partial","text":…,"sequence":n,"truncated":…}` events roughly
    every 0.75 s of captured audio. One model produces both the interim and the
-   final text, so the app name that triggers an early launch is exactly the one
-   the command will see; there is no second microphone consumer, no second
-   speech model, and it works on every macOS version Superkeet supports. The
-   `partials` flag is only sent when Instant App Launch could act on it, so an
-   ordinary dictation or a disabled feature costs the engine nothing.
+   final text; there is no second microphone consumer, no second speech model,
+   and it works on every macOS version Superkeet supports. Command Mode requests
+   partials whenever Actions Mode is enabled and an interim source is available,
+   even with Instant App Launch off. Ordinary dictation does not request them.
 2. **Apple's on-device `SpeechAnalyzer`** (`SpeechAnalyzerPartialSource`, macOS
    26) as the fallback while the daemon is not running yet or is a protocol-1
    engine. `MicrophoneTapHub` owns one `AVAudioEngine` input tap that the
@@ -243,10 +319,12 @@ text, which Superkeet takes from one of two recognisers behind the
    app names are supplied as contextual strings; speech assets are reserved per
    app and a download is only offered, never started automatically.
 
-Both deliver `PartialTranscript` values (running text, a final flag, a sequence
-number) to the same detector. The final transcript always comes from Parakeet's
-`complete` event. Settings ▸ Actions ▸ Instant App Launch shows which recogniser
-the next recording would use.
+Both deliver cumulative `PartialTranscript` values (running text, a final flag,
+a sequence number) to `SpeculativeLaunchCoordinator`. It publishes the live text
+for the HUD and passes it to the detector only while Instant App Launch is
+enabled. The final transcript always comes from Parakeet's `complete` event.
+Settings ▸ Actions ▸ Instant App Launch shows which recogniser the next recording
+would use.
 
 Interim text from the engine is advisory: it is decoded from audio no committed
 segment owns yet, with 0.3 s of silence appended so the decoder finishes the
@@ -293,17 +371,22 @@ resolves and nothing speculative runs.
 #### Instant app launch
 
 **Settings ▸ Actions ▸ Instant App Launch** (on by default when Actions Mode is
-on) turns the detector's decision into an action. `SpeculativeLaunchCoordinator`
-listens from the moment a Command Mode recording starts:
+on) turns the detector's decision into an action. It is separate from the tool
+approval policy: when enabled, early launches happen directly and reusing them
+does not ask again. `SpeculativeLaunchCoordinator` listens from the moment a
+Command Mode recording starts:
 
 1. `ParakeetService.startRecording` calls `begin(sessionID:)` when Command Mode
    is armed. The coordinator starts the interim-text source and creates a
-   detector for that session.
+   detector for that session, publishing live text whether or not instant
+   launches are enabled.
 2. When the detector commits, the app opens through `NativeActionExecutor`
    directly — **without the approval HUD**. This bypass is limited to opening or
-   activating an installed app that the user just named; the regular `open_app`
-   tool keeps its “changes state” risk and approval. The HUD shows “Opening
-   Notes…”, then “Opened Notes”, while the recording overlay stays up.
+   activating an installed app that the user just named. The regular `open_app`
+   tool keeps its “changes state” risk and follows the selected policy, including
+   its no-prompt exemption under the default policy. The HUD shows “Opening
+   Notes…”, then “Opened Notes”, beneath the live words while the recording
+   overlay stays up.
 3. Every early launch is written to the action log with outcome `speculative`
    (or `failed`), the reason the detector committed, and the partial's sequence
    number. Speech text is not logged.
@@ -497,8 +580,7 @@ changed.
   `cua-driver permissions grant` once, or approve the prompts on first use.
 - Tool definitions are large (about 96,000 characters in total), so only the
   task-relevant subset fits the 4,096-token planning context. Superkeet's
-   relevance ranking handles this today. The optional native grounder below
-   exposes compact single-step click and text-entry tools to the planner.
+  relevance ranking handles this.
 - `get_window_state` returns a screenshot alongside the element tree by default.
   The on-device planner is text-only, so ask for the tree only when you can
   (`include_screenshot: false`), or prefer `list_windows` and `verify_state`.
@@ -512,77 +594,6 @@ Notes:
 - Environment variables can be set per server in the edit sheet, one `KEY=VALUE`
   per line.
 
-## Native UI grounder (experimental)
-
-Enable **Settings ▸ Actions ▸ Native UI grounder** to use
-`lucataco/gliner2.5-cua-grounder-macos-v1` for native control selection. Apple
-Intelligence continues to plan broader tasks. The fine-tune receives one supplied
-step and a bounded menu of eligible actions; it returns only a candidate ID and
-scores. Tool arguments and accessibility capabilities remain in Superkeet.
-
-### Setup
-
-1. Install Python 3.12 and Cua Driver 0.28.2 with Accessibility permission.
-2. From this checkout, run:
-
-   ```bash
-   bash scripts/install_grounder.sh
-   ```
-
-   This creates `~/Library/Application Support/Superkeet/Grounder/venv`, installs
-   the pinned Python dependencies, and downloads the pinned model revision.
-   App inference uses the local cache in offline mode. Packaged apps include the
-   two worker scripts; Python, PyTorch, and model weights remain user-installed.
-3. Enable one MCP server named **cua-driver**, enable the native grounder, and
-   click **Check and Warm Runtime**. The worker uses MPS on Apple Silicon,
-   unloads after ten idle minutes, and stops at app shutdown. Startup has a
-   60-second deadline; warm decisions have a two-second deadline. Failed or
-   cancelled transports are discarded, with a five-second restart backoff.
-
-Literal single-step templates run directly:
-
-- `Click Save in Notes`
-- `Type "Meeting notes" into Title in Notes`
-
-For broader wording or multi-step tasks, Apple Intelligence supplies `app`,
-`target`, and exact replacement `text` through `superkeet_native_click` or
-`superkeet_native_set_text`. Text entry replaces the field's entire value.
-Each step requires one exact named app with one visible window. Candidate
-eligibility requires target words in the control's label/section, an appropriate
-native role/action, and a current `element_token`. Disabled, unlabeled, secure,
-web-content, and ambiguous controls are excluded or rejected. Use the visible
-label and section to narrow a target; browser DOM grounding is not implemented.
-
-Grounding helpers are offered for click, text-entry, and unclassified intents.
-Recognized app-opening, URL-opening, search, active-tab navigation/find, switching, reading, key, and scroll
-intents go directly to the planner with their original tool inventory, so native
-grounding does not consume their tool budget or intercept those calls.
-
-### Execution and verification
-
-- Native observations use MCP `structuredContent`, bypass the result cache, and
-  remain complete up to a 1 MB limit. Screenshots are disabled.
-- Each choice uses a new accessibility snapshot. `reobserve` permits at most one
-  additional selection round; `abstain` and exhausted rounds stop without a
-  mutation or automatic planner fallback.
-- The normal approval HUD shows the selected control, operation, app, and value.
-  After approval, another audited snapshot must identify the same unchanged
-  control before its capability is renewed. A changed or stale target stops the
-  step instead of selecting another control. This extra observation counts
-  against the command's step budget.
-- Exactly one mutation is dispatched. A fresh post-action observation verifies
-  text replacement by matching control identity and reading its actual value.
-  Generic clicks have no independent success postcondition, so the result is
-  reported as unverified and the task stops. Denial, cancellation, refusal,
-  timeout, or failed verification never causes an automatic retry.
-- Audit entries include the selected ID, confidence, and chooser latency.
-  UI text/values and element tokens are redacted, and raw native observations
-  and action output are omitted from audit details. Tool delivery success is
-  separate from the independently verified result shown to the user.
-
-The model's softmax scores are not calibrated safety probabilities. See the
-[grounding evaluation](custom-grounder-evaluation.md) for the measured scope.
-
 ## Permissions
 
 - Superkeet already needs **Microphone** and **Accessibility**.
@@ -595,18 +606,20 @@ The model's softmax scores are not calibrated safety probabilities. See the
 
 | Control | Default |
 |---|---|
-| Approval | **Only Ask Before Changes** — read-only tools run automatically; anything that changes state is confirmed |
-| Optional | **Ask Before Every Tool** confirms even read-only tools |
-| Plan card | A multi-step command asks once up front; **Approve All** pre-approves only the exact native steps shown, **Step by Step** asks per call, **Deny** runs nothing |
+| Approval | **Only Ask Before Changes** — read-only tools and built-in `open_app` / `open_url` calls run automatically; other state-changing tools ask. Settings also offers **Ask Before Every Tool** and **Don't Ask** |
+| Ask Before Every Tool | Optional; confirms every tool call, including read-only tools and built-in app/URL opens |
+| Don't Ask | Optional; read-only and mutating tools run automatically, but destructive tools still require approval. The menu-bar **Auto-Approve Actions** toggle selects this policy; turning it off restores **Only Ask Before Changes** |
+| Plan card | Shown only when a predictable native step requires approval; **Approve All** pre-approves the exact native steps shown, **Step by Step** applies the selected policy per call, **Deny** stops that command |
 | Approve similar | Per-command grant for the same “changes state” tool on the same app or process; never offered for destructive tools; cleared when the command ends |
 | Instant app launch | On. Opening or activating an installed app named while speaking runs without approval; the later `open_app` call reuses it. Turn off under Settings ▸ Actions ▸ Instant App Launch |
 | Keyboard shortcuts | `press_shortcut` is “changes state” and asks for approval by default (`Press ⌘N in Notes`). Only a fixed key table is allowed; nothing is sent unless the target app is frontmost |
 | Concurrent approvals | FIFO queue; each request receives its own approve/deny decision |
+| Command queue | Up to three waiting commands, run in arrival order as the active command finishes; **Escape** stops the run and clears the queue |
 | Risk source | MCP tool annotations (`readOnlyHint`, `destructiveHint`), with a conservative name fallback for observation tools (`list_apps`, `get_app_state`, `list_pages`, `take_snapshot`, …) |
 | Step budget | 12 tool calls per command |
 | Per-tool timeout | 120 seconds |
-| Command deadline | 180 seconds for the whole command, independent of the per-tool timeout; a stalled run is stopped and its pending approvals denied |
-| Tool result size | 500-character redacted audit details, 800 characters fed back to the planner; bounded native observations use complete structured results up to 1 MB |
+| Command deadline | 180 seconds from the start of each command, excluding time in the queue and independent of the per-tool timeout; a stalled run is stopped and its pending approvals denied |
+| Tool result size | 500-character redacted audit details, 800 characters fed back to the planner; projected observations read complete structured results up to 1 MB |
 | Tool count | Up to 40 tools per plan, further limited to what fits the model context |
 | Argument size | Up to 64 KB per call |
 | URL arguments | Bare domains (for example `youtube.com`) are upgraded to `https://` before a tool runs |
@@ -626,14 +639,17 @@ action session dismisses and denies all outstanding approvals (including an
 open plan card) and forgets the command's grants. HUD responses are bound to
 the displayed request so a stale click cannot approve the next one.
 
-### Phase 4: cancellation and session ownership
+### Cancellation and session ownership
 
 Each action run owns its step budget, result cache, and in-flight preparation/tool
 tasks. Ending the run invalidates its callbacks and cancels its outstanding
-approval/preflight work. A cancelled or completed planner cannot overwrite a
+approval/tool work. A cancelled or completed planner cannot overwrite a
 replacement run's HUD, progress, result, runtime issue, or task handle, and its
-late tool callbacks are rejected before dispatch. Retrying clears the previous
-run's own runtime error while preserving unrelated speech-engine errors.
+late tool callbacks are rejected before dispatch. A queued command starts only
+after that cleanup, with fresh per-command state. Automatic handoff preserves
+the previous runtime error; dismissing the outcome or manually starting a new
+command while idle clears that run's own error while preserving unrelated
+speech-engine errors.
 
 Cancellation is recognized through nested Foundation Models `ToolCallError` and
 `NSError` underlying-error wrappers. It is reported as a cancelled action rather
@@ -647,9 +663,8 @@ callbacks can only affect the connection that produced them.
 
 ## Privacy
 
-- Planning runs **entirely on-device** through Apple Intelligence, and optional
-  native grounding runs locally through GLiNER. Prompts and tool results are not
-  sent to a cloud model.
+- Planning runs **entirely on-device** through Apple Intelligence. Prompts and
+  tool results are not sent to a cloud model.
 - The audit log lives at
   `~/Library/Application Support/Superkeet/action-audit.log` and redacts
    sensitive-looking argument keys (tokens, passwords, secrets, authorization,
@@ -657,9 +672,8 @@ callbacks can only affect the connection that produced them.
    secrets inside retained strings and tool output. Redaction precedes audit
    detail truncation.
 - Ordinary `title` and `query` arguments remain readable for troubleshooting,
-  including nested values. Grounding/AX observations use a stricter context that
-  masks their titles and queries as UI content and omits raw output details.
-  Secret-bearing values are masked in either context, including quoted values.
+  including nested values. Secret-bearing values are always masked, including
+  quoted values.
 
 ## Known limitations
 

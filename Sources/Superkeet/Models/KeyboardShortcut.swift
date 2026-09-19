@@ -2,9 +2,6 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
-/// A key chord such as ⌘N, spoken or planned as `["cmd", "n"]`. Only keys in
-/// the fixed table below can be pressed, so a tool call cannot synthesize
-/// arbitrary input.
 struct KeyboardShortcut: Equatable, Hashable, Sendable {
     enum Modifier: String, CaseIterable, Sendable {
         case command, shift, option, control
@@ -27,7 +24,6 @@ struct KeyboardShortcut: Equatable, Hashable, Sendable {
             }
         }
 
-        /// Display order matches macOS menus: ⌃ ⌥ ⇧ ⌘.
         static let displayOrder: [Modifier] = [.control, .option, .shift, .command]
 
         init?(spoken: String) {
@@ -42,7 +38,6 @@ struct KeyboardShortcut: Equatable, Hashable, Sendable {
     }
 
     let modifiers: Set<Modifier>
-    /// Canonical key name: a lowercase letter, a digit, or a named key such as `return`.
     let key: String
     let keyCode: CGKeyCode
 
@@ -50,13 +45,11 @@ struct KeyboardShortcut: Equatable, Hashable, Sendable {
         modifiers.reduce(CGEventFlags()) { $0.union($1.flag) }
     }
 
-    /// Menu-style rendering, for example `⇧⌘Z` or `Return`.
     var displayName: String {
         let mods = Modifier.displayOrder.filter(modifiers.contains).map(\.symbol).joined()
         return mods + Self.displayNames[key, default: key.uppercased()]
     }
 
-    /// Wire form for tool arguments, for example `["cmd", "n"]`.
     var keys: [String] {
         Modifier.displayOrder.filter(modifiers.contains).map { $0 == .command ? "cmd" : $0.rawValue } + [key]
     }
@@ -64,14 +57,12 @@ struct KeyboardShortcut: Equatable, Hashable, Sendable {
     init?(modifiers: Set<Modifier>, key: String) {
         let canonical = Self.canonicalKeyName(key)
         guard let code = Self.keyCodes[canonical] else { return nil }
-        // A bare letter or digit is typing, not a shortcut; named keys may stand alone.
         if modifiers.isEmpty, !Self.standaloneKeys.contains(canonical) { return nil }
         self.modifiers = modifiers
         self.key = canonical
         self.keyCode = code
     }
 
-    /// Parses `["cmd", "shift", "z"]`: any number of modifiers and exactly one key.
     init?(keys: [String]) {
         var modifiers = Set<Modifier>()
         var key: String?
@@ -108,7 +99,6 @@ struct KeyboardShortcut: Equatable, Hashable, Sendable {
         "return", "tab", "space", "delete", "forwarddelete", "escape", "up", "down", "left", "right", "home", "end", "pageup", "pagedown"
     ]
 
-    /// ANSI-layout virtual key codes, the same ones the hotkey recorder displays.
     static let keyCodes: [String: CGKeyCode] = {
         var table: [String: Int] = [
             "a": kVK_ANSI_A, "b": kVK_ANSI_B, "c": kVK_ANSI_C, "d": kVK_ANSI_D, "e": kVK_ANSI_E, "f": kVK_ANSI_F,

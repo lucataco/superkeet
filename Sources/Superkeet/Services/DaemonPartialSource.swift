@@ -1,7 +1,5 @@
 import Foundation
 
-/// The speech engine's side of protocol-2 interim text. `ParakeetService`
-/// implements it; tests substitute a fake that yields scripted transcripts.
 @MainActor
 protocol InterimTranscriptProviding: AnyObject {
     var daemonStreamsInterimText: Bool { get }
@@ -12,10 +10,6 @@ protocol InterimTranscriptProviding: AnyObject {
 
 extension ParakeetService: InterimTranscriptProviding {}
 
-/// Interim text from the Parakeet daemon itself (protocol 2). One recogniser
-/// produces both the interim and the final transcript, so the app name that
-/// triggers an early launch is the same one the command will see, and no
-/// second microphone consumer or speech model is involved.
 @MainActor
 final class DaemonPartialSource: PartialTranscriptSource {
     private let engine: any InterimTranscriptProviding
@@ -31,10 +25,8 @@ final class DaemonPartialSource: PartialTranscriptSource {
         engine.daemonStreamsInterimText ? .available : .unavailable(Self.unavailableReason(protocolVersion: engine.daemonProtocolVersion))
     }
 
-    /// The engine ships its own model; nothing to install.
     func installAssets() async throws {}
 
-    /// The engine is already loaded whenever recording is possible.
     func prewarm() async {}
 
     func start(sessionID: String) async throws -> AsyncStream<PartialTranscript> {
@@ -60,10 +52,6 @@ final class DaemonPartialSource: PartialTranscriptSource {
     }
 }
 
-/// Uses the engine's interim text when the running daemon offers it and falls
-/// back to another recogniser otherwise. The choice is made per session, so a
-/// daemon that starts (or is upgraded) after launch is picked up without a
-/// restart.
 @MainActor
 final class PreferredPartialSource: PartialTranscriptSource {
     private let primary: any PartialTranscriptSource
@@ -79,7 +67,6 @@ final class PreferredPartialSource: PartialTranscriptSource {
         active?.displayName ?? primary.displayName
     }
 
-    /// The recogniser the next session would use, for status displays.
     func preferredSource() async -> (any PartialTranscriptSource)? {
         if await primary.availability().isAvailable { return primary }
         if let fallback, await fallback.availability().isAvailable { return fallback }
@@ -99,8 +86,6 @@ final class PreferredPartialSource: PartialTranscriptSource {
     }
 
     func prewarm() async {
-        // The engine needs no warm-up; only the fallback does, and only while it
-        // is the one that would be used.
         guard await !primary.availability().isAvailable, let fallback else { return }
         await fallback.prewarm()
     }

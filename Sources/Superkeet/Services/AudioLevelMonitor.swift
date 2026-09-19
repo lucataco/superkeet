@@ -2,9 +2,6 @@ import Foundation
 import AVFoundation
 import CoreAudio
 
-/// Level meter for the recording overlay. It is one subscriber of the shared
-/// `MicrophoneTapHub`, so it never owns the audio engine and can coexist with
-/// other consumers of the same microphone audio.
 @MainActor
 final class AudioLevelMonitor: ObservableObject {
     static let shared = AudioLevelMonitor()

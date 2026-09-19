@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import Superkeet
 
@@ -110,7 +111,6 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         }
     }
 
-    /// Speaks the recorded recogniser output for the target command.
     private func speakNotesCommand(_ source: FakeSource) {
         source.emit("Open", sequence: 1)
         source.emit("Open the", sequence: 2)
@@ -119,7 +119,83 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         source.emit("Open the Notes app and create a new note", sequence: 5)
     }
 
-    // MARK: Happy path
+    func testListeningPublishesEachCumulativePartialAndClearsOnTake() async {
+        let fixture = await makeFixture()
+        defer { fixture.coordinator.end(sessionID: "s1"); try? FileManager.default.removeItem(at: fixture.auditFile) }
+        var states: [SpeculativeLaunchCoordinator.Listening?] = []
+        let subscription = fixture.coordinator.$listening.sink { states.append($0) }
+        defer { subscription.cancel() }
+        fixture.coordinator.begin(sessionID: "s1")
+        XCTAssertEqual(fixture.coordinator.listening, .init(sessionID: "s1", transcript: ""))
+        await waitUntil { fixture.source.isListening }
+
+        let words = ["Create", "Create a new", "Create a new note"]
+        for (index, text) in words.enumerated() {
+            fixture.source.emit(text, sequence: index + 1, isFinal: index == words.count - 1)
+            await waitUntil { fixture.coordinator.listening?.transcript == text }
+            XCTAssertEqual(fixture.coordinator.listening, .init(sessionID: "s1", transcript: text))
+        }
+        XCTAssertNil(fixture.coordinator.take(sessionID: "s1"))
+        XCTAssertNil(fixture.coordinator.listening)
+        let expected: [SpeculativeLaunchCoordinator.Listening?] = [nil, .init(sessionID: "s1", transcript: "")]
+            + words.map { .init(sessionID: "s1", transcript: $0) } + [nil]
+        XCTAssertEqual(states, expected)
+        XCTAssertTrue(fixture.launcher.launched.isEmpty)
+    }
+
+    func testListeningRemainsThroughTheTranscribingGapUntilEnd() async {
+        let fixture = await makeFixture()
+        defer { fixture.coordinator.end(sessionID: "s1"); try? FileManager.default.removeItem(at: fixture.auditFile) }
+        fixture.coordinator.begin(sessionID: "s1")
+        await waitUntil { fixture.source.isListening }
+        fixture.source.emit("Create a new note", sequence: 1, isFinal: true)
+        await waitUntil { fixture.coordinator.listening?.transcript == "Create a new note" }
+        fixture.source.stop()
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(fixture.coordinator.listening, .init(sessionID: "s1", transcript: "Create a new note"))
+        fixture.coordinator.end(sessionID: "s1")
+        XCTAssertNil(fixture.coordinator.listening)
+        XCTAssertNil(fixture.coordinator.activeSessionID)
+    }
+
+    func testListeningPublishesFromThePreferredEngineOrFallback() async {
+        AppSettings.shared.instantAppLaunchEnabled = false
+        for version in [2, 1] {
+            let fixture = await makeFixture()
+            defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
+            let engine = DaemonPartialSourceTests.FakeEngine(protocolVersion: version)
+            let source = PreferredPartialSource(primary: DaemonPartialSource(engine: engine), fallback: fixture.source)
+            let coordinator = SpeculativeLaunchCoordinator(source: source, inventory: fixture.inventory,
+                                                          launcher: fixture.launcher, audit: fixture.audit)
+            defer { coordinator.end(sessionID: "s1") }
+            coordinator.begin(sessionID: "s1")
+            if version == 2 {
+                await waitUntil { engine.opened == ["s1"] }
+                engine.emit("Open Notes", sequence: 1, sessionID: "s1")
+                XCTAssertTrue(fixture.source.startedSessions.isEmpty)
+            } else {
+                await waitUntil { fixture.source.isListening }
+                fixture.source.emit("Open Notes", sequence: 1)
+                XCTAssertTrue(engine.opened.isEmpty)
+            }
+            await waitUntil { coordinator.listening?.transcript == "Open Notes" }
+            XCTAssertEqual(coordinator.listening, .init(sessionID: "s1", transcript: "Open Notes"))
+            XCTAssertNil(coordinator.take(sessionID: "s1"))
+            XCTAssertNil(coordinator.listening)
+            XCTAssertTrue(fixture.launcher.launched.isEmpty)
+        }
+    }
+
+    func testEndingBeforeRecognitionStartsCannotReviveListening() async {
+        let fixture = await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
+        fixture.coordinator.begin(sessionID: "s1")
+        fixture.coordinator.end(sessionID: "s1")
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(fixture.source.startedSessions.isEmpty)
+        XCTAssertNil(fixture.coordinator.listening)
+        XCTAssertNil(fixture.coordinator.activeSessionID)
+    }
 
     func testStableAppNameLaunchesBeforeTheTranscriptIsFinal() async throws {
         let fixture = await makeFixture()
@@ -144,6 +220,7 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         XCTAssertFalse(launch.disagreement)
         XCTAssertEqual(fixture.source.stopCount, 1, "Taking the launch stops listening.")
         XCTAssertNil(fixture.coordinator.activity, "The command's own HUD takes over after the transcript arrives.")
+        XCTAssertNil(fixture.coordinator.listening)
         XCTAssertNil(fixture.coordinator.activeSessionID)
 
         let result = await launch.result()
@@ -176,6 +253,7 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         let result = await launch.result()
         XCTAssertEqual(result.launched?.name, "Notes", "The result resolves once macOS reports the launch.")
         XCTAssertNil(fixture.coordinator.activity, "Activity is not revived for a session that was already handed over.")
+        XCTAssertNil(fixture.coordinator.listening)
     }
 
     func testActivationRequiresARunningApp() async throws {
@@ -190,8 +268,6 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         XCTAssertTrue(launch.commit.action.isActivation)
         XCTAssertTrue(fixture.audit.entries().first?.detail?.contains("activated") == true)
     }
-
-    // MARK: Nothing to do
 
     func testTakeWithoutACommitReturnsNothingAndStopsListening() async {
         let fixture = await makeFixture()
@@ -220,21 +296,41 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         XCTAssertNil(fixture.coordinator.take(sessionID: "s1"))
     }
 
-    // MARK: Gating
+    func testDisabledActionsSkipListeningEntirely() async {
+        let fixture = await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
+        AppSettings.shared.actionsEnabled = false
+        XCTAssertFalse(fixture.coordinator.isEnabled)
+        XCTAssertFalse(fixture.coordinator.streamsInterim)
+        fixture.coordinator.begin(sessionID: "s1")
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(fixture.source.startedSessions.isEmpty)
+        XCTAssertNil(fixture.coordinator.activeSessionID)
+        XCTAssertNil(fixture.coordinator.listening)
+        XCTAssertNil(fixture.coordinator.take(sessionID: "s1"))
+    }
 
-    func testDisabledSettingsSkipListeningEntirely() async {
-        for disable in [\AppSettings.actionsEnabled, \AppSettings.instantAppLaunchEnabled] {
-            let fixture = await makeFixture()
-            defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
-            AppSettings.shared[keyPath: disable] = false
-            XCTAssertFalse(fixture.coordinator.isEnabled)
-            fixture.coordinator.begin(sessionID: "s1")
-            try? await Task.sleep(for: .milliseconds(20))
-            XCTAssertTrue(fixture.source.startedSessions.isEmpty)
-            XCTAssertNil(fixture.coordinator.activeSessionID)
-            XCTAssertNil(fixture.coordinator.take(sessionID: "s1"))
-            AppSettings.shared[keyPath: disable] = true
-        }
+    func testInstantLaunchDisabledStillStreamsWithoutObservingLaunchIntents() async {
+        let fixture = await makeFixture()
+        defer { fixture.coordinator.end(sessionID: "s1"); try? FileManager.default.removeItem(at: fixture.auditFile) }
+        AppSettings.shared.instantAppLaunchEnabled = false
+        XCTAssertFalse(fixture.coordinator.isEnabled)
+        XCTAssertTrue(fixture.coordinator.streamsInterim)
+        fixture.coordinator.begin(sessionID: "s1")
+        await waitUntil { fixture.source.isListening }
+        fixture.source.emit("Open Notes", sequence: 1)
+        fixture.source.emit("Open Notes", sequence: 2)
+        await waitUntil { fixture.coordinator.listening?.transcript == "Open Notes" }
+        XCTAssertTrue(fixture.launcher.launched.isEmpty)
+        XCTAssertNil(fixture.coordinator.activity)
+        XCTAssertTrue(fixture.audit.entries().isEmpty)
+
+        AppSettings.shared.instantAppLaunchEnabled = true
+        fixture.source.emit("Open Notes app", sequence: 3)
+        await waitUntil { fixture.coordinator.listening?.transcript == "Open Notes app" }
+        XCTAssertTrue(fixture.launcher.launched.isEmpty, "Partials heard while launch was off must not count toward intent stability.")
+        XCTAssertNil(fixture.coordinator.take(sessionID: "s1"))
+        XCTAssertNil(fixture.coordinator.listening)
     }
 
     func testUnsupportedSystemHasNoSource() async {
@@ -242,10 +338,12 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
         XCTAssertFalse(fixture.coordinator.isSupported)
         XCTAssertFalse(fixture.coordinator.isEnabled)
+        XCTAssertFalse(fixture.coordinator.streamsInterim)
         let availability = await fixture.coordinator.availability()
         XCTAssertEqual(availability, .requiresNewerOS)
         fixture.coordinator.begin(sessionID: "s1")
         XCTAssertNil(fixture.coordinator.activeSessionID)
+        XCTAssertNil(fixture.coordinator.listening)
         do {
             try await fixture.coordinator.installAssets()
             XCTFail("Expected an unavailable error")
@@ -259,13 +357,12 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
         fixture.source.startFailure = SpeechAnalyzerEngineError.notAvailable(.assetsNotInstalled)
         fixture.coordinator.begin(sessionID: "s1")
-        await waitUntil { fixture.source.startedSessions.count == 1 }
-        try? await Task.sleep(for: .milliseconds(20))
+        await waitUntil { fixture.source.startedSessions.count == 1 && fixture.coordinator.listening == nil }
+        XCTAssertNil(fixture.coordinator.listening)
+        XCTAssertNil(fixture.coordinator.activeSessionID)
         XCTAssertNil(fixture.coordinator.take(sessionID: "s1"), "No commit is possible without recognition.")
         XCTAssertTrue(fixture.launcher.launched.isEmpty)
     }
-
-    // MARK: Session lifecycle
 
     func testEndStopsListeningButLetsAnInFlightLaunchFinishAndBeAudited() async {
         let fixture = await makeFixture()
@@ -278,6 +375,7 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
 
         fixture.coordinator.end(sessionID: "s1")
         XCTAssertEqual(fixture.source.stopCount, 1)
+        XCTAssertNil(fixture.coordinator.listening)
         XCTAssertNil(fixture.coordinator.activity)
         XCTAssertNil(fixture.coordinator.activeSessionID)
         XCTAssertNil(fixture.coordinator.take(sessionID: "s1"), "An ended session hands nothing over.")
@@ -285,6 +383,7 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         await waitUntil { !fixture.audit.entries().isEmpty }
         XCTAssertEqual(fixture.audit.entries().map(\.outcome), ["speculative"], "The open request already reached macOS.")
         XCTAssertNil(fixture.coordinator.activity, "A finished launch does not revive the HUD after the session ended.")
+        XCTAssertNil(fixture.coordinator.listening)
     }
 
     func testSessionIdentifiersAreRespected() async {
@@ -292,16 +391,22 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
         fixture.coordinator.begin(sessionID: "s1")
         await waitUntil { fixture.source.isListening }
+        fixture.source.emit("Create a note", sequence: 1)
+        await waitUntil { fixture.coordinator.listening?.transcript == "Create a note" }
         fixture.coordinator.end(sessionID: "other")
         XCTAssertEqual(fixture.coordinator.activeSessionID, "s1")
         XCTAssertNil(fixture.coordinator.take(sessionID: "other"))
+        XCTAssertEqual(fixture.coordinator.listening, .init(sessionID: "s1", transcript: "Create a note"))
         XCTAssertEqual(fixture.source.stopCount, 0)
 
         fixture.coordinator.begin(sessionID: "s2")
+        XCTAssertEqual(fixture.coordinator.listening, .init(sessionID: "s2", transcript: ""))
+        fixture.coordinator.end(sessionID: "s1")
         await waitUntil { fixture.source.startedSessions.count == 2 }
         XCTAssertEqual(fixture.coordinator.activeSessionID, "s2")
         XCTAssertEqual(fixture.source.stopCount, 1, "Starting a new session stops the previous one.")
         fixture.coordinator.end(sessionID: "s2")
+        XCTAssertNil(fixture.coordinator.listening)
     }
 
     func testPartialsAfterTakeAreIgnored() async throws {
@@ -313,9 +418,8 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         fixture.source.emit("Open Notes and", sequence: 1)
         try? await Task.sleep(for: .milliseconds(30))
         XCTAssertTrue(fixture.launcher.launched.isEmpty)
+        XCTAssertNil(fixture.coordinator.listening)
     }
-
-    // MARK: Failures
 
     func testLaunchFailureIsReportedAndAudited() async throws {
         let fixture = await makeFixture()
@@ -352,14 +456,12 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         XCTAssertTrue(fixture.audit.entries().isEmpty)
     }
 
-    // MARK: Interim text demand
-
     func testEngineIsAskedForInterimTextOnlyWhenTheFeatureCanUseIt() async {
         let fixture = await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
         XCTAssertTrue(fixture.coordinator.wantsInterimTranscripts())
         AppSettings.shared.instantAppLaunchEnabled = false
-        XCTAssertFalse(fixture.coordinator.wantsInterimTranscripts(), "Disabled: the engine should not spend cycles on previews.")
+        XCTAssertTrue(fixture.coordinator.wantsInterimTranscripts(), "The HUD uses previews even when instant launches are off.")
         AppSettings.shared.instantAppLaunchEnabled = true
         AppSettings.shared.actionsEnabled = false
         XCTAssertFalse(fixture.coordinator.wantsInterimTranscripts())
@@ -380,9 +482,8 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         XCTAssertNil(missing)
     }
 
-    // MARK: Preparation
-
     func testPrepareChecksAvailabilityAndPrewarmsOnce() async {
+        AppSettings.shared.instantAppLaunchEnabled = false
         let fixture = await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.auditFile) }
         await fixture.coordinator.prepare()

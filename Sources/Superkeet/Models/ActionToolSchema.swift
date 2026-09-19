@@ -1,8 +1,6 @@
 import Foundation
 import CryptoKit
 
-/// The bounded schema/description projection shared by the bridge and its
-/// pre-26.4 token estimator. Property names are data, never metadata to prune.
 enum ActionToolSchema {
     static let toolDescriptionLimit = 140
     static let propertyDescriptionLimit = 90
@@ -46,8 +44,6 @@ enum ActionToolSchema {
                 result["type"] = "null"
                 return result
             }
-            // JSON Schema enum intersects the declared type: a nullable type
-            // does not permit null unless the enum also contains it.
             result["type"] = allowsNull ? ["string", "null"] as Any : "string"
             result["enum"] = choices
             result["title"] = name(toolName: toolName, path: path)
@@ -106,8 +102,6 @@ enum ActionToolSchema {
         } else {
             schemaBytes = spec.inputSchemaJSON.utf8.count * 2
         }
-        // Two bytes per token is conservative for compact JSON, identifiers and
-        // retained descriptions. Framework measurement supersedes this on 26.4+.
         return (spec.toolName.utf8.count + description(for: spec).utf8.count + schemaBytes + 1) / 2 + 40
     }
 }

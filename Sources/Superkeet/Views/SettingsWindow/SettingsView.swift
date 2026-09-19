@@ -23,9 +23,14 @@ struct SettingsView: View {
         }
     }
 
+    /// Actions Mode cannot work below macOS 26, so do not advertise a tab full of dead controls.
+    private var visibleTabs: [SettingsTab] {
+        SettingsTab.allCases.filter { $0 != .actions || AppleIntelligenceAvailability.osSupportsActionsMode }
+    }
+
     var body: some View {
         NavigationSplitView {
-            List(SettingsTab.allCases, selection: $selectedTab) { tab in
+            List(visibleTabs, selection: $selectedTab) { tab in
                 Label(tab.rawValue, systemImage: tab.icon)
                     .tag(tab)
             }

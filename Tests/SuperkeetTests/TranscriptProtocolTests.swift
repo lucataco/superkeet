@@ -20,7 +20,6 @@ final class TranscriptProtocolTests: XCTestCase {
 
     func testProtocolTwoPartialEventsCarryInterimTranscripts() throws {
         var stream = TranscriptEventStream()
-        // Exactly what parakeet-cli 0.1.7 writes for "open the notes app and create a new note".
         let wire = #"{"sequence":1,"session_id":"one","text":"Open the notes up","truncated":false,"type":"partial"}"# + "\n"
             + #"{"sequence":2,"session_id":"one","text":"Open the notes app and create a","truncated":true,"type":"partial"}"# + "\n"
         let events = try stream.append(Data(wire.utf8) + (try frame("Open the notes app and create a new note.")))
@@ -101,7 +100,6 @@ final class TranscriptProtocolTests: XCTestCase {
         XCTAssertEqual(TranscriptEvent(type: "transcribing", sessionID: "one").kind, .transcribing)
         XCTAssertEqual(TranscriptEvent(type: "complete", sessionID: "one", text: "", status: "ok").kind, .complete)
         XCTAssertEqual(TranscriptEvent(type: "partial", sessionID: "one", text: "open the", sequence: 1).kind, .partial)
-        // A still-newer engine may add more; the client must not treat that as a protocol violation.
         XCTAssertEqual(TranscriptEvent(type: "word_timing", sessionID: "one").kind, .unrecognized("word_timing"))
         XCTAssertEqual(TranscriptEvent(type: "", sessionID: "one").kind, .unrecognized(""))
         XCTAssertTrue(TranscriptEvent(type: "complete", sessionID: "one", text: "recovered", status: "error").isPartial)

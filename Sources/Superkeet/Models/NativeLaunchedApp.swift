@@ -1,8 +1,5 @@
 import Foundation
 
-/// What a native `open_app` produced. Later steps (and the planner) can target
-/// the app by pid without a separate discovery round-trip, and the planner
-/// learns whether a window is already there to observe.
 struct NativeLaunchedApp: Equatable, Sendable {
     let name: String
     let bundleIdentifier: String?
@@ -12,8 +9,6 @@ struct NativeLaunchedApp: Equatable, Sendable {
     private static let windowReadyText = "Its window is on screen."
     private static let windowPendingText = "No window has appeared yet."
 
-    /// Model- and user-facing result of an `open_app` step. The format is fixed
-    /// so `init(summary:)` can recover the launch from a tool result string.
     var summary: String {
         var details = ["pid \(processIdentifier)"]
         if let bundleIdentifier, !bundleIdentifier.isEmpty { details.append(bundleIdentifier) }
@@ -25,7 +20,6 @@ struct NativeLaunchedApp: Equatable, Sendable {
         pattern: #"\AOpened (.+) \(pid (\d+)(?:, ([^)]+))?\)\. (.+)\z"#, options: .dotMatchesLineSeparators
     )
 
-    /// Recovers a launch from its `summary`, or `nil` for any other text.
     init?(summary: String) {
         guard let pattern = Self.summaryPattern,
               let match = pattern.firstMatch(in: summary, range: NSRange(summary.startIndex..., in: summary)),
@@ -49,16 +43,11 @@ struct NativeLaunchedApp: Equatable, Sendable {
     }
 }
 
-/// Bounded wait for a freshly opened app to finish launching and show a window,
-/// so the next observation sees it instead of an empty desktop. It never fails:
-/// some apps legitimately open without a window, so the outcome is reported
-/// rather than thrown. Cancellation propagates.
 @MainActor
 struct NativeLaunchWaiter {
     var timeout: Duration = .seconds(4)
     var pollInterval: Duration = .milliseconds(100)
 
-    /// Returns `true` as soon as `isReady` holds, or `false` once the timeout elapses.
     func wait(until isReady: () -> Bool) async throws -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout

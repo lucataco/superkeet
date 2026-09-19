@@ -17,8 +17,6 @@ final class CommandPlanTests: XCTestCase {
         return SpeculativeLaunchResult(commit: commit, launched: launchedApp, failure: launched ? nil : "refused", disagreement: false)
     }
 
-    // MARK: Decomposition
-
     func testCompoundCommandBecomesOrderedClassifiedClauses() {
         let plan = CommandDecomposer.decompose("  Open the Notes app and create a new note. ")
         XCTAssertEqual(plan.command, "Open the Notes app and create a new note.")
@@ -32,8 +30,6 @@ final class CommandPlanTests: XCTestCase {
 
     func testSingleClauseKeepsTheWholeCommandIntent() {
         let plan = CommandDecomposer.decompose("open Helium and go to youtube.com")
-        // "and go to" is a recognised combined open; the clause splitter still separates it,
-        // so the whole-command fast path must run before decomposition. Here we only check shape.
         XCTAssertEqual(plan.clauses.map(\.text), ["open Helium", "go to youtube.com"])
 
         let single = CommandDecomposer.decompose("Search for cats")
@@ -61,8 +57,6 @@ final class CommandPlanTests: XCTestCase {
         XCTAssertEqual(plan.clauses.first?.text, "")
     }
 
-    // MARK: Speculative satisfaction
-
     func testOpenClauseIsSatisfiedByMatchingLaunch() {
         let plan = CommandDecomposer.decompose("open the notes app and create a new note")
         XCTAssertTrue(CommandDecomposer.clause(plan.clauses[0], isSatisfiedBy: launch(notes), resolveApp: resolve))
@@ -84,8 +78,6 @@ final class CommandPlanTests: XCTestCase {
         let whole = CommandClause(index: 0, text: "open Notes and create a note", intent: HeuristicIntentExtractor.intent(for: "open Notes and create a note"))
         XCTAssertFalse(CommandDecomposer.clause(whole, isSatisfiedBy: launch(notes), resolveApp: resolve), "An unsplit compound clause still has work left.")
     }
-
-    // MARK: Plan context
 
     func testContextInstructionsDescribeProgressAndOpenApps() {
         var context = ActionPlanContext(command: "open the notes app and create a new note")
@@ -131,8 +123,6 @@ final class CommandPlanTests: XCTestCase {
         XCTAssertTrue(text.contains("characters omitted"))
         XCTAssertLessThan(text.count, 400)
     }
-
-    // MARK: Launch summary round trip
 
     func testLaunchSummaryRoundTrips() throws {
         for app in [

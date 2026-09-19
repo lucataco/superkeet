@@ -30,6 +30,16 @@ enum AppleIntelligenceAvailability: Equatable {
         return false
     }
 
+    /// Whether this Mac can run Actions Mode at all. Cheap (no model query); use it to decide
+    /// whether to show Actions UI. When true but `current` is unavailable, show the UI with a
+    /// prompt to enable Apple Intelligence instead of hiding the feature.
+    static var osSupportsActionsMode: Bool {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) { return true }
+        #endif
+        return false
+    }
+
     var detail: String {
         switch self {
         case .available:

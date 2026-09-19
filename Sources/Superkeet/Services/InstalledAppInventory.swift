@@ -4,15 +4,10 @@ import os.log
 
 private let inventoryLog = Logger(subsystem: "com.superkeet.app", category: "InstalledAppInventory")
 
-/// Installed-app lookups that never block the main actor. Scanning the
-/// application directories takes hundreds of milliseconds, so the scan runs on
-/// a background task and callers receive `nil` until it has finished rather
-/// than waiting. A completed inventory is kept while a refresh is in flight.
 @MainActor
 final class InstalledAppInventory: ObservableObject {
     static let shared = InstalledAppInventory()
 
-    /// Inventories older than this are rescanned on the next `refresh()`.
     var maximumAge: TimeInterval = 300
 
     @Published private(set) var resolver: AppResolver?
@@ -35,8 +30,6 @@ final class InstalledAppInventory: ObservableObject {
 
     var isReady: Bool { resolver != nil }
 
-    /// Scans in the background unless a fresh inventory exists or a scan is
-    /// already running. `force` rescans regardless of age.
     func refresh(force: Bool = false) {
         dispatchPrecondition(condition: .onQueue(.main))
         if refreshTask != nil { return }
@@ -58,7 +51,6 @@ final class InstalledAppInventory: ObservableObject {
         refreshTask = nil
     }
 
-    /// Waits for the inventory to become available, up to the timeout.
     func waitUntilReady(timeout: Duration = .seconds(3)) async -> Bool {
         if isReady { return true }
         refresh()
@@ -70,7 +62,6 @@ final class InstalledAppInventory: ObservableObject {
         return isReady
     }
 
-    /// Resolves a spoken app reference, or `nil` when unknown or not yet scanned.
     func resolve(_ name: String) -> URL? {
         dispatchPrecondition(condition: .onQueue(.main))
         return resolver?.resolve(name, bundleLookup: bundleLookup)
@@ -87,8 +78,6 @@ final class InstalledAppInventory: ObservableObject {
         return runningBundleURLs().contains { $0.standardizedFileURL.path == target }
     }
 
-    /// Detector environment backed by this inventory. Lookups made before the
-    /// first scan completes resolve nothing, so nothing speculative runs.
     var detectorEnvironment: SpeculativeIntentDetector.Environment {
         .init(
             resolveApp: { [weak self] name in MainActor.assumeIsolated { self?.resolve(name) } },

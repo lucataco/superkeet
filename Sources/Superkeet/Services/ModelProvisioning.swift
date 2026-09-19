@@ -415,6 +415,24 @@ enum ModelProvisionState: Equatable {
             return false
         }
     }
+
+    /// The state's case without its payload. Observe this instead of `state` when you only care
+    /// about transitions; `.downloading` is republished on every progress event.
+    var phase: Phase {
+        switch self {
+        case .unknown: return .unknown
+        case .checking: return .checking
+        case .notInstalled: return .notInstalled
+        case .downloading: return .downloading
+        case .verifying: return .verifying
+        case .installed: return .installed
+        case .failed: return .failed
+        }
+    }
+
+    enum Phase: Equatable {
+        case unknown, checking, notInstalled, downloading, verifying, installed, failed
+    }
 }
 
 enum ModelProvisioningError: LocalizedError {

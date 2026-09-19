@@ -3,20 +3,16 @@ import os.log
 
 private let speculativeLog = Logger(subsystem: "com.superkeet.app", category: "SpeculativeLaunch")
 
-/// What an early launch produced, handed to the command that follows it.
 struct SpeculativeLaunchResult: Equatable, Sendable {
     let commit: SpeculativeCommit
-    /// The app as macOS reported it, or `nil` when the launch failed.
     let launched: NativeLaunchedApp?
     let failure: String?
-    /// Whether later interim text named a different app than the one launched.
     let disagreement: Bool
 
     var action: SpeculativeAction { commit.action }
     var appName: String { launched?.name ?? commit.action.app.name }
 }
 
-/// A launch that may still be in flight when the final transcript arrives.
 struct SpeculativeLaunch: Sendable {
     let commit: SpeculativeCommit
     let disagreement: Bool
@@ -33,17 +29,11 @@ struct SpeculativeLaunch: Sendable {
     }
 }
 
-/// The recording lifecycle hooks the speech service calls.
 @MainActor
 protocol SpeculativeLaunching: AnyObject {
-    /// Whether anything would act on interim text right now, so the speech
-    /// engine only does the extra work of producing it when it is wanted.
     func wantsInterimTranscripts() -> Bool
-    /// A Command Mode recording started; begin listening for an early launch.
     func begin(sessionID: String)
-    /// The recording was cancelled or failed; stop listening and discard state.
     func end(sessionID: String)
-    /// The final transcript arrived; stop listening and hand over any launch.
     func take(sessionID: String) -> SpeculativeLaunch?
 }
 
@@ -51,15 +41,14 @@ extension SpeculativeLaunching {
     func wantsInterimTranscripts() -> Bool { false }
 }
 
-/// Listens to interim speech during a Command Mode recording and opens or
-/// activates an app the moment the detector is confident, without waiting for
-/// the final transcript or the approval HUD. Only installed apps can be named,
-/// so the worst outcome of a mishear is an unwanted app window; the final
-/// transcript still drives the real command, which reuses this launch instead
-/// of repeating it.
 @MainActor
 final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching {
     static let shared = SpeculativeLaunchCoordinator()
+
+    struct Listening: Equatable {
+        let sessionID: String
+        var transcript: String
+    }
 
     enum Activity: Equatable {
         case launching(String)
@@ -75,6 +64,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
     }
 
     @Published private(set) var activity: Activity?
+    @Published private(set) var listening: Listening?
 
     private final class Session {
         let id: String
@@ -117,16 +107,17 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
 
     var isEnabled: Bool { settings.actionsEnabled && settings.instantAppLaunchEnabled && source != nil }
 
+    var streamsInterim: Bool { settings.actionsEnabled && source != nil }
+
     var activeSessionID: String? { session?.id }
 
-    func wantsInterimTranscripts() -> Bool { isEnabled }
+    func wantsInterimTranscripts() -> Bool { streamsInterim }
 
     func availability() async -> PartialTranscriptAvailability {
         guard let source else { return .requiresNewerOS }
         return await source.availability()
     }
 
-    /// Which recogniser the next recording would use for interim text.
     func recognizerName() async -> String? {
         guard let source else { return nil }
         if let preferred = source as? PreferredPartialSource {
@@ -135,19 +126,15 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         return await source.availability().isAvailable ? source.displayName : nil
     }
 
-    /// Downloads the on-device speech model at the user's request, then
-    /// finishes preparation so the next recording can use it.
     func installAssets() async throws {
         guard let source else { throw SpeechAnalyzerEngineError.notAvailable(.requiresNewerOS) }
         try await source.installAssets()
         await prepare()
     }
 
-    /// Reserves speech assets, loads the recogniser, and scans installed apps
-    /// so the first recording after launch reacts as quickly as later ones.
     func prepare() async {
-        guard isEnabled, let source else { return }
-        inventory.refresh()
+        guard streamsInterim, let source else { return }
+        if isEnabled { inventory.refresh() }
         let availability = await source.availability()
         guard availability.isAvailable else {
             speculativeLog.info("Live command recognition unavailable: \(String(describing: availability), privacy: .public)")
@@ -159,33 +146,35 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         }
     }
 
-    // MARK: SpeculativeLaunching
-
     func begin(sessionID: String) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard isEnabled, let source else { return }
+        guard streamsInterim, let source else { return }
         discardSession()
-        inventory.refresh()
+        if isEnabled { inventory.refresh() }
         let detector = SpeculativeIntentDetector(environment: inventory.detectorEnvironment, stabilityThreshold: stabilityThreshold)
         let session = Session(id: sessionID, detector: detector)
         self.session = session
+        listening = Listening(sessionID: sessionID, transcript: "")
         session.listener = Task { @MainActor [weak self] in
+            guard self?.session === session, !Task.isCancelled else { return }
             do {
                 let partials = try await source.start(sessionID: sessionID)
                 guard let self, self.session === session else {
-                    source.stop()
+                    if self?.session == nil { source.stop() }
                     return
                 }
                 for await partial in partials {
                     guard self.session === session else { break }
-                    if let commit = session.detector.observe(partial) {
+                    self.listening?.transcript = partial.text
+                    if self.isEnabled, let commit = session.detector.observe(partial) {
                         self.launch(commit, in: session)
                     }
                 }
             } catch is CancellationError {
-                // The recording ended before recognition started.
+                if self?.session === session { self?.discardSession() }
             } catch {
                 speculativeLog.error("Live recognition did not start: \(error.localizedDescription, privacy: .public)")
+                if self?.session === session { self?.discardSession() }
             }
         }
     }
@@ -203,11 +192,10 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         source?.stop()
         session.listener?.cancel()
         activity = nil
+        listening = nil
         guard let commit = session.detector.commit, let launch = session.launch else { return nil }
         return SpeculativeLaunch(commit: commit, disagreement: session.detector.disagreement, outcome: launch)
     }
-
-    // MARK: Launching
 
     private func launch(_ commit: SpeculativeCommit, in session: Session) {
         let app = commit.action.app
@@ -261,14 +249,13 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         )
     }
 
-    /// Stops listening. A launch already in flight is left to finish: the open
-    /// request has been handed to macOS, so cancelling would only misreport it.
     private func discardSession() {
         guard let session else { return }
         self.session = nil
         source?.stop()
         session.listener?.cancel()
         activity = nil
+        listening = nil
     }
 }
 

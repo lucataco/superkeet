@@ -13,6 +13,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let parakeetService = ParakeetService.shared
     private let settings = AppSettings.shared
     private let hotkeyManager = HotkeyManager.shared
+    private let speculation = SpeculativeLaunchCoordinator.shared
     private var settingsWindowController: NSWindowController?
     private var historyWindowController: NSWindowController?
     private var onboardingWindowController: NSWindowController?
@@ -36,6 +37,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         menu.delegate = self
         statusItem?.menu = menu
 
+        // Recording ended outside our own stop/cancel path (engine auto-stop, crash, daemon stop).
+        // The overlay window controller decides on its own whether to show "Transcribing…" or hide.
         recordingStateCancellable = settings.$isRecording
             .scan((false, false)) { ($0.1, $1) }
             .filter { $0.0 && !$0.1 }
@@ -47,16 +50,23 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 self.pttSessionActive = false
                 self.updateMenuBarIcon(recording: false)
                 AudioLevelMonitor.shared.stopMonitoring()
-                RecordingOverlayWindowController.shared.hide()
             }
 
         sessionStatusCancellable = parakeetService.$sessionStatus
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in self?.showSessionStatus(status) }
 
-        actionStateCancellable = settings.$isActionSessionActive
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] active in self?.updateMenuBarIconForAction(active: active) }
+        actionStateCancellable = Publishers.CombineLatest4(
+            settings.$isActionSessionActive,
+            speculation.$listening.map { $0 != nil }.removeDuplicates(),
+            settings.$isRecording,
+            parakeetService.$daemonState.map { $0 == .transcribing }.removeDuplicates()
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            guard let self else { return }
+            self.updateMenuBarIcon(recording: self.settings.isRecording)
+        }
     }
 
     private func rebuildMenu(_ menu: NSMenu) {
@@ -65,6 +75,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         let statusText: String
         if settings.isActionSessionActive {
             statusText = settings.actionStatusText.isEmpty ? "Working on it…" : settings.actionStatusText
+        } else if speculation.listening != nil {
+            statusText = "Listening…"
         } else if parakeetService.daemonState == .transcribing {
             statusText = "Transcribing…"
         } else if settings.isRecording {
@@ -126,10 +138,15 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         addRecoveryItems(to: menu)
 
         if settings.actionsEnabled {
-            let commandItem = NSMenuItem(title: "Ask Superkeet…", action: #selector(askSuperkeet), keyEquivalent: "")
+            let commandItem = NSMenuItem(title: "Run an Action…", action: #selector(askSuperkeet), keyEquivalent: "")
             commandItem.target = self
-            commandItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "Ask Superkeet")
+            commandItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "Run an Action")
             menu.addItem(commandItem)
+
+            let autoApproveItem = NSMenuItem(title: "Auto-Approve Actions", action: #selector(toggleAutoApproveActions), keyEquivalent: "")
+            autoApproveItem.target = self
+            autoApproveItem.state = settings.actionApprovalPolicy == .autoApprove ? .on : .off
+            menu.addItem(autoApproveItem)
         }
 
         let historyItem = NSMenuItem(title: "History", action: #selector(openHistory), keyEquivalent: "h")
@@ -190,6 +207,16 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         toggleCommandRecording()
     }
 
+    @objc private func toggleAutoApproveActions() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let result = ActionApprovalPolicy.togglingAutoApprove(
+            current: settings.actionApprovalPolicy,
+            remembered: settings.actionApprovalPolicyBeforeAutoApprove
+        )
+        settings.actionApprovalPolicy = result.policy
+        settings.actionApprovalPolicyBeforeAutoApprove = result.remembered
+    }
+
     private func showSessionStatus(_ status: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let button = statusItem?.button else { return }
@@ -226,7 +253,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription)")
             parakeetService.disarmCommandMode()
             guard recordingStart.isCurrent(requestID) else { return }
-            teardownRecordingUI()
+            teardownRecordingUI(hideOverlay: true)
             return
         }
 
@@ -237,7 +264,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
         guard started else {
             parakeetService.disarmCommandMode()
-            teardownRecordingUI()
+            teardownRecordingUI(hideOverlay: true)
             return
         }
 
@@ -251,20 +278,26 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
+    /// Releases recording-time resources. The overlay is left alone by default so it can show
+    /// "Transcribing…" and the outcome; pass `hideOverlay: true` when there is nothing to wait for.
     @MainActor
-    private func teardownRecordingUI() {
+    private func teardownRecordingUI(hideOverlay: Bool = false) {
         recordingStart.cancel()
         pttSessionActive = false
         updateMenuBarIcon(recording: false)
         AudioLevelMonitor.shared.stopMonitoring()
-        RecordingOverlayWindowController.shared.hide()
+        if hideOverlay {
+            RecordingOverlayWindowController.shared.hide()
+        }
     }
 
     @MainActor
     @objc private func stopRecording() {
         parakeetService.stopRecording()
         CaptureSoundPlayer.play(.stop)
-        teardownRecordingUI()
+        // If the engine did not actually enter transcribing (nothing was recording), there is no
+        // completion coming to dismiss the overlay, so hide it now.
+        teardownRecordingUI(hideOverlay: parakeetService.daemonState != .transcribing)
     }
 
     @MainActor
@@ -274,7 +307,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         parakeetService.cancelRecording()
         if wasPending { parakeetService.sessionStatus = "Recording cancelled" }
         CaptureSoundPlayer.play(.stop)
-        teardownRecordingUI()
+        teardownRecordingUI(hideOverlay: true)
     }
 
     @objc private func openHistory() {
@@ -403,7 +436,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     func updateMenuBarIcon(recording: Bool) {
-        if recording {
+        dispatchPrecondition(condition: .onQueue(.main))
+        if recording, speculation.listening == nil {
             let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
             if let image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Superkeet - Recording")?
                 .withSymbolConfiguration(config) {
@@ -413,6 +447,21 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             }
             statusItem?.button?.contentTintColor = nil
         } else {
+            updateMenuBarIconForAction(active: settings.isActionSessionActive)
+        }
+    }
+
+    func updateMenuBarIconForAction(active: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let listening = speculation.listening != nil
+        guard !settings.isRecording || listening else { return }
+        if active {
+            setStatusImage("wand.and.stars", tint: .systemPurple, description: "Superkeet - Working")
+        } else if listening {
+            setStatusImage("waveform", tint: .systemBlue, description: "Superkeet - Listening")
+        } else if parakeetService.daemonState == .transcribing {
+            setStatusImage("waveform", tint: .systemOrange, description: "Superkeet - Transcribing")
+        } else {
             let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Superkeet")
             image?.size = NSSize(width: 18, height: 18)
             statusItem?.button?.image = image
@@ -420,23 +469,15 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-    func updateMenuBarIconForAction(active: Bool) {
-        guard !settings.isRecording else { return }
-        if active {
-            let config = NSImage.SymbolConfiguration(paletteColors: [.systemPurple])
-            if let image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "Superkeet - Working")?
-                .withSymbolConfiguration(config) {
-                image.size = NSSize(width: 18, height: 18)
-                image.isTemplate = false
-                statusItem?.button?.image = image
-            }
-            statusItem?.button?.contentTintColor = nil
-        } else {
-            let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Superkeet")
-            image?.size = NSSize(width: 18, height: 18)
+    private func setStatusImage(_ symbolName: String, tint: NSColor, description: String) {
+        let config = NSImage.SymbolConfiguration(paletteColors: [tint])
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)?
+            .withSymbolConfiguration(config) {
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = false
             statusItem?.button?.image = image
-            statusItem?.button?.contentTintColor = nil
         }
+        statusItem?.button?.contentTintColor = nil
     }
 
     @MainActor
@@ -478,7 +519,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     func cancelRecordingOnly() {
-        guard settings.isRecording || recordingRequested else { return }
+        guard settings.isRecording || recordingRequested || parakeetService.daemonState == .transcribing else { return }
         cancelRecording()
     }
 
@@ -487,8 +528,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         switch CommandModeTogglePolicy.action(
             actionsEnabled: settings.actionsEnabled,
             isRecording: settings.isRecording,
-            recordingRequested: recordingRequested,
-            agentActive: AgentSessionController.shared.phase.isActive
+            recordingRequested: recordingRequested
         ) {
         case .ignore:
             return

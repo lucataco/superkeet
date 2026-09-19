@@ -23,13 +23,10 @@ final class AgentSessionController: ObservableObject {
             self == .planning || self == .running
         }
 
-        /// Whether the HUD should be on screen for this phase: while the session
-        /// is working, and once it has an outcome.
         var showsHUD: Bool {
             isActive || isOutcome
         }
 
-        /// Whether the HUD should surface the result of a finished session.
         var isOutcome: Bool {
             switch self {
             case .finished, .failed: return true
@@ -40,10 +37,9 @@ final class AgentSessionController: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var commandText: String = ""
+    @Published private(set) var queuedCommands: [String] = []
     @Published private(set) var liveMessage: String = ""
-    /// Chronological event log, one line per event.
     @Published private(set) var activityLog: [String] = []
-    /// The HUD's checklist: rows whose status changes in place.
     @Published private(set) var checklist = ActionChecklist()
     @Published private(set) var stepIndex: Int = 0
     @Published private(set) var stepTotal: Int = 0
@@ -57,10 +53,12 @@ final class AgentSessionController: ObservableObject {
     private var deadlineTask: Task<Void, Never>?
     private var reportedRuntimeIssue: String?
     private var activeRun: RunContext?
+    private var queue: [(text: String, speculative: SpeculativeLaunch?)] = [] {
+        didSet { queuedCommands = queue.map(\.text) }
+    }
 
-    /// Floor for the whole-command deadline so a misconfigured value cannot
-    /// stop every run before its first tool call.
     static let minimumRunDeadlineSeconds = 1
+    static let maximumQueuedCommands = 3
 
     @MainActor
     private final class RunContext {
@@ -72,17 +70,12 @@ final class AgentSessionController: ObservableObject {
         let budget: StepBudget
         var toolResults: [String: CachedResult] = [:]
         var cancelOperations: [UUID: @Sendable () -> Void] = [:]
-        /// An app opened while the user was still speaking this command.
         var speculative: SpeculativeLaunchResult?
-        /// Apps opened by `open_app` steps during this command, in order.
         var openedApps: [NativeLaunchedApp] = []
-        /// Words of the step currently running, used to rank observed UI elements.
         var focusTerms: Set<String> = []
 
         init(limit: Int) { budget = StepBudget(limit: limit) }
 
-        /// A successful state change makes every cached read-only result stale.
-        /// Mutation results stay cached so an identical mutation is reused, not repeated.
         func invalidateObservations() {
             toolResults = toolResults.filter { $0.value.mutating }
         }
@@ -99,11 +92,7 @@ final class AgentSessionController: ObservableObject {
         self.router = router ?? ActionToolRouter.shared
         self.resolveApp = resolveApp ?? { InstalledAppInventory.shared.resolve($0) }
         self.isAppRunning = isAppRunning ?? { InstalledAppInventory.shared.isRunning($0) }
-        let resolvedSettings = self.settings
-        self.plannerFactory = plannerFactory ?? {
-            guard let planner = AgentSessionController.makePlanner() else { return nil }
-            return resolvedSettings.nativeGroundingEnabled ? NativeGroundedActionPlanner(fallback: planner) : planner
-        }
+        self.plannerFactory = plannerFactory ?? { AgentSessionController.makePlanner() }
     }
 
     @MainActor
@@ -116,17 +105,27 @@ final class AgentSessionController: ObservableObject {
         return nil
     }
 
-    /// Starts a command. `speculative` is an app launch that began while the
-    /// user was still speaking; the run waits for it, reports it, and reuses it
-    /// instead of opening the same app again.
     func handleCommand(_ text: String, speculative: SpeculativeLaunch? = nil) {
         dispatchPrecondition(condition: .onQueue(.main))
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, activeRun == nil, !phase.isActive else { return }
+        guard !trimmed.isEmpty else { return }
+        if activeRun != nil || phase.isActive {
+            guard queue.count < Self.maximumQueuedCommands else {
+                activityLog.append("Command queue full (\(Self.maximumQueuedCommands) waiting); skipped “\(trimmed)”")
+                return
+            }
+            queue.append((text: trimmed, speculative: speculative))
+            return
+        }
         clearReportedRuntimeIssue()
+        startCommand(trimmed, speculative: speculative)
+    }
+
+    private func startCommand(_ text: String, speculative: SpeculativeLaunch?) {
+        dispatchPrecondition(condition: .onQueue(.main))
         let run = RunContext(limit: max(1, settings.actionMaxSteps))
         activeRun = run
-        commandText = trimmed
+        commandText = text
         liveMessage = ""
         activityLog = []
         checklist = ActionChecklist()
@@ -137,7 +136,7 @@ final class AgentSessionController: ObservableObject {
         settings.actionStatusText = "Thinking…"
         runTask = Task { [weak self] in
             if let speculative { await self?.adopt(speculative, run: run) }
-            await self?.run(trimmed, context: run)
+            await self?.run(text, context: run)
         }
         let deadlineSeconds = max(Self.minimumRunDeadlineSeconds, settings.actionRunDeadlineSeconds)
         deadlineTask = Task { @MainActor [weak self] in
@@ -150,6 +149,7 @@ final class AgentSessionController: ObservableObject {
 
     func cancel() {
         dispatchPrecondition(condition: .onQueue(.main))
+        queue.removeAll()
         guard let run = activeRun else { return }
         finish(.cancelled, run: run)
     }
@@ -175,9 +175,6 @@ final class AgentSessionController: ObservableObject {
         reportedRuntimeIssue = nil
     }
 
-    /// Waits for an early launch to settle and records what happened. The open
-    /// request was already dispatched, so this never fails the run; a launch
-    /// error only means the command will open the app itself.
     private func adopt(_ speculative: SpeculativeLaunch, run: RunContext) async {
         dispatchPrecondition(condition: .onQueue(.main))
         settings.actionStatusText = "Opening \(speculative.commit.action.app.name)…"
@@ -198,17 +195,13 @@ final class AgentSessionController: ObservableObject {
         settings.actionStatusText = "Thinking…"
     }
 
-    /// State that accumulates while a command's steps run in order.
     @MainActor
     private final class CommandExecution {
         let plan: CommandPlan
         var context: ActionPlanContext
         var outputs: [String] = []
-        /// The planner and tool inventory, set up on the first step that needs them.
         var planner: (any ActionPlanning)?
         var tools: [ActionToolSpec] = []
-        /// A native open that missed because the app is not installed; reported
-        /// if no planner is available to try another way.
         var resolutionFailure: NativeOpenActionError?
 
         init(plan: CommandPlan) {
@@ -224,9 +217,6 @@ final class AgentSessionController: ObservableObject {
             let plan = CommandDecomposer.decompose(task)
             let execution = CommandExecution(plan: plan)
             let intent = HeuristicIntentExtractor.intent(for: task)
-            // A recognised single open (including "open X and go to URL") is one
-            // native step; it runs before any decomposition so the browser and
-            // URL are never split apart.
             if let action = NativeOpenAction.fastPath(for: intent) {
                 apply(.planning, run: run)
                 do {
@@ -234,8 +224,6 @@ final class AgentSessionController: ObservableObject {
                     finish(.finished(output.isEmpty ? "Done." : output), run: run)
                     return
                 } catch let error as NativeOpenActionError {
-                    // A missing app is a resolution miss before any OS open call.
-                    // Never fall back after denial, cancellation, timeout, or dispatch failure.
                     guard case .appNotFound = error else { throw error }
                     execution.resolutionFailure = error
                 }
@@ -243,8 +231,6 @@ final class AgentSessionController: ObservableObject {
             try requireCurrent(run)
             if let prior = run.speculative, let launched = prior.launched { execution.context.recordOpened(launched) }
 
-            // A compound command is shown once as a plan card when any of its
-            // predictable steps would otherwise ask on its own.
             if plan.isCompound {
                 let preview = predictPlan(execution, run: run)
                 if preview.needsApproval(under: settings.actionApprovalPolicy) {
@@ -289,17 +275,10 @@ final class AgentSessionController: ObservableObject {
         }
     }
 
-    /// How one step of a compound command will be carried out, decided from the
-    /// clause and what earlier steps have done. The same decision drives both
-    /// the plan card (with a simulated context) and execution.
     private enum StepRoute {
-        /// An app opened while the user was speaking already covers this step.
         case alreadyDone(appName: String)
-        /// A built-in open or URL tool.
         case native(NativeOpenAction)
-        /// A keyboard-shortcut recipe aimed at a running app.
         case shortcut(NativeAppRecipe, target: String)
-        /// The on-device planner.
         case planned
     }
 
@@ -309,7 +288,6 @@ final class AgentSessionController: ObservableObject {
             return .alreadyDone(appName: prior.appName)
         }
         if plan.isCompound, var action = NativeOpenAction.fastPath(for: clause.intent) {
-            // A URL step with no browser uses the browser this command already opened.
             if case .openURL(let url, nil) = action, let browser = context.currentApp, Self.isBrowser(browser.name) {
                 action = .openURL(url: url, browser: browser.name)
             }
@@ -321,9 +299,6 @@ final class AgentSessionController: ObservableObject {
         return .planned
     }
 
-    /// Simulates the command step by step to describe what each one will do,
-    /// without running anything. Opens are assumed to succeed so later steps
-    /// see the app they will act in.
     private func predictPlan(_ execution: CommandExecution, run: RunContext) -> ActionPlanApprovalRequest {
         var context = execution.context
         var steps: [ActionPlanApprovalRequest.Step] = []
@@ -363,9 +338,6 @@ final class AgentSessionController: ObservableObject {
         }
     }
 
-    /// Runs one step of the plan: a launch that already happened while the user
-    /// was speaking, a native open, a keyboard-shortcut recipe, or the planner.
-    /// Returns the step's result, or `nil` when an earlier launch covered it.
     private func perform(_ clause: CommandClause, execution: CommandExecution, run: RunContext) async throws -> String? {
         switch route(for: clause, context: execution.context, plan: execution.plan, run: run) {
         case .alreadyDone(let appName):
@@ -379,7 +351,6 @@ final class AgentSessionController: ObservableObject {
                 if let launched = NativeLaunchedApp(summary: output) { execution.context.recordOpened(launched) }
                 return output
             } catch let error as NativeOpenActionError {
-                // A missing app falls through to the shortcut and planner routes.
                 guard case .appNotFound = error else { throw error }
                 execution.resolutionFailure = error
                 if let recipe = NativeAppRecipe.recipe(for: clause.text), let target = recipeTarget(recipe, context: execution.context) {
@@ -394,7 +365,6 @@ final class AgentSessionController: ObservableObject {
             break
         }
 
-        // Everything else is planned, with what earlier steps did as context.
         let planner = try await preparePlanner(execution, run: run)
         let execute: @Sendable (ActionToolSpec, String) async throws -> String = { [weak self] spec, arguments in
             guard let self else { throw ActionExecutionError.cancelled }
@@ -434,9 +404,6 @@ final class AgentSessionController: ObservableObject {
         return planner
     }
 
-    /// The app a shortcut recipe should go to: the one the step names, if it is
-    /// installed and running, otherwise the app this command most recently
-    /// opened. `nil` leaves the step to the planner.
     private func recipeTarget(_ recipe: NativeAppRecipe, context: ActionPlanContext) -> String? {
         switch recipe.target {
         case .named(let name):
@@ -454,8 +421,6 @@ final class AgentSessionController: ObservableObject {
             || normalized.split(separator: " ").contains { ActionIntentPolicy.browsers.contains(String($0)) }
     }
 
-    /// Discovers MCP tools. A missing inventory only blocks requests that need
-    /// it: compound open requests continue with the built-in tools alone.
     private func prepareExternalTools(for task: String, run: RunContext) async throws -> [ActionToolSpec] {
         do {
             return try await ownedOperation(run: run) { [router] in try await router.prepareTools() }
@@ -473,7 +438,7 @@ final class AgentSessionController: ObservableObject {
         try requireCurrent(run)
 
         let cacheKey = "\(spec.id)|\(argumentsJSON)"
-        let cacheable = !spec.nativeObservation && !spec.requiresFreshObservation
+        let cacheable = !spec.requiresFreshObservation
         if cacheable, let cached = run.toolResults[cacheKey] {
             apply(.toolReused(spec), run: run)
             return cached.output
@@ -483,8 +448,7 @@ final class AgentSessionController: ObservableObject {
             return launched.summary
         }
 
-        // A grounded mutation includes a separately audited post-approval observation.
-        guard run.budget.consume(count: spec.nativePreflight == nil ? 1 : 2) else { throw ActionExecutionError.stepBudgetExceeded }
+        guard run.budget.consume() else { throw ActionExecutionError.stepBudgetExceeded }
         stepIndex = run.budget.used
         apply(.toolStarted(spec), run: run)
         do {
@@ -492,9 +456,7 @@ final class AgentSessionController: ObservableObject {
                 try await router.execute(spec: spec, argumentsJSON: argumentsJSON)
             }
             try requireCurrent(run)
-            if spec.compactObservation, !spec.nativeObservation {
-                // The router returned the whole observation; hand the planner a
-                // short ranked view of it rather than an arbitrary prefix.
+            if spec.compactObservation {
                 output = ObservationProjection.compact(json: output, focus: run.focusTerms)
                     ?? ActionResultText.truncate(output, limit: ActionResultText.modelLimit)
             }
@@ -518,9 +480,6 @@ final class AgentSessionController: ObservableObject {
         }
     }
 
-    /// An `open_app` call for the app that already opened while the user was
-    /// speaking is satisfied by that launch. Names are compared by the bundle
-    /// they resolve to, so "Notes", "the notes app", and aliases all match.
     private func speculativeLaunch(satisfying spec: ActionToolSpec, argumentsJSON: String, run: RunContext) -> NativeLaunchedApp? {
         guard let prior = run.speculative, let launched = prior.launched,
               spec.serverID == NativeOpenAction.serverID, spec.toolName == "open_app",
@@ -535,8 +494,6 @@ final class AgentSessionController: ObservableObject {
         guard activeRun === run else { throw ActionExecutionError.cancelled }
     }
 
-    /// SDK tool callbacks may run in independent tasks. Keep cancellation handles
-    /// for their work so ending a run also cancels approval/preflight waits.
     private func ownedOperation<Value: Sendable>(
         run: RunContext, operation: @escaping @MainActor @Sendable () async throws -> Value
     ) async throws -> Value {
@@ -588,7 +545,6 @@ final class AgentSessionController: ObservableObject {
     private func finish(_ phase: Phase, run: RunContext) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard activeRun === run else { return }
-        // Invalidate ownership before cancellation resumes any old continuations.
         activeRun = nil
         runTask?.cancel()
         runTask = nil
@@ -610,6 +566,11 @@ final class AgentSessionController: ObservableObject {
         }
         self.phase = phase
         agentLog.info("Action session finished: \(String(describing: phase), privacy: .private)")
+        if !queue.isEmpty {
+            let next = queue.removeFirst()
+            // Automatic handoffs keep failures visible until dismissal or a new command starts from idle.
+            startCommand(next.text, speculative: next.speculative)
+        }
     }
 
     @MainActor
@@ -621,9 +582,9 @@ final class AgentSessionController: ObservableObject {
             self.limit = limit
         }
 
-        func consume(count: Int = 1) -> Bool {
-            guard count > 0, used + count <= limit else { return false }
-            used += count
+        func consume() -> Bool {
+            guard used < limit else { return false }
+            used += 1
             return true
         }
     }

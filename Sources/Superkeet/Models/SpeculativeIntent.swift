@@ -1,20 +1,14 @@
 import Foundation
 
-/// An installed app named in a spoken clause.
 struct SpeculativeApp: Equatable, Sendable {
-    /// The normalized spoken reference, for example "notes" for "the Notes app".
     let spokenName: String
     let url: URL
 
     var name: String { url.deletingPathExtension().lastPathComponent }
 }
 
-/// What may run before the final transcript arrives. Both are low risk: a
-/// misheard name either resolves to nothing or opens an installed app.
 enum SpeculativeAction: Equatable, Sendable {
-    /// "open X" / "launch X". Opening a running app brings it to the front.
     case launch(SpeculativeApp)
-    /// "switch to X" for an app that is already running.
     case activate(SpeculativeApp)
 
     var app: SpeculativeApp {
@@ -24,46 +18,26 @@ enum SpeculativeAction: Equatable, Sendable {
     }
 }
 
-/// The single decision a detector makes for one recording session.
 struct SpeculativeCommit: Equatable, Sendable {
     enum Reason: Equatable, Sendable {
-        /// A conjunction or separator followed the app name, so the clause is complete.
         case clauseBoundary
-        /// The same app was heard in this many consecutive partials and no other
-        /// installed name could extend it.
         case stable(count: Int)
-        /// The recogniser finalized the phrase.
         case finalized
     }
 
     let action: SpeculativeAction
-    /// The clause that named the app, lowercased, for example "open the notes app".
     let clause: String
-    /// Sequence number of the partial that triggered the commit.
     let sequence: Int
     let reason: Reason
 }
 
-/// Watches the running text of a Command Mode recording and decides, at most
-/// once per session, that an app should open or come to the front right away.
-///
-/// Everything here is deterministic string handling plus an injected installed-app
-/// lookup, so it is fully testable with scripted partials. It never undoes a
-/// decision: if later text disagrees, `disagreement` is set for the caller to
-/// surface, and the final transcript still drives the real command.
 struct SpeculativeIntentDetector {
     struct Environment {
-        /// Resolves a spoken app reference to an installed bundle, or `nil`.
         var resolveApp: (String) -> URL?
-        /// Display names of every installed app, used to detect prefixes such as
-        /// "Safari" versus "Safari Technology Preview".
         var installedNames: () -> [String]
-        /// Whether the app at this bundle URL is currently running.
         var isRunning: (URL) -> Bool
     }
 
-    /// Consecutive partials that must name the same app before it is trusted
-    /// without a clause boundary or a finalized result.
     let stabilityThreshold: Int
 
     private let environment: Environment
@@ -74,8 +48,6 @@ struct SpeculativeIntentDetector {
     private var streak: (url: URL, count: Int)?
 
     private(set) var commit: SpeculativeCommit?
-    /// Set once text observed after the commit names a different app, or the
-    /// finalized text no longer names the committed one.
     private(set) var disagreement = false
 
     init(environment: Environment, stabilityThreshold: Int = 2) {
@@ -83,8 +55,6 @@ struct SpeculativeIntentDetector {
         self.stabilityThreshold = max(1, stabilityThreshold)
     }
 
-    /// Feeds one partial and returns the commit if this partial produced it.
-    /// Out-of-order and repeated partials are ignored.
     mutating func observe(_ partial: PartialTranscript) -> SpeculativeCommit? {
         guard partial.sequence > lastSequence else { return nil }
         lastSequence = partial.sequence
@@ -141,8 +111,6 @@ struct SpeculativeIntentDetector {
         disagreement = false
     }
 
-    // MARK: Clause parsing
-
     struct Clause: Equatable {
         enum Verb: Equatable {
             case open
@@ -150,13 +118,9 @@ struct SpeculativeIntentDetector {
         }
 
         let verb: Verb
-        /// Spoken app reference between the verb and the clause boundary.
         let candidate: String
-        /// Verb plus candidate, lowercased.
         let text: String
-        /// Whether a conjunction or separator followed the candidate.
         let hasBoundary: Bool
-        /// Whether the candidate contains a web address; those are URL opens, not app launches.
         let containsURL: Bool
     }
 
@@ -173,8 +137,6 @@ struct SpeculativeIntentDetector {
         options: .caseInsensitive
     )
 
-    /// Parses the opening clause of a spoken command when it starts with an
-    /// open or switch verb, after skipping leading filler words.
     static func leadingClause(in text: String) -> Clause? {
         guard let fillers, let verbRegex = verb, let boundary else { return nil }
         var working = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -200,7 +162,6 @@ struct SpeculativeIntentDetector {
 
         let tokens = candidate.split(whereSeparator: \.isWhitespace).map { NativeOpenAction.spokenURLToken(String($0)) }
         let containsURL = tokens.contains { token in
-            // ".app" is a real top-level domain, but in a spoken command it names an application bundle.
             guard !token.hasSuffix(".app") else { return false }
             return token.hasPrefix("http://") || token.hasPrefix("https://") || ActionArgumentNormalizer.normalizedURL(token) != nil
         }
@@ -208,17 +169,12 @@ struct SpeculativeIntentDetector {
         return Clause(verb: verb, candidate: candidate, text: "\(verbText) \(candidate)", hasBoundary: hasBoundary, containsURL: containsURL)
     }
 
-    // MARK: Resolution
-
     private func resolveApp(_ clause: Clause) -> SpeculativeApp? {
         let spokenName = AppResolver.normalizedName(clause.candidate)
         guard !spokenName.isEmpty, let url = environment.resolveApp(clause.candidate) else { return nil }
         return SpeculativeApp(spokenName: spokenName, url: url)
     }
 
-    /// "switch to" only applies to a running app; a stopped app is left to the
-    /// real command so the detector never launches something the user meant to
-    /// merely bring forward.
     private func action(for clause: Clause, app: SpeculativeApp) -> SpeculativeAction? {
         switch clause.verb {
         case .open: return .launch(app)
@@ -226,8 +182,6 @@ struct SpeculativeIntentDetector {
         }
     }
 
-    /// Whether another installed app's name begins with the spoken name, in
-    /// which case the user may not have finished saying it.
     private mutating func isAmbiguous(_ app: SpeculativeApp) -> Bool {
         let names = cachedNames ?? environment.installedNames().map(AppResolver.normalizedName)
         cachedNames = names

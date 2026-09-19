@@ -9,13 +9,85 @@ final class RecordingOverlayWindowController: ObservableObject {
     static let shared = RecordingOverlayWindowController()
 
     @Published private(set) var notchGapWidth: CGFloat = 0
+    @Published private(set) var phase: OverlayPhase = .recording
 
     private var window: NSWindow?
     private var hostingView: NSHostingView<RecordingOverlayView>?
-    private var recordingCancellable: AnyCancellable?
+    private var sessionStart = Date()
+    private var stateCancellables: Set<AnyCancellable> = []
+    private var resultDismissal: DispatchWorkItem?
     private var pointerTracker: Timer?
 
     private init() {}
+
+    /// Subscribes to the engine so the overlay stays up through "Transcribing…" and flashes the
+    /// outcome ("Copied", "Pasted", …) instead of vanishing the instant recording stops.
+    func start(service: ParakeetService = .shared) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard stateCancellables.isEmpty else { return }
+
+        service.$daemonState
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in self?.handleDaemonState(state) }
+            .store(in: &stateCancellables)
+
+        service.$lastOutcome
+            .compactMap { $0 }
+            .removeDuplicates { $0.id == $1.id }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in self?.showOutcome(event.outcome) }
+            .store(in: &stateCancellables)
+    }
+
+    private func handleDaemonState(_ state: ParakeetService.DaemonState) {
+        guard window?.isVisible == true else { return }
+        switch state {
+        case .transcribing:
+            if phase == .recording { showTranscribing() }
+        case .stopped, .stopping:
+            // The engine went away. Let a result flash finish; otherwise there is nothing to show.
+            if case .result = phase { return }
+            hide()
+        case .starting, .idle, .recording:
+            break
+        }
+    }
+
+    private func showTranscribing() {
+        guard AppSettings.shared.overlayAnimationStyle.showsOverlay else { return }
+        stopPointerTracking()
+        cancelResultDismissal()
+        setPhase(.transcribing)
+    }
+
+    private func showOutcome(_ outcome: TranscriptOutcome) {
+        guard window?.isVisible == true else { return }
+        guard outcome.showsInOverlay else {
+            hide()
+            return
+        }
+        stopPointerTracking()
+        cancelResultDismissal()
+        setPhase(.result(outcome))
+
+        let dismissal = DispatchWorkItem { [weak self] in
+            guard let self, case .result = self.phase else { return }
+            self.hide()
+        }
+        resultDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + outcome.displayDuration, execute: dismissal)
+    }
+
+    private func cancelResultDismissal() {
+        resultDismissal?.cancel()
+        resultDismissal = nil
+    }
+
+    private func setPhase(_ newPhase: OverlayPhase) {
+        phase = newPhase
+        hostingView?.rootView = RecordingOverlayView(sessionStart: sessionStart, phase: newPhase)
+    }
 
     nonisolated static let compactSize = NSSize(width: 260, height: 50)
     nonisolated static let expandedSize = NSSize(width: 310, height: 94)
@@ -53,19 +125,22 @@ final class RecordingOverlayWindowController: ObservableObject {
         let style = AppSettings.shared.overlayAnimationStyle
         guard style.showsOverlay else { return }
 
+        cancelResultDismissal()
+        sessionStart = Date()
+        phase = .recording
+
         if let window {
-            hostingView?.rootView = RecordingOverlayView(sessionStart: Date())
+            hostingView?.rootView = RecordingOverlayView(sessionStart: sessionStart, phase: .recording)
             applyChrome(window, style: style)
             if !window.isVisible {
                 window.orderFrontRegardless()
             }
             stopPointerTracking()
             startPointerTrackingIfNeeded(for: style)
-            subscribeRecordingAutoHide()
             return
         }
 
-        let overlayView = RecordingOverlayView(sessionStart: Date())
+        let overlayView = RecordingOverlayView(sessionStart: sessionStart, phase: .recording)
         let hosting = NSHostingView(rootView: overlayView)
         self.hostingView = hosting
 
@@ -89,28 +164,13 @@ final class RecordingOverlayWindowController: ObservableObject {
         self.window = window
 
         startPointerTrackingIfNeeded(for: style)
-        subscribeRecordingAutoHide()
     }
 
     func hide() {
         dispatchPrecondition(condition: .onQueue(.main))
         stopPointerTracking()
-        recordingCancellable?.cancel()
-        recordingCancellable = nil
+        cancelResultDismissal()
         window?.orderOut(nil)
-    }
-
-    private func subscribeRecordingAutoHide() {
-        guard recordingCancellable == nil else { return }
-        recordingCancellable = AppSettings.shared.$isRecording
-            .receive(on: DispatchQueue.main)
-            .dropFirst()
-            .filter { !$0 }
-            .sink { [weak self] _ in
-                self?.hide()
-                AudioLevelMonitor.shared.stopMonitoring()
-                MenuBarManager.shared.updateMenuBarIcon(recording: false)
-            }
     }
 
     func resizeForCurrentMode() {

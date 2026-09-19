@@ -7,7 +7,7 @@ struct OnboardingView: View {
     @ObservedObject var hotkeyManager = HotkeyManager.shared
     @ObservedObject var modelProvisioning = ModelProvisioning.shared
     @State private var currentStep: OnboardingStep = .welcome
-    @State private var readiness = AppReadiness.current()
+    @State private var readiness = AppReadinessReport.placeholder
 
     @State private var accessibilityPollingTimer: Timer?
     @State private var accessibilityGranted: Bool = false
@@ -42,10 +42,7 @@ struct OnboardingView: View {
     }
 
     private var actionsFeatureAvailable: Bool {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) { return true }
-        #endif
-        return false
+        AppleIntelligenceAvailability.osSupportsActionsMode
     }
 
     private enum OnboardingOutputMode {
@@ -103,11 +100,16 @@ struct OnboardingView: View {
             .padding(20)
         }
         .onAppear {
+            readiness = AppReadiness.current()
             microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
+            // Start the ~670 MB model download immediately so it is usually finished by the time
+            // the user reaches the model step, instead of making them sit and watch it.
+            modelProvisioning.startDownloadIfNeeded()
         }
         .onChange(of: currentStep) {
             if currentStep == .model {
+                // Idempotent while a download is in flight; acts as a retry if an earlier attempt failed.
                 modelProvisioning.startDownloadIfNeeded()
             }
             if currentStep == .accessibility {
@@ -125,7 +127,8 @@ struct OnboardingView: View {
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
             syncAccessibilityState(accessibilityGranted)
         }
-        .onChange(of: modelProvisioning.state) {
+        .onChange(of: modelProvisioning.state.phase) {
+            // Re-probe only on state transitions, not on every download progress tick.
             readiness = AppReadiness.current()
         }
     }
@@ -643,7 +646,7 @@ struct OnboardingView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Enable Actions Mode")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Adds a Command Mode shortcut alongside dictation")
+                            Text("Adds a Run an Action shortcut alongside dictation")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -728,7 +731,7 @@ struct OnboardingView: View {
 
                     if settings.actionsEnabled {
                         shortcutRow(
-                            title: "Command Mode",
+                            title: "Run an Action",
                             description: "Speak a task for Actions Mode",
                             displayName: settings.commandHotkeyDisplayName
                         )

@@ -6,24 +6,31 @@ import SwiftUI
 final class ActionHUDWindowController {
     static let shared = ActionHUDWindowController()
 
-    /// What the HUD has to show right now, derived from the published state of
-    /// the approval controller, the session controller, and the early launcher.
     struct Visibility: Equatable {
+        enum AutoHideAction: Equatable {
+            case hide
+            case dismissOutcome
+        }
+
         var hasPendingApproval = false
         var hasPendingPlan = false
         var phase = AgentSessionController.Phase.idle
         var hasSpeculativeActivity = false
+        var isListening = false
+        var hasQueuedCommands = false
 
-        var isShown: Bool { hasPendingApproval || hasPendingPlan || phase.showsHUD || hasSpeculativeActivity }
+        var isShown: Bool { hasPendingApproval || hasPendingPlan || phase.showsHUD || hasSpeculativeActivity || isListening }
 
-        /// The panel takes keyboard focus only while the user must answer, so
-        /// Return/Escape work without stealing keystrokes the rest of the time.
         var wantsKeyboard: Bool { hasPendingApproval || hasPendingPlan }
 
-        var autoHides: Bool {
-            if case .finished = phase { return !wantsKeyboard }
-            return false
+        var autoHideAction: AutoHideAction? {
+            guard case .finished = phase, !wantsKeyboard else { return nil }
+            return isListening ? .dismissOutcome : .hide
         }
+
+        var autoHides: Bool { autoHideAction == .hide }
+
+        var autoHideDelay: TimeInterval { isListening || hasQueuedCommands ? 2 : 8 }
     }
 
     private var panel: NSPanel?
@@ -31,8 +38,6 @@ final class ActionHUDWindowController {
     private var autoHideWorkItem: DispatchWorkItem?
     private var started = false
     private var visibility = Visibility()
-
-    private let autoHideDelay: TimeInterval = 8
 
     func start() {
         guard !started else { return }
@@ -42,24 +47,36 @@ final class ActionHUDWindowController {
             ActionApprovalController.shared.$pending,
             ActionApprovalController.shared.$pendingPlan,
             AgentSessionController.shared.$phase,
-            SpeculativeLaunchCoordinator.shared.$activity
+            Publishers.CombineLatest3(
+                SpeculativeLaunchCoordinator.shared.$activity,
+                SpeculativeLaunchCoordinator.shared.$listening,
+                AgentSessionController.shared.$queuedCommands
+            )
         )
-        .receive(on: DispatchQueue.main)
-        .sink { [weak self] pending, plan, phase, activity in
-            self?.update(Visibility(
+        .map { pending, plan, phase, live in
+            Visibility(
                 hasPendingApproval: pending != nil,
                 hasPendingPlan: plan != nil,
                 phase: phase,
-                hasSpeculativeActivity: activity != nil
-            ))
+                hasSpeculativeActivity: live.0 != nil,
+                isListening: live.1 != nil,
+                hasQueuedCommands: !live.2.isEmpty
+            )
         }
+        .removeDuplicates()
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] in self?.update($0) }
         .store(in: &cancellables)
 
-        // The checklist grows while a command runs; keep the panel sized to it.
-        AgentSessionController.shared.$checklist
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.resizeIfShown() }
-            .store(in: &cancellables)
+        Publishers.CombineLatest4(
+            AgentSessionController.shared.$checklist,
+            AgentSessionController.shared.$queuedCommands,
+            SpeculativeLaunchCoordinator.shared.$listening,
+            AppSettings.shared.$isRecording
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in self?.resizeIfShown() }
+        .store(in: &cancellables)
     }
 
     private func update(_ visibility: Visibility) {
@@ -74,15 +91,30 @@ final class ActionHUDWindowController {
         }
 
         show(takingKeyboard: visibility.wantsKeyboard, releasingKeyboard: previous.wantsKeyboard && !visibility.wantsKeyboard)
-        if visibility.autoHides {
+        if visibility.autoHideAction != nil {
             scheduleAutoHide()
         }
     }
 
     private func scheduleAutoHide() {
-        let item = DispatchWorkItem { [weak self] in self?.hide() }
+        let expectedPhase = visibility.phase
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, AgentSessionController.shared.phase == expectedPhase else { return }
+            var current = self.visibility
+            current.hasPendingApproval = ActionApprovalController.shared.pending != nil
+            current.hasPendingPlan = ActionApprovalController.shared.pendingPlan != nil
+            current.isListening = SpeculativeLaunchCoordinator.shared.listening != nil
+            switch current.autoHideAction {
+            case .hide:
+                self.hide()
+            case .dismissOutcome:
+                AgentSessionController.shared.reset()
+            case nil:
+                break
+            }
+        }
         autoHideWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + autoHideDelay, execute: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + visibility.autoHideDelay, execute: item)
     }
 
     private func show(takingKeyboard: Bool, releasingKeyboard: Bool) {
@@ -91,8 +123,6 @@ final class ActionHUDWindowController {
         resize(panel)
         position(panel)
         if releasingKeyboard, panel.isKeyWindow {
-            // Hand keystrokes back to the app the user was working in. The
-            // panel is non-activating, so reordering it is enough.
             panel.orderOut(nil)
         }
         if takingKeyboard {
@@ -153,8 +183,6 @@ final class ActionHUDWindowController {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    /// Extra vertical space so the HUD does not sit on top of a recording
-    /// overlay drawn along the top edge while the user is still speaking.
     static func recordingOverlayClearance(isRecording: Bool, style: OverlayAnimationStyle) -> CGFloat {
         isRecording && style.anchorsToTop ? 72 : 0
     }

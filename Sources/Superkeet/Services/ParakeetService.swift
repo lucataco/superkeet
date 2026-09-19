@@ -18,11 +18,10 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @Published var lastUserFacingError: String?
     @Published var lastDiagnosticsSummary: String?
     @Published var startupStatusDetail: String?
-    /// The running daemon's wire protocol, learned when it becomes ready.
-    /// Protocol 2 engines can stream interim text for a recording.
     @Published private(set) var daemonProtocolVersion: Int?
+    /// Fires once per finished take so the overlay can confirm what happened to the text.
+    @Published private(set) var lastOutcome: TranscriptOutcomeEvent?
 
-    /// Wire protocols this client speaks. Protocol 2 is a superset of 1.
     static let supportedProtocolVersions: Set<Int> = [1, 2]
     static let interimTextProtocolVersion = 2
 
@@ -57,9 +56,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private var stopTask: Task<Void, Never>?
     private var autoRestartTask: Task<Void, Never>?
     private var autoRestartPolicy = AutoRestartPolicy()
-    /// Test seam for the early-launch coordinator; the shared one is used otherwise.
     @MainActor var speculativeLaunchingOverride: (any SpeculativeLaunching)?
-    /// Consumers of protocol-2 interim text, keyed by session.
     @MainActor private var interimContinuations: [String: AsyncStream<PartialTranscript>.Continuation] = [:]
 
     private init() {}
@@ -75,12 +72,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         speculation.end(sessionID: sessionID)
     }
 
-    // MARK: Interim text (protocol 2)
-
-    /// The daemon's interim transcripts for one recording, as `partial` events
-    /// arrive. The stream ends when the session completes, fails, or is
-    /// cancelled, or when `endInterimTranscripts` is called. One consumer per
-    /// session; a second call replaces the first.
     @MainActor
     func interimTranscripts(sessionID: String) -> AsyncStream<PartialTranscript> {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -317,7 +308,11 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             throw error
         }
 
-        let finalReadiness = AppReadiness.current(settings: settings)
+        // Reuse the pre-launch readiness scan; the only thing that can change during startup is
+        // the model install state, which we know succeeded if we got here.
+        let finalReadiness = readiness.needsModelDownload
+            ? AppReadiness.current(settings: settings)
+            : readiness
 
         await MainActor.run {
             self.daemonState = .idle
@@ -385,8 +380,10 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         let process = lifecycleLock.withLock { daemonProcess }
         if let process, process.isRunning {
             sendSocketCommand("shutdown")
-            try? await Task.sleep(for: .milliseconds(500))
-            await terminateRunningProcess(process)
+            // Poll for a graceful exit instead of sleeping a fixed interval; escalate only if needed.
+            if !(await waitForProcessToExit(process, timeoutNanoseconds: 1_000_000_000)) {
+                await terminateRunningProcess(process)
+            }
         }
 
         lifecycleLock.withLock {
@@ -431,18 +428,23 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         let pidPath = settings.pidFilePath
         let socketPath = settings.socketPath
 
+        var killedStaleProcess = false
         if let pidString = try? String(contentsOfFile: pidPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            let pid = Int32(pidString), pid > 0 {
             if isExpectedParakeetProcess(pid: pid) {
                 parakeetLog.info("Found stale validated PID file (pid: \(pid)), killing...")
                 await terminateProcess(pid: pid)
+                killedStaleProcess = true
             }
         }
 
         try? FileManager.default.removeItem(atPath: socketPath)
         try? FileManager.default.removeItem(atPath: pidPath)
 
-        try? await Task.sleep(for: .milliseconds(200))
+        // Only give the kernel time to release the socket if we actually tore down a process.
+        if killedStaleProcess {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
     }
 
     @MainActor
@@ -478,8 +480,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         recordingDuration = 0
         sessionStatus = "Starting recording…"
 
-        // Ask a protocol-2 engine for interim text only when something will
-        // act on it: every preview costs an encoder pass.
         let wantsInterim = commandModeArmed && daemonStreamsInterimText && speculation.wantsInterimTranscripts()
         let response = await sendSocketCommandAsync("start", sessionID: sessionID, partials: wantsInterim)
         guard outputGate.sessionID == sessionID else { return false }
@@ -499,7 +499,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         settings.isRecording = true
         lastUserFacingError = nil
         settings.runtimeIssue = nil
-        // Command Mode may act on interim speech before the transcript is final.
         if commandModeArmed { speculation.begin(sessionID: sessionID) }
         return true
     }
@@ -540,15 +539,29 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         sessionStatus = "Recording cancelled"
         daemonState = .transcribing
         settings.isRecording = false
-        sendSocketCommand("cancel", sessionID: sessionID) { [weak self] response in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard self.decodeSocketResponse(response)?.status == "ok" else {
-                    parakeetLog.error("cancel command failed: \(response, privacy: .public)")
-                    self.stopDaemon()
-                    return
-                }
-                Task { try? await self.restartDaemon() }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let cancelResponse = await self.sendSocketCommandAsync("cancel", sessionID: sessionID)
+            guard let cancelEnvelope = self.decodeSocketResponse(cancelResponse ?? ""), cancelEnvelope.status == "ok" else {
+                parakeetLog.error("cancel command failed: \(cancelResponse ?? "nil", privacy: .public)")
+                self.stopDaemon()
+                return
+            }
+
+            // Confirm the engine is back at idle before reusing it. Older engines omit `state`
+            // from the cancel reply, so fall back to a status probe. Only restart if it is stuck.
+            var engineState = cancelEnvelope.state
+            if engineState == nil {
+                let statusResponse = await self.sendSocketCommandAsync("status")
+                engineState = self.decodeSocketResponse(statusResponse ?? "")?.state
+            }
+            guard self.daemonState == .transcribing, self.outputGate.sessionID == nil else { return }
+            if engineState == "idle" {
+                self.daemonState = .idle
+                self.resetIdleTimer()
+            } else {
+                parakeetLog.warning("Engine state after cancel was \(engineState ?? "unknown", privacy: .public); restarting")
+                try? await self.restartDaemon()
             }
         }
     }
@@ -579,8 +592,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private struct SocketCommand: Encodable {
         let command: String
         var session_id: String?
-        /// Protocol 2: request interim `partial` events for this session.
-        /// Omitted (not `false`) when not wanted, so the wire stays protocol-1 shaped.
         var partials: Bool?
     }
 
@@ -763,7 +774,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     }
                     completeSession(event)
                 case .unrecognized(let type):
-                    // Newer engines may add event types; they never invalidate the session.
                     parakeetLog.info("Ignoring unrecognized transcript event type \(type, privacy: .public)")
                 }
             }
@@ -790,6 +800,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             let earlyLaunch = speculation.take(sessionID: event.sessionID)
             AgentSessionController.shared.handleCommand(corrected, speculative: earlyLaunch)
             sessionStatus = "Working on it…"
+            publishOutcome(.command)
             return finishSession()
         case .failure(let message):
             lastRawTranscription = raw
@@ -798,6 +809,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             return failSession(message)
         case .empty:
             sessionStatus = "No speech detected"
+            publishOutcome(.noSpeech)
             return finishSession()
         case .dictation: break
         }
@@ -810,10 +822,18 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             settings.runtimeIssue = sessionStatus
         } else if event.status == "error" || (event.isPartial && raw.isEmpty) {
             return failSession(event.message ?? "Transcription failed.")
+        } else if raw.isEmpty {
+            sessionStatus = "No speech detected"
+            publishOutcome(.noSpeech)
         } else {
-            sessionStatus = raw.isEmpty ? "No speech detected" : "Transcription complete"
+            sessionStatus = "Transcription complete"
         }
         finishSession()
+    }
+
+    @MainActor
+    private func publishOutcome(_ outcome: TranscriptOutcome) {
+        lastOutcome = TranscriptOutcomeEvent(outcome)
     }
 
     @MainActor
@@ -855,17 +875,26 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             PasteService.shared.deliverText(
                 processedText,
                 decision: outputDecision,
-                targetProcessIdentifier: appInfo.processIdentifier
+                targetProcessIdentifier: appInfo.processIdentifier,
+                onDelivered: { [weak self] delivery in
+                    Task { @MainActor [weak self] in
+                        self?.publishOutcome(.forDictation(delivery: delivery, isPartial: isPartial))
+                    }
+                }
             )
+        } else if processedText.isEmpty {
+            // The take was only filler words; nothing was worth delivering.
+            publishOutcome(.noSpeech)
+        } else {
+            // Clipboard and paste are both off; the take finished but nothing left the app.
+            publishOutcome(isPartial ? .partial : .done)
         }
-
     }
 
     @MainActor
     private func finishSession() {
         completionTimeout?.cancel()
         completionTimeout = nil
-        // No-op after `take`; stops listening for every other way a session ends.
         endSpeculation()
         if let sessionID = outputGate.sessionID { endInterimTranscripts(sessionID: sessionID) }
         outputGate.close()
@@ -883,7 +912,15 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         sessionStatus = "Transcription failed"
         lastUserFacingError = message
         settings.runtimeIssue = message
+        if outputGate.sessionID != nil { publishOutcome(.failed) }
         finishSession()
+    }
+
+    /// Inference on Apple Silicon runs well under real time, so a healthy engine finishes in a
+    /// fraction of the recording length. Scale the deadline with the take so a stuck engine is
+    /// detected in seconds for short dictation instead of holding recording hostage for minutes.
+    static func completionTimeout(forRecordingDuration duration: TimeInterval) -> TimeInterval {
+        min(max(20, duration * 2), 300)
     }
 
     @MainActor
@@ -895,7 +932,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             self.stopDaemon()
         }
         completionTimeout = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: task)
+        let deadline = Self.completionTimeout(forRecordingDuration: recordingDuration)
+        DispatchQueue.main.asyncAfter(deadline: .now() + deadline, execute: task)
     }
 
     func undoLastTextChanges() {

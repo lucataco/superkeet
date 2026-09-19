@@ -3,8 +3,6 @@ import XCTest
 
 @MainActor
 final class DaemonPartialSourceTests: XCTestCase {
-    /// Stands in for `ParakeetService`: reports a protocol version and lets a
-    /// test push interim transcripts into the stream a session opened.
     final class FakeEngine: InterimTranscriptProviding {
         var daemonProtocolVersion: Int?
         private(set) var opened: [String] = []
@@ -32,7 +30,6 @@ final class DaemonPartialSourceTests: XCTestCase {
         }
     }
 
-    /// A scripted fallback recogniser.
     final class FakeFallback: PartialTranscriptSource {
         var availabilityResult = PartialTranscriptAvailability.available
         private(set) var started: [String] = []
@@ -58,8 +55,6 @@ final class DaemonPartialSourceTests: XCTestCase {
         }
         return received
     }
-
-    // MARK: Daemon source
 
     func testProtocolTwoEngineStreamsItsInterimText() async throws {
         let engine = FakeEngine(protocolVersion: 2)
@@ -119,8 +114,6 @@ final class DaemonPartialSourceTests: XCTestCase {
         await source.prewarm()
     }
 
-    // MARK: Preferred source
-
     func testEngineIsPreferredWhenItStreamsInterimText() async throws {
         let engine = FakeEngine(protocolVersion: 2)
         let fallback = FakeFallback()
@@ -162,7 +155,6 @@ final class DaemonPartialSourceTests: XCTestCase {
         source.stop()
         XCTAssertEqual(fallback.stopCount, 1)
 
-        // The daemon comes up speaking protocol 2: the very next session uses it.
         engine.daemonProtocolVersion = 2
         _ = try await source.start(sessionID: "s2")
         XCTAssertEqual(engine.opened, ["s2"])

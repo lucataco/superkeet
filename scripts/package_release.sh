@@ -209,8 +209,6 @@ cp "$INFO_PLIST" "$BUNDLE_DIR/Contents/"
 cp "$ENTITLEMENTS_PATH" "$BUNDLE_DIR/Contents/Resources/"
 cp "$REPO_DIR/Resources/AppIcon.icns" "$BUNDLE_DIR/Contents/Resources/"
 cp "$PARAKEET_BINARY" "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
-mkdir -p "$BUNDLE_DIR/Contents/Resources/gliner"
-cp "$REPO_DIR/scripts/gliner/serve_grounder.py" "$REPO_DIR/scripts/gliner/gliner_adapter.py" "$BUNDLE_DIR/Contents/Resources/gliner/"
 chmod 755 "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
 
 printf '==> Signing %s...\n' "$BUNDLE_NAME"

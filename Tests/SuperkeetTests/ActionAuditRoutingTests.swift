@@ -3,7 +3,79 @@ import XCTest
 
 @MainActor
 final class ActionAuditRoutingTests: XCTestCase {
-    func testRouterSelectsGroundingRedactionOnlyForUIBoundCalls() async throws {
+    func testAutoApproveSkipsPromptsAndLabelsOnlyStateChanges() async throws {
+        let settings = AppSettings.shared
+        let policy = settings.actionApprovalPolicy
+        let enabled = settings.actionAuditEnabled
+        settings.actionApprovalPolicy = .autoApprove
+        settings.actionAuditEnabled = true
+        defer { settings.actionApprovalPolicy = policy; settings.actionAuditEnabled = enabled }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let audit = ActionAuditStore(fileURL: file)
+        let approvals = ActionApprovalController()
+        defer { approvals.cancelPending() }
+        let router = ActionToolRouter(approvals: approvals, audit: audit, settings: settings, callTool: { _, _, _, _ in "done" })
+
+        for risk in [ActionToolRisk.readOnly, .mutating] {
+            let spec = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: UUID(), serverName: "fixture", name: risk.rawValue,
+                title: nil, description: nil, risk: risk, inputSchemaJSON: "{}"))
+            let output = try await AsyncTimeout.run(seconds: 1, timeoutError: ActionExecutionError.timedOut) {
+                try await router.execute(spec: spec, argumentsJSON: "{}")
+            }
+            XCTAssertEqual(output, "done")
+            XCTAssertNil(approvals.pending)
+            XCTAssertEqual(approvals.pendingCount, 0)
+        }
+
+        let entries = audit.entries()
+        XCTAssertEqual(entries.map(\.risk), ["readOnly", "mutating"])
+        XCTAssertEqual(entries.map(\.outcome), ["succeeded", "succeeded (auto-approved)"])
+    }
+
+    func testAutoApproveDestructiveToolsStillWaitForApprovalAndHonorDenial() async throws {
+        let settings = AppSettings.shared
+        let policy = settings.actionApprovalPolicy
+        let enabled = settings.actionAuditEnabled
+        settings.actionApprovalPolicy = .autoApprove
+        settings.actionAuditEnabled = true
+        defer { settings.actionApprovalPolicy = policy; settings.actionAuditEnabled = enabled }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let audit = ActionAuditStore(fileURL: file)
+        let approvals = ActionApprovalController()
+        defer { approvals.cancelPending() }
+        let calls = OSAllocatedUnfairLockBox<Int>(0)
+        let router = ActionToolRouter(approvals: approvals, audit: audit, settings: settings, callTool: { _, _, _, _ in
+            calls.mutate { $0 += 1 }
+            return "done"
+        })
+        let spec = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: UUID(), serverName: "fixture", name: "delete_file",
+            title: nil, description: nil, risk: .destructive, inputSchemaJSON: "{}"))
+
+        for decision in [ActionApprovalDecision.deny, .approve] {
+            let task = Task { try await router.execute(spec: spec, argumentsJSON: "{}") }
+            defer { task.cancel() }
+            for _ in 0..<100 where approvals.pending == nil { try await Task.sleep(for: .milliseconds(5)) }
+            let pending = try XCTUnwrap(approvals.pending)
+            XCTAssertEqual(pending.tool, spec)
+            XCTAssertEqual(calls.value, 0, "Destructive calls must wait for approval.")
+            approvals.resolve(decision, requestID: pending.id)
+            do {
+                let output = try await task.value
+                XCTAssertEqual(decision, .approve)
+                XCTAssertEqual(output, "done")
+            } catch {
+                XCTAssertEqual(decision, .deny)
+                XCTAssertEqual(error as? ActionExecutionError, .approvalDenied(spec.displayName))
+            }
+        }
+
+        XCTAssertEqual(calls.value, 1)
+        XCTAssertEqual(audit.entries().map(\.outcome), ["denied", "succeeded"])
+    }
+
+    func testRouterAuditKeepsTitlesAndQueriesButMasksSecrets() async throws {
         let settings = AppSettings.shared
         let policy = settings.actionApprovalPolicy
         let enabled = settings.actionAuditEnabled
@@ -13,24 +85,16 @@ final class ActionAuditRoutingTests: XCTestCase {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
         defer { try? FileManager.default.removeItem(at: file) }
         let audit = ActionAuditStore(fileURL: file)
-        let router = ActionToolRouter(audit: audit, settings: settings, callTool: { _, _, _, structured in
-            structured ? #"{"status":"ok"}"# : "ordinary tool result"
-        })
-        var spec = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: UUID(), serverName: "fixture", name: "get_state",
+        let router = ActionToolRouter(audit: audit, settings: settings, callTool: { _, _, _, _ in "ordinary tool result" })
+        let spec = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: UUID(), serverName: "fixture", name: "get_state",
             title: nil, description: nil, risk: .readOnly, inputSchemaJSON: "{}"))
         let arguments = #"{"title":"DNS records","query":"catacolabs.com","api_key":"fixture-secret"}"#
         _ = try await router.execute(spec: spec, argumentsJSON: arguments)
-        spec.nativeObservation = true
-        _ = try await router.execute(spec: spec, argumentsJSON: arguments)
-        let entries = audit.entries()
-        guard entries.count == 2 else { return XCTFail("Expected one generic and one UI observation audit entry") }
-        XCTAssertTrue(entries[0].arguments.contains("catacolabs.com"))
-        XCTAssertTrue(entries[0].arguments.contains("DNS records"))
-        XCTAssertEqual(entries[0].detail, "ordinary tool result")
-        XCTAssertFalse(entries[1].arguments.contains("catacolabs.com"))
-        XCTAssertFalse(entries[1].arguments.contains("DNS records"))
-        XCTAssertNil(entries[1].detail)
-        XCTAssertTrue(entries.allSatisfy { !$0.arguments.contains("fixture-secret") })
+        let entry = try XCTUnwrap(audit.entries().first)
+        XCTAssertTrue(entry.arguments.contains("catacolabs.com"))
+        XCTAssertTrue(entry.arguments.contains("DNS records"))
+        XCTAssertFalse(entry.arguments.contains("fixture-secret"))
+        XCTAssertEqual(entry.detail, "ordinary tool result")
     }
 
     func testCompactObservationRequestsStructuredContentSkipsScreenshotsAndReturnsItWhole() async throws {

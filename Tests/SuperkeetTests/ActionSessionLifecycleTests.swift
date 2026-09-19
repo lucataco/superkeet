@@ -2,7 +2,6 @@ import XCTest
 import FoundationModels
 @testable import Superkeet
 
-/// Deliberately ignores cancellation to model a late SDK/transport completion.
 @MainActor
 final class ActionTestGate<Value: Sendable> {
     private var continuation: CheckedContinuation<Value, Error>?
@@ -204,7 +203,10 @@ final class ActionSessionLifecycleTests: XCTestCase {
         let controller = AgentSessionController(router: router, plannerFactory: { factories += 1; return planner })
         defer { controller.cancel(); planner.completion.resolve(.success("cleanup")) }
         controller.handleCommand("cancel before startup")
+        controller.handleCommand("queued before startup")
+        XCTAssertEqual(controller.queuedCommands, ["queued before startup"])
         controller.cancel()
+        XCTAssertTrue(controller.queuedCommands.isEmpty)
         controller.reset()
         try await Task.sleep(for: .milliseconds(15))
         XCTAssertEqual(controller.phase, .idle)
@@ -275,7 +277,7 @@ final class ActionSessionLifecycleTests: XCTestCase {
         let settings = AppSettings.shared
         let policy = settings.actionApprovalPolicy
         let enabled = settings.actionAuditEnabled
-        settings.actionApprovalPolicy = .readOnlyAuto
+        settings.actionApprovalPolicy = .alwaysAsk
         settings.actionAuditEnabled = true
         defer { settings.actionApprovalPolicy = policy; settings.actionAuditEnabled = enabled }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")

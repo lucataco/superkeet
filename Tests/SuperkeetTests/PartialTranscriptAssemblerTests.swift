@@ -10,8 +10,6 @@ final class PartialTranscriptAssemblerTests: XCTestCase {
         RecognizedPhrase(text: text, isFinal: true, start: start, end: end)
     }
 
-    /// Mirrors the result sequence SpeechAnalyzer produced for the spoken
-    /// command in the design probe: growing volatile text, then one final.
     func testGrowingVolatileResultsThenFinal() {
         var assembler = PartialTranscriptAssembler()
         let steps: [(RecognizedPhrase, String, Bool)] = [

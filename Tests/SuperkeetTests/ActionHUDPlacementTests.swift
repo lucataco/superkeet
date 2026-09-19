@@ -48,4 +48,57 @@ final class ActionHUDPlacementTests: XCTestCase {
         XCTAssertFalse(Visibility(phase: .running).autoHides)
         XCTAssertFalse(Visibility(hasPendingApproval: true, phase: .finished("done")).autoHides)
     }
+
+    func testListeningShowsTheHUDWithoutTakingKeyboardOrAutoHiding() {
+        typealias Visibility = ActionHUDWindowController.Visibility
+        for phase in [AgentSessionController.Phase.idle, .cancelled, .planning, .running] {
+            let visibility = Visibility(phase: phase, isListening: true)
+            XCTAssertTrue(visibility.isShown, "\(phase)")
+            XCTAssertFalse(visibility.wantsKeyboard, "\(phase)")
+            XCTAssertFalse(visibility.autoHides, "\(phase)")
+            XCTAssertNil(visibility.autoHideAction, "\(phase)")
+        }
+    }
+
+    func testQuestionsStillTakeKeyboardWhileAnotherCommandIsListening() {
+        typealias Visibility = ActionHUDWindowController.Visibility
+        for visibility in [
+            Visibility(hasPendingApproval: true, phase: .running, isListening: true),
+            Visibility(hasPendingPlan: true, phase: .planning, isListening: true),
+            Visibility(hasPendingApproval: true, phase: .finished("done"), isListening: true)
+        ] {
+            XCTAssertTrue(visibility.isShown)
+            XCTAssertTrue(visibility.wantsKeyboard)
+            XCTAssertNil(visibility.autoHideAction, "A pending question must not be dismissed by an outcome timer.")
+        }
+    }
+
+    func testFinishedOutcomeDismissalRevealsListeningInsteadOfHidingTheHUD() {
+        var visibility = ActionHUDWindowController.Visibility(phase: .finished("done"), isListening: true)
+        XCTAssertEqual(visibility.autoHideAction, .dismissOutcome)
+        XCTAssertFalse(visibility.autoHides)
+        XCTAssertEqual(visibility.autoHideDelay, 2)
+        visibility.phase = .idle
+        XCTAssertTrue(visibility.isShown, "Dismissing Done must leave the transcript on screen.")
+        XCTAssertFalse(visibility.wantsKeyboard)
+        XCTAssertNil(visibility.autoHideAction)
+    }
+
+    func testOutcomeDelayIsShorterWhenListeningOrCommandsAreQueued() {
+        typealias Visibility = ActionHUDWindowController.Visibility
+        let outcome = AgentSessionController.Phase.finished("done")
+        XCTAssertEqual(Visibility(phase: outcome).autoHideDelay, 8)
+        XCTAssertEqual(Visibility(phase: outcome).autoHideAction, .hide)
+        XCTAssertEqual(Visibility(phase: outcome, isListening: true).autoHideDelay, 2)
+        XCTAssertEqual(Visibility(phase: outcome, hasQueuedCommands: true).autoHideDelay, 2)
+        XCTAssertEqual(Visibility(phase: outcome, isListening: true, hasQueuedCommands: true).autoHideDelay, 2)
+    }
+
+    func testFailuresStayVisibleWhileListeningUntilDismissed() {
+        let visibility = ActionHUDWindowController.Visibility(phase: .failed("no"), isListening: true)
+        XCTAssertTrue(visibility.isShown)
+        XCTAssertFalse(visibility.wantsKeyboard)
+        XCTAssertFalse(visibility.autoHides)
+        XCTAssertNil(visibility.autoHideAction)
+    }
 }

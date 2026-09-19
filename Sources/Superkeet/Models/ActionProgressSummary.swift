@@ -1,9 +1,5 @@
 import Foundation
 
-/// A compact record of the tool calls a planning session has made so far.
-/// When the on-device model's context fills up mid-step, this replaces the
-/// full transcript in a fresh session: the model learns what already happened
-/// without the bulk of every tool result.
 struct ActionProgressSummary: Equatable, Sendable {
     struct Entry: Equatable, Sendable {
         let toolName: String
@@ -38,9 +34,6 @@ struct ActionProgressSummary: Equatable, Sendable {
 
     var isEmpty: Bool { entries.isEmpty }
 
-    /// Instructions text for a continuation session. The newest calls are kept
-    /// when the whole list would exceed the limit, because they describe the
-    /// current state; older calls are collapsed into a count.
     func instructions(limit: Int = ActionProgressSummary.defaultLimit) -> String {
         guard !entries.isEmpty else { return "" }
         let header = "Your earlier work on this step ran out of room and was condensed. These tool calls already happened; do not repeat them. Continue from here."

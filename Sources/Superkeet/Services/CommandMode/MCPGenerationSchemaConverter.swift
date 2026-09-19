@@ -46,8 +46,6 @@ enum MCPGenerationSchemaConverter {
             return DynamicGenerationSchema(name: ActionToolSchema.name(toolName: toolName, path: path + ["nullable"]),
                                            anyOf: [schema, .null])
         }
-        // Earlier frameworks cannot emit explicit null dynamically. Generate the
-        // permitted non-null type, retaining the MCP property's requiredness.
         return schema
     }
 

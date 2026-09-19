@@ -6,8 +6,6 @@ protocol NativeActionExecuting: AnyObject, Sendable {
     func execute(_ action: NativeOpenAction) async throws -> String
 }
 
-/// Opens an already-resolved app bundle. Used by the speculative launch path,
-/// which resolves names itself and runs outside the approval router.
 @MainActor
 protocol NativeAppLaunching: AnyObject {
     func launch(applicationAt url: URL) async throws -> NativeLaunchedApp
@@ -16,16 +14,12 @@ protocol NativeAppLaunching: AnyObject {
 @MainActor
 protocol NativeWorkspaceOpening {
     func applicationURL(bundleIdentifier: String) -> URL?
-    /// Opens the app and waits (bounded) for it to be ready to observe.
     func openApplication(at url: URL) async throws -> NativeLaunchedApp
     func openURL(_ url: URL, in application: URL?) async throws
 }
 
-/// Delivers a key chord to a running app. The real implementation activates
-/// the app, confirms it is frontmost, and posts the events; tests substitute a fake.
 @MainActor
 protocol NativeShortcutPressing: AnyObject {
-    /// Returns the pid that received the shortcut.
     func press(_ shortcut: KeyboardShortcut, inApplicationAt url: URL) async throws -> Int32
 }
 
@@ -109,7 +103,6 @@ final class NativeActionExecutor: NativeActionExecuting, NativeAppLaunching {
 
 @MainActor
 struct SystemNativeWorkspace: NativeWorkspaceOpening {
-    /// Sendable projection of the `NSRunningApplication` handed back by Launch Services.
     private struct LaunchedProcess: Sendable {
         let processIdentifier: Int32
         let bundleIdentifier: String?
@@ -152,8 +145,6 @@ struct SystemNativeWorkspace: NativeWorkspaceOpening {
         )
     }
 
-    /// Whether the process owns an on-screen, layer-0 window. Window ownership,
-    /// layer, and bounds are available without Screen Recording access.
     static func hasOrdinaryWindow(processIdentifier pid: Int32) -> Bool {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return false }
@@ -183,10 +174,6 @@ struct SystemNativeWorkspace: NativeWorkspaceOpening {
     }
 }
 
-/// Posts a key chord to a running app the same way automatic paste posts ⌘V:
-/// activate the app, wait until macOS reports it frontmost, then synthesize
-/// key-down/key-up events. Nothing is sent unless the app is frontmost, so a
-/// shortcut can never land in a different window than the one approved.
 @MainActor
 final class SystemShortcutPresser: NativeShortcutPressing {
     struct Environment {

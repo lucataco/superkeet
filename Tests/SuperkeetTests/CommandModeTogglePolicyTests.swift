@@ -5,7 +5,7 @@ final class CommandModeTogglePolicyTests: XCTestCase {
     func testIgnoresWhenActionsDisabled() {
         XCTAssertEqual(
             CommandModeTogglePolicy.action(
-                actionsEnabled: false, isRecording: false, recordingRequested: false, agentActive: false
+                actionsEnabled: false, isRecording: false, recordingRequested: false
             ),
             .ignore
         )
@@ -14,7 +14,7 @@ final class CommandModeTogglePolicyTests: XCTestCase {
     func testStartsWhenIdleAndEnabled() {
         XCTAssertEqual(
             CommandModeTogglePolicy.action(
-                actionsEnabled: true, isRecording: false, recordingRequested: false, agentActive: false
+                actionsEnabled: true, isRecording: false, recordingRequested: false
             ),
             .start
         )
@@ -23,7 +23,7 @@ final class CommandModeTogglePolicyTests: XCTestCase {
     func testStopsWhileRecording() {
         XCTAssertEqual(
             CommandModeTogglePolicy.action(
-                actionsEnabled: true, isRecording: true, recordingRequested: false, agentActive: false
+                actionsEnabled: true, isRecording: true, recordingRequested: false
             ),
             .stop
         )
@@ -32,18 +32,24 @@ final class CommandModeTogglePolicyTests: XCTestCase {
     func testStopsWhileStartIsPending() {
         XCTAssertEqual(
             CommandModeTogglePolicy.action(
-                actionsEnabled: true, isRecording: false, recordingRequested: true, agentActive: false
+                actionsEnabled: true, isRecording: false, recordingRequested: true
             ),
             .stop
         )
     }
 
-    func testIgnoresWhileAgentIsActive() {
+    @MainActor
+    func testStartsWhileAgentIsActive() {
+        let router = AgentSessionControllerTests.FakeRouter(specs: [])
+        let agent = AgentSessionController(router: router, plannerFactory: { nil })
+        defer { agent.cancel() }
+        agent.handleCommand("first task")
+        XCTAssertTrue(agent.phase.isActive)
         XCTAssertEqual(
             CommandModeTogglePolicy.action(
-                actionsEnabled: true, isRecording: false, recordingRequested: false, agentActive: true
+                actionsEnabled: true, isRecording: false, recordingRequested: false
             ),
-            .ignore
+            .start
         )
     }
 }

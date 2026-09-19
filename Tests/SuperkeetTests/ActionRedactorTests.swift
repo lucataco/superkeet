@@ -84,14 +84,6 @@ final class ActionRedactorTests: XCTestCase {
         XCTAssertFalse(output.contains("private entry"))
     }
 
-    func testGroundingContextStillRedactsTitlesAndQueriesRecursively() {
-        let json = #"{"title":"private window","query":"private target","nested":[{"TITLE":"private title","Query":"private query"}],"window_id":42}"#
-        let output = ActionRedactor.redact(json, context: .groundingUI)
-        XCTAssertFalse(output.contains("private"))
-        XCTAssertTrue(output.contains("42"))
-        XCTAssertEqual(ActionRedactor.redact("private malformed UI content", context: .groundingUI), "***")
-    }
-
     func testRetainedFieldsAndStringArraysStillMaskInlineSecrets() throws {
         let json = #"{"title":"Bearer abc+/~==","query":"password=\"two word secret\"","other":["api_key=inline-secret","ordinary"],"url":"https://example.com/?token=url-secret&limit=3"}"#
         let output = ActionRedactor.redact(json)

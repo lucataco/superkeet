@@ -423,7 +423,6 @@ private func hotkeyCallback(
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
     let keyboard = HotkeyEvent(type: event.type, keyCode: event.getIntegerValueField(.keyboardEventKeycode),
                                flags: event.flags, isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
-    // startListening installs this tap on the main run loop.
     let handled = MainActor.assumeIsolated { manager.handleEvent(keyboard) }
     if handled {
         return nil

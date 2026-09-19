@@ -153,12 +153,6 @@ final class ActionLimitsTests: XCTestCase {
         XCTAssertEqual(Set(ordered.prefix(2).map(\.serverID)).count, 2)
     }
 
-    func testGrounderPreferenceAppliesOnlyToGroundableIntents() {
-        let helper = makeSpec(server: UUID(), name: "superkeet_native_click")
-        XCTAssertEqual(ActionLimits.relevanceScore(of: helper, intent: .init(goal: "unrelated", action: .openApp)), 0)
-        XCTAssertGreaterThan(ActionLimits.relevanceScore(of: helper, intent: .init(goal: "unrelated", action: .click)), 0)
-    }
-
     func testTokenEstimateClipsToolAndPropertyDescriptionsLikeBridge() {
         let server = UUID()
         let base = String(repeating: "x", count: ActionToolSchema.toolDescriptionLimit)

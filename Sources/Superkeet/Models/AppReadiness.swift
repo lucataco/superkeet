@@ -53,6 +53,22 @@ struct AppReadinessReport {
     let issues: [AppReadinessIssue]
     let diagnostics: AppDiagnostics
 
+    /// A cheap, optimistic report for use as initial view state before the first real probe.
+    /// Avoids running CoreAudio/Accessibility/filesystem checks inside SwiftUI struct initializers.
+    static let placeholder = AppReadinessReport(
+        issues: [],
+        diagnostics: AppDiagnostics(
+            microphoneStatus: .authorized,
+            availableInputDeviceNames: [],
+            engineBinaryExists: true,
+            modelInstalled: true,
+            runtimeDirectory: AppReadiness.runtimeFilesDirectory(),
+            runtimeDirectoryWritable: true,
+            configuredInputDeviceFound: true,
+            hostIsAppleSilicon: true
+        )
+    )
+
     var hasDaemonBlockingIssue: Bool {
         issues.contains(.engine) || issues.contains(.runtimeDirectory) || issues.contains(.architecture)
     }

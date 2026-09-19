@@ -18,9 +18,6 @@ enum NativeOpenActionError: LocalizedError, Equatable {
     }
 }
 
-/// The built-in tools Superkeet carries out itself through macOS APIs, without
-/// any MCP server: opening apps and URLs, and pressing a keyboard shortcut in
-/// an app that is already open.
 enum NativeOpenAction: Equatable, Sendable {
     case openApp(name: String)
     case openURL(url: URL, browser: String?)
@@ -116,26 +113,24 @@ enum NativeOpenAction: Equatable, Sendable {
         return action
     }
 
-    /// Match the whole command so a recognized browser word cannot silently drop
-    /// the rest of a compound request. The only combined fast path is open + go to.
     static func fastPath(for intent: ActionIntent) -> Self? {
         guard intent.scope != .activeTab else { return nil }
         let goal = intent.goal
         switch intent.action {
         case .openApp:
-            guard intent.app != nil, !NativeActionStep.hasSequence(goal),
+            guard intent.app != nil, !CommandClauses.hasSequence(goal),
                   let name = captures(#"\A(?:open|launch) (.+)\z"#, in: goal)?.first else { return nil }
             return .openApp(name: name)
         case .openURL:
             guard intent.url != nil else { return nil }
             if let parts = captures(#"\Aopen (.+?) and go to (\S+)\z"#, in: goal),
-               !NativeActionStep.hasSequence(parts[0]), let url = try? webURL(spokenURLToken(parts[1])) {
+               !CommandClauses.hasSequence(parts[0]), let url = try? webURL(spokenURLToken(parts[1])) {
                 return .openURL(url: url, browser: parts[0])
             }
             if let parts = captures(#"\A(?:open|go to) (\S+)(?: in (.+))?\z"#, in: goal),
                let rawURL = parts.first, let url = try? webURL(spokenURLToken(rawURL)) {
                 let browser = parts.count > 1 ? parts[1] : nil
-                guard !NativeActionStep.hasSequence(browser ?? "") else { return nil }
+                guard !CommandClauses.hasSequence(browser ?? "") else { return nil }
                 return .openURL(url: url, browser: browser)
             }
             return nil
@@ -148,11 +143,6 @@ enum NativeOpenAction: Equatable, Sendable {
         return Self.tools + tools.filter { $0.serverID != serverID && !names.contains($0.toolName) }
     }
 
-    /// Whether a request can make progress with only the built-in tools. A
-    /// compound request such as "open Notes and create a new note" should still
-    /// open Notes when no MCP server is available, rather than failing before
-    /// any part of it runs, and a keyboard-shortcut step needs no server at all.
-    /// Active-tab requests always need Chrome tools.
     static func plansWithoutMCP(_ goal: String) -> Bool {
         guard HeuristicIntentExtractor.intent(for: goal).scope != .activeTab else { return false }
         return CommandClauses.split(goal).contains { clause in
@@ -191,7 +181,9 @@ enum NativeOpenAction: Equatable, Sendable {
     }
 
     private static func tool(name: String, title: String, description: String, schema: String) -> ActionToolSpec {
-        ActionToolSpec(descriptor: MCPToolDescriptor(serverID: serverID, serverName: "superkeet", name: name,
-                                                   title: title, description: description, risk: .mutating, inputSchemaJSON: schema))
+        var spec = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: serverID, serverName: "superkeet", name: name,
+                                                              title: title, description: description, risk: .mutating, inputSchemaJSON: schema))
+        spec.approvalExempt = name == "open_app" || name == "open_url"
+        return spec
     }
 }

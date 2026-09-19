@@ -101,18 +101,4 @@ final class ActionAuditStoreTests: XCTestCase {
         XCTAssertFalse(entry.detail?.contains("private-secret") == true)
         XCTAssertTrue(entry.detail?.contains("public suffix") == true)
     }
-
-    func testGroundingAuditMetadataImpliesUIRedactionAndNoRawDetails() throws {
-        let (dir, store) = makeStore()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let grounding = ActionGroundingDecision(selectedID: "a0", confidence: 0.9, decisionMilliseconds: 10)
-        store.record(serverName: "cua-driver", toolName: "click", risk: .mutating,
-                     argumentsJSON: #"{"title":"private title","query":"private query","element_token":"s00000001:2"}"#,
-                     outcome: "succeeded", detail: "private output", grounding: grounding)
-        let entry = try XCTUnwrap(store.entries().first)
-        XCTAssertEqual(entry.grounding, grounding)
-        XCTAssertFalse(entry.arguments.contains("private"))
-        XCTAssertFalse(entry.arguments.contains("s00000001"))
-        XCTAssertNil(entry.detail)
-    }
 }

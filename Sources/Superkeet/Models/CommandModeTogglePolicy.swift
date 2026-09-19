@@ -8,12 +8,10 @@ enum CommandModeTogglePolicy {
     static func action(
         actionsEnabled: Bool,
         isRecording: Bool,
-        recordingRequested: Bool,
-        agentActive: Bool
+        recordingRequested: Bool
     ) -> Action {
         guard actionsEnabled else { return .ignore }
         if isRecording || recordingRequested { return .stop }
-        guard !agentActive else { return .ignore }
         return .start
     }
 }

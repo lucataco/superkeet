@@ -17,8 +17,6 @@ enum CommandTranscriptDelivery: Equatable {
         }
         let raw = event.text ?? ""
         guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .empty }
-        // Command text gets literal user corrections only. Filler removal and
-        // dictation's spoken editing commands could alter action arguments.
         let corrected = TranscriptTextProcessor.replacePhrases(raw, rules: replacements, bundleID: bundleID)
         return .command(corrected)
     }

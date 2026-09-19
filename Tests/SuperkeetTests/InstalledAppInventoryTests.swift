@@ -5,8 +5,6 @@ import XCTest
 final class InstalledAppInventoryTests: XCTestCase {
     private let directory = URL(fileURLWithPath: "/fixture/Applications")
 
-    /// Counts scans and optionally holds each one until released, so the test
-    /// can observe the not-yet-ready state deterministically.
     private final class ScanGate: @unchecked Sendable {
         private let lock = NSLock()
         private var count = 0

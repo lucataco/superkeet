@@ -1,10 +1,5 @@
 import Foundation
 
-/// Splits a spoken command into ordered clauses at conjunctions and
-/// separators, so each part can be classified on its own. "open Notes and
-/// create a new note" yields ["open Notes", "create a new note"]. Separators
-/// inside quoted text are left alone, so dictated text such as
-/// `type "hello, and goodbye" into Title` stays one clause.
 enum CommandClauses {
     private static let separator = try? NSRegularExpression(pattern: #"\b(?:and then|and|then)\b|[;,\n]"#, options: .caseInsensitive)
     private static let quoted = try? NSRegularExpression(
@@ -26,10 +21,13 @@ enum CommandClauses {
             start = cut.upperBound
         }
         clauses.append(String(text[start...]))
-        // Trim sentence punctuation only; quotes around dictated text must survive.
         let edges = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".,;:!?"))
         return clauses
             .map { $0.trimmingCharacters(in: edges) }
             .filter { !$0.isEmpty }
+    }
+
+    static func hasSequence(_ text: String) -> Bool {
+        text.range(of: #"\b(and|then|after|before)\b|[;\n]"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 }

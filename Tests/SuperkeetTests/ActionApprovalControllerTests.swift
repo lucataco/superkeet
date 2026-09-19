@@ -120,8 +120,6 @@ final class ActionApprovalControllerTests: XCTestCase {
         XCTAssertEqual(controller.pendingCount, 0)
     }
 
-    // MARK: Approve similar
-
     private func appRequest(_ name: String, app: String, risk: ActionToolRisk = .mutating, serverID: UUID = UUID()) -> ActionApprovalRequest {
         let spec = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: serverID, serverName: "fixture", name: name,
             title: nil, description: nil, risk: risk, inputSchemaJSON: "{}"))
@@ -180,8 +178,6 @@ final class ActionApprovalControllerTests: XCTestCase {
         _ = await task.value
     }
 
-    // MARK: Plan cards
-
     private func plan(_ steps: [ActionPlanApprovalRequest.Route]) -> ActionPlanApprovalRequest {
         ActionPlanApprovalRequest(command: "test", steps: steps.enumerated().map { offset, route in
             .init(number: offset + 1, text: "step \(offset + 1)", summary: "summary \(offset + 1)", route: route)
@@ -238,7 +234,44 @@ final class ActionApprovalControllerTests: XCTestCase {
         XCTAssertFalse(plan([.native(spec: readOnly, argumentsJSON: "{}")]).needsApproval(under: .readOnlyAuto))
         XCTAssertTrue(plan([.native(spec: readOnly, argumentsJSON: "{}")]).needsApproval(under: .alwaysAsk))
         let open = NativeOpenAction.openApp(name: "Notes")
-        XCTAssertTrue(plan([.native(spec: open.spec, argumentsJSON: try open.argumentsJSON())]).needsApproval(under: .readOnlyAuto))
+        XCTAssertFalse(plan([.native(spec: open.spec, argumentsJSON: try open.argumentsJSON())]).needsApproval(under: .readOnlyAuto))
+    }
+
+    func testOpenOnlyPlanSkipsDefaultApprovalButAddingAShortcutRequiresIt() throws {
+        let open = NativeOpenAction.openApp(name: "Safari")
+        let url = NativeOpenAction.openURL(url: try XCTUnwrap(URL(string: "https://example.com")), browser: "Safari")
+        let steps: [ActionPlanApprovalRequest.Route] = [
+            .native(spec: open.spec, argumentsJSON: try open.argumentsJSON()),
+            .native(spec: url.spec, argumentsJSON: try url.argumentsJSON())
+        ]
+        XCTAssertFalse(plan(steps).needsApproval(under: .readOnlyAuto))
+        XCTAssertTrue(plan(steps).needsApproval(under: .alwaysAsk))
+
+        let shortcut = NativeOpenAction.pressShortcut(app: "Safari", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "t"])))
+        XCTAssertTrue(plan(steps + [.native(spec: shortcut.spec, argumentsJSON: try shortcut.argumentsJSON())]).needsApproval(under: .readOnlyAuto))
+    }
+
+    func testAutoApprovePlanSkipsMutatingNativeStepsButStillRequiresDestructiveApproval() throws {
+        let open = NativeOpenAction.openApp(name: "Notes")
+        let shortcut = NativeOpenAction.pressShortcut(app: "Notes", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"])))
+        let steps: [ActionPlanApprovalRequest.Route] = [
+            .alreadyDone,
+            .native(spec: open.spec, argumentsJSON: try open.argumentsJSON()),
+            .native(spec: shortcut.spec, argumentsJSON: try shortcut.argumentsJSON()),
+            .planned
+        ]
+        XCTAssertFalse(plan(steps).needsApproval(under: .autoApprove))
+
+        let destructive = appRequest("kill_app", app: "Notes", risk: .destructive)
+        XCTAssertTrue(plan(steps + [.native(spec: destructive.tool, argumentsJSON: destructive.argumentsJSON)]).needsApproval(under: .autoApprove))
+    }
+
+    func testPlanApprovalUsesTheToolSpecExemption() {
+        var spec = request("tool").tool
+        spec.approvalExempt = true
+        let request = plan([.native(spec: spec, argumentsJSON: "{}")])
+        XCTAssertFalse(request.needsApproval(under: .readOnlyAuto))
+        XCTAssertTrue(request.needsApproval(under: .alwaysAsk))
     }
 
     func testSecondPlanWhileOneIsPendingIsDeniedAndCancelPendingDeniesThePlan() async throws {

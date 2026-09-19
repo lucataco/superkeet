@@ -4,9 +4,6 @@ import os.log
 
 private let partialLog = Logger(subsystem: "com.superkeet.app", category: "PartialTranscript")
 
-/// Streams interim text for the current recording by feeding the shared
-/// microphone tap into a streaming recogniser. The recogniser is injected so
-/// the session lifecycle can be tested without Apple's speech stack.
 @MainActor
 final class SpeechAnalyzerPartialSource: PartialTranscriptSource {
     private let hub: MicrophoneTapHub
@@ -48,8 +45,6 @@ final class SpeechAnalyzerPartialSource: PartialTranscriptSource {
             throw CancellationError()
         }
 
-        // Attach the microphone only once the recogniser accepts audio, so no
-        // buffer is dropped into a session that has not started.
         let engine = self.engine
         let subscription: MicrophoneTapHub.Subscription
         do {
@@ -73,12 +68,10 @@ final class SpeechAnalyzerPartialSource: PartialTranscriptSource {
                     }
                 }
             } catch is CancellationError {
-                // Session stopped by the caller.
             } catch {
                 partialLog.error("Partial transcript stream failed: \(error.localizedDescription, privacy: .public)")
             }
             continuation.finish()
-            // The recogniser ended the session on its own; release the microphone.
             if let self, self.activeSessionID == sessionID { self.stop() }
         }
         return stream
@@ -99,9 +92,6 @@ final class SpeechAnalyzerPartialSource: PartialTranscriptSource {
     }
 }
 
-/// Chooses the interim-text implementation for this system: the Parakeet
-/// engine's own interim text when the running daemon speaks protocol 2, with
-/// Apple's on-device recogniser as the fallback on macOS 26.
 enum PartialTranscriptSources {
     @MainActor
     static func make(hub: MicrophoneTapHub = .shared, engine: any InterimTranscriptProviding = ParakeetService.shared) -> (any PartialTranscriptSource)? {

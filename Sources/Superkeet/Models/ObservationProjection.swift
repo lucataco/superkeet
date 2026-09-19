@@ -1,19 +1,10 @@
 import Foundation
 
-/// Turns a computer-use server's structured observation into the short text a
-/// small on-device model can actually use. A raw `get_window_state` result for
-/// Notes is 40 KB of JSON (or 13 KB of markdown) dominated by menu items,
-/// unlabeled rows, and the full note body; truncating that to 800 characters
-/// discards every useful control. The projection keeps labeled, actionable
-/// elements, ranks them by the words of the current step, never includes long
-/// text values, and folds the menu bar down to the items that match.
 enum ObservationProjection {
     static let defaultLimit = ActionResultText.modelLimit
     static let labelLimit = 48
     static let valueLimit = 32
 
-    /// Compact text for a `get_window_state`, `list_windows`, or `list_apps`
-    /// result, or `nil` when the JSON has none of those shapes.
     static func compact(json: String, focus: Set<String>, limit: Int = defaultLimit) -> String? {
         guard let data = json.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
@@ -28,8 +19,6 @@ enum ObservationProjection {
         }
         return nil
     }
-
-    // MARK: Window state
 
     private static let menuRoles: Set<String> = ["AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem"]
     private static let containerRoles: Set<String> = ["AXWindow", "AXGroup", "AXScrollArea", "AXSplitGroup", "AXToolbar", "AXList", "AXOutline", "AXTable", "AXRow", "AXCell", "AXColumn", "AXLayoutArea", "AXTabGroup"]
@@ -47,17 +36,16 @@ enum ObservationProjection {
     }
 
     private static func windowState(root: [String: Any], rows: [[String: Any]], focus: Set<String>, limit: Int) -> String {
-        let byIndex = Dictionary(rows.compactMap { row in NativeGroundingJSON.integer(row["element_index"]).map { ($0, row) } },
+        let byIndex = Dictionary(rows.compactMap { row in ActionJSON.integer(row["element_index"]).map { ($0, row) } },
                                  uniquingKeysWith: { first, _ in first })
         let terms = focusTerms(focus)
         var candidates: [Row] = []
         for row in rows {
-            guard let index = NativeGroundingJSON.integer(row["element_index"]), let role = row["role"] as? String else { continue }
+            guard let index = ActionJSON.integer(row["element_index"]), let role = row["role"] as? String else { continue }
             let rawLabel = (row["label"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let value = (row["value"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let isText = textRoles.contains(role)
             let label = isText && rawLabel.count > labelLimit && rawLabel == value ? "" : rawLabel
-            // Containers and unlabeled elements carry nothing a model can name.
             guard !containerRoles.contains(role) || !label.isEmpty, !label.isEmpty || isText, !isInternalIdentifier(label) else { continue }
             let ancestors = ancestorLabels(of: index, in: byIndex)
             let menuPath = menuRoles.contains(role) ? ancestors.filter { !$0.isEmpty } : []
@@ -65,7 +53,6 @@ enum ObservationProjection {
             let haystack = words(([label] + ancestors + [value ?? ""]).joined(separator: " "))
             var score = terms.intersection(haystack).count * 10
             if menuRoles.contains(role) {
-                // Menus are only worth listing when the step asked for something in them.
                 guard role == "AXMenuItem", score > 0, enabled else { continue }
                 score -= 1
             } else if isText {
@@ -105,7 +92,6 @@ enum ObservationProjection {
         if !row.menuPath.isEmpty { text += " " + row.menuPath.joined(separator: " ▸ ") + " ▸" }
         if !row.label.isEmpty { text += " “\(clip(row.label, labelLimit))”" }
         if let value = row.value, !value.isEmpty, value != row.label {
-            // Multi-line bodies are the user's content, not UI; report only their size.
             if row.role == "AXTextArea" || value.contains("\n") || value.count > valueLimit * 4 {
                 text += " = (\(value.count) characters)"
             } else {
@@ -120,7 +106,7 @@ enum ObservationProjection {
         var labels: [String] = []
         var current = index
         var visited = Set<Int>()
-        while let parent = NativeGroundingJSON.integer(rows[current]?["parent_index"]), visited.insert(parent).inserted, let row = rows[parent] {
+        while let parent = ActionJSON.integer(rows[current]?["parent_index"]), visited.insert(parent).inserted, let row = rows[parent] {
             if row["role"] as? String != "AXWindow", let label = row["label"] as? String, !label.isEmpty, !isInternalIdentifier(label) {
                 labels.append(label)
             }
@@ -129,13 +115,9 @@ enum ObservationProjection {
         return labels.reversed()
     }
 
-    /// Accessibility identifiers leak through as labels on some apps
-    /// (`_NS:322`, `ICMNoteListCell, Note[id=…]`, `<<Import - unlocalized>>`).
     static func isInternalIdentifier(_ label: String) -> Bool {
         label.hasPrefix("_") || label.contains("[id=") || label.hasPrefix("<<") || label.range(of: #"\A[A-Za-z]+[A-Z][A-Za-z]*Cell\b"#, options: .regularExpression) != nil
     }
-
-    // MARK: Window and app lists
 
     private static func windowList(_ windows: [[String: Any]], focus: Set<String>, limit: Int) -> String {
         let terms = focusTerms(focus)
@@ -145,7 +127,7 @@ enum ObservationProjection {
             let lhsMatch = terms.intersection(words("\(lhs["app_name"] ?? "") \(lhs["title"] ?? "")")).count
             let rhsMatch = terms.intersection(words("\(rhs["app_name"] ?? "") \(rhs["title"] ?? "")")).count
             if lhsMatch != rhsMatch { return lhsMatch > rhsMatch }
-            return (NativeGroundingJSON.integer(lhs["z_index"]) ?? -1) > (NativeGroundingJSON.integer(rhs["z_index"]) ?? -1)
+            return (ActionJSON.integer(lhs["z_index"]) ?? -1) > (ActionJSON.integer(rhs["z_index"]) ?? -1)
         }
         var lines = ["\(windows.count) windows (pid, window_id, app, title; on-screen first):"]
         var used = lines[0].count
@@ -153,7 +135,7 @@ enum ObservationProjection {
         for window in ranked {
             let app = window["app_name"] as? String ?? "?"
             let title = (window["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            var line = "pid \(NativeGroundingJSON.integer(window["pid"]) ?? 0) window \(NativeGroundingJSON.integer(window["window_id"]) ?? 0) \(app)"
+            var line = "pid \(ActionJSON.integer(window["pid"]) ?? 0) window \(ActionJSON.integer(window["window_id"]) ?? 0) \(app)"
             if !title.isEmpty, title != app { line += " “\(clip(title, labelLimit))”" }
             if window["is_on_screen"] as? Bool != true { line += " (off screen)" }
             guard used + line.count + 1 <= limit - 24 else { break }
@@ -180,7 +162,7 @@ enum ObservationProjection {
         for app in ranked {
             var line = "\(app["name"] as? String ?? "?")"
             if let bundle = app["bundle_id"] as? String, !bundle.isEmpty { line += " \(bundle)" }
-            if app["running"] as? Bool == true { line += " running pid \(NativeGroundingJSON.integer(app["pid"]) ?? 0)" }
+            if app["running"] as? Bool == true { line += " running pid \(ActionJSON.integer(app["pid"]) ?? 0)" }
             if app["active"] as? Bool == true { line += " (frontmost)" }
             guard used + line.count + 1 <= limit - 24 else { break }
             lines.append(line)
@@ -190,8 +172,6 @@ enum ObservationProjection {
         if shown < apps.count { lines.append("… \(apps.count - shown) more apps not shown") }
         return lines.joined(separator: "\n")
     }
-
-    // MARK: Helpers
 
     static func focusTerms(_ focus: Set<String>) -> Set<String> {
         Set(focus.map { $0.lowercased() }).subtracting(stopwords).filter { $0.count >= 3 }

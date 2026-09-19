@@ -1,11 +1,6 @@
 import XCTest
 @testable import Superkeet
 
-/// End-to-end check of protocol-2 interim text through the real speech
-/// engine: `ParakeetService` starts the daemon, a Command Mode recording asks
-/// for partials, and a spoken command played through the speakers reaches
-/// the microphone. Runs only when `SUPERKEET_DAEMON_LIVE_TESTS=1`, since it
-/// needs the engine, the model, microphone access, and audible playback.
 @MainActor
 final class DaemonInterimLiveTests: XCTestCase {
     final class RecordingLaunching: SpeculativeLaunching {
@@ -70,9 +65,6 @@ final class DaemonInterimLiveTests: XCTestCase {
         let deadline = Date().addingTimeInterval(20)
         while service.daemonState != .idle, Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
         let seen = await collector.value
-        // Run in a quiet room: other speech near the microphone competes with
-        // the playback. `parakeet transcribe --session --partials` covers the
-        // same content deterministically without a microphone.
         print("LIVE partials:", seen.map { "#\($0.sequence) \($0.text)" }, "final:", service.lastTranscription)
 
         XCTAssertEqual(service.daemonState, .idle, "The session must complete.")

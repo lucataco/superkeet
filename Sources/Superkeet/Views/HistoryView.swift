@@ -6,6 +6,8 @@ struct HistoryView: View {
     @State private var searchText: String = ""
     @State private var selectedRecord: TranscriptionRecord?
     @State private var confirmClearAll: Bool = false
+    @State private var copiedRecordID: UUID?
+    @State private var copiedResetTask: DispatchWorkItem?
 
     var filteredRecords: [TranscriptionRecord] {
         if searchText.isEmpty {
@@ -20,9 +22,16 @@ struct HistoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("History")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("History")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    if !historyStore.records.isEmpty {
+                        Text("Double-click a row or press ⌘C to copy it")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
                 Spacer()
                 if !historyStore.records.isEmpty {
                     Button("Clear All") {
@@ -85,13 +94,20 @@ struct HistoryView: View {
                 ScrollView {
                     LazyVStack(spacing: 1) {
                         ForEach(filteredRecords) { record in
-                            HistoryRowView(record: record, isSelected: selectedRecord?.id == record.id)
-                                .onTapGesture {
+                            HistoryRowView(
+                                record: record,
+                                isSelected: selectedRecord?.id == record.id,
+                                showsCopied: copiedRecordID == record.id
+                            )
+                                .onTapGesture(count: 2) {
+                                    copy(record)
+                                }
+                                .onTapGesture(count: 1) {
                                     selectedRecord = record
                                 }
                                 .contextMenu {
                                     Button("Copy Text") {
-                                        PasteService.shared.copyToClipboard(record.text)
+                                        copy(record)
                                     }
                                     if let original = record.rawText {
                                         Button("Copy Original Transcript") { PasteService.shared.copyToClipboard(original) }
@@ -105,9 +121,31 @@ struct HistoryView: View {
                     }
                     .padding(.vertical, 4)
                 }
+                // Hidden ⌘C target so the selected row copies like any other list.
+                .background {
+                    Button("Copy") {
+                        if let selectedRecord { copy(selectedRecord) }
+                    }
+                    .keyboardShortcut("c", modifiers: .command)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+                }
             }
         }
         .frame(minWidth: 480, maxWidth: .infinity, minHeight: 520, maxHeight: .infinity)
+    }
+
+    private func copy(_ record: TranscriptionRecord) {
+        PasteService.shared.copyToClipboard(record.text)
+        selectedRecord = record
+        copiedResetTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.15)) { copiedRecordID = record.id }
+        let reset = DispatchWorkItem {
+            withAnimation(.easeInOut(duration: 0.2)) { copiedRecordID = nil }
+        }
+        copiedResetTask = reset
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: reset)
     }
 
     private var emptyStateIcon: String {
@@ -132,6 +170,7 @@ struct HistoryView: View {
 struct HistoryRowView: View {
     let record: TranscriptionRecord
     let isSelected: Bool
+    var showsCopied: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -147,9 +186,16 @@ struct HistoryRowView: View {
 
                 Spacer()
 
-                Text(record.timestamp, style: .relative)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary.opacity(0.7))
+                if showsCopied {
+                    Label("Copied", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.green)
+                        .transition(.opacity)
+                } else {
+                    Text(record.timestamp, style: .relative)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.7))
+                }
             }
 
             if record.isPartial == true {
