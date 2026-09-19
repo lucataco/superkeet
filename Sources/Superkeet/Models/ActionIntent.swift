@@ -52,15 +52,7 @@ enum ActionIntentPolicy {
     }
 }
 
-protocol ActionIntentExtracting: Sendable {
-    func extract(_ text: String) async throws -> ActionIntent
-}
-
-struct HeuristicIntentExtractor: ActionIntentExtracting {
-    func extract(_ text: String) async throws -> ActionIntent {
-        Self.intent(for: text)
-    }
-
+enum HeuristicIntentExtractor {
     static func intent(for text: String) -> ActionIntent {
         let goal = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let activeTab = ActiveTabIntent.extract(goal) { return activeTab }

@@ -8,20 +8,33 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     @AppStorage("toggleHotkeyKeyCode") var toggleHotkeyKeyCode: Int = 49
     @AppStorage("toggleHotkeyModifierFlags") var toggleHotkeyModifierFlags: Int = 524288
-    @AppStorage("toggleHotkeyDisplayName") var toggleHotkeyDisplayName: String = "⌥ Space"
 
     @AppStorage("pttHotkeyKeyCode") var pttHotkeyKeyCode: Int = 63
     @AppStorage("pttHotkeyModifierFlags") var pttHotkeyModifierFlags: Int = 0
-    @AppStorage("pttHotkeyDisplayName") var pttHotkeyDisplayName: String = "fn"
 
     @AppStorage("commandHotkeyKeyCode") var commandHotkeyKeyCode: Int = 49
     @AppStorage("commandHotkeyModifierFlags") var commandHotkeyModifierFlags: Int = 655360
-    @AppStorage("commandHotkeyDisplayName") var commandHotkeyDisplayName: String = "⌥ ⇧ Space"
+
+    // Display names are derived from the key code and modifiers so they can never drift.
+    var toggleHotkeyDisplayName: String {
+        displayNameForHotkey(keyCode: toggleHotkeyKeyCode, modifierFlags: toggleHotkeyModifierFlags)
+    }
+
+    var pttHotkeyDisplayName: String {
+        displayNameForHotkey(keyCode: pttHotkeyKeyCode, modifierFlags: pttHotkeyModifierFlags)
+    }
+
+    var commandHotkeyDisplayName: String {
+        displayNameForHotkey(keyCode: commandHotkeyKeyCode, modifierFlags: commandHotkeyModifierFlags)
+    }
 
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("hasVerifiedSetup") var hasVerifiedSetup: Bool = false
 
-    @AppStorage("launchAtLoginEnabled") var launchAtLoginEnabled: Bool = false
+    /// Read straight from the system so it can never disagree with what login items actually do.
+    var launchAtLoginEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
 
     @AppStorage("audioInputDevice") var audioInputDevice: String = ""
     @AppStorage("modelDirectory") var modelDirectory: String = ""
@@ -120,10 +133,6 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     }
 
     private init() {}
-
-    func syncLaunchAtLoginStatus() {
-        launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
-    }
 
     @MainActor
     func applyAppearancePreference() {

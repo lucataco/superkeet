@@ -104,3 +104,13 @@ struct SettingsTabHeader: View {
         .padding(.bottom, 2)
     }
 }
+
+/// Title + caption label used by settings rows across every tab.
+func rowLabel(_ title: String, _ subtitle: String) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+        Text(subtitle)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+}

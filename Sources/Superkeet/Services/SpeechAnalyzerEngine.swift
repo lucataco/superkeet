@@ -12,7 +12,19 @@ private let engineLog = Logger(subsystem: "com.superkeet.app", category: "Speech
 final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
     struct Configuration: Sendable {
         var locale: Locale = .current
-        var contextualStrings: @Sendable () -> [String] = { AppResolver().installedApplicationNames() }
+        /// App names bias recognition toward "open Notes…" style commands. Reuse the memoized
+        /// inventory instead of rescanning /Applications on every start.
+        var contextualStrings: @Sendable () -> [String] = {
+            MainActor.assumeIsolated {
+                let inventory = InstalledAppInventory.shared
+                let names = inventory.installedNames()
+                if names.isEmpty {
+                    inventory.refresh()
+                    return AppResolver().installedApplicationNames()
+                }
+                return names
+            }
+        }
         var maximumContextualStrings = 300
         var modelRetention: SpeechAnalyzer.Options.ModelRetention = .lingering
         var reportingOptions: Set<SpeechTranscriber.ReportingOption> = [.volatileResults, .fastResults]

@@ -212,8 +212,8 @@ struct HomeTabView: View {
 
         if editingHotkey == .toggle {
             InteractiveHotkeyRecorder(
-                onRecord: { keyCode, modifiers, name in
-                    assignToggleHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
+                onRecord: { keyCode, modifiers, _ in
+                    assignToggleHotkey(keyCode: keyCode, modifiers: modifiers)
                 },
                 onCancel: { editingHotkey = nil }
             )
@@ -231,8 +231,8 @@ struct HomeTabView: View {
 
         if editingHotkey == .pushToTalk {
             InteractiveHotkeyRecorder(
-                onRecord: { keyCode, modifiers, name in
-                    assignPushToTalkHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
+                onRecord: { keyCode, modifiers, _ in
+                    assignPushToTalkHotkey(keyCode: keyCode, modifiers: modifiers)
                 },
                 onCancel: { editingHotkey = nil }
             )
@@ -251,8 +251,8 @@ struct HomeTabView: View {
 
             if editingHotkey == .command {
                 InteractiveHotkeyRecorder(
-                    onRecord: { keyCode, modifiers, name in
-                        assignCommandHotkey(keyCode: keyCode, modifiers: modifiers, name: name)
+                    onRecord: { keyCode, modifiers, _ in
+                        assignCommandHotkey(keyCode: keyCode, modifiers: modifiers)
                     },
                     onCancel: { editingHotkey = nil }
                 )
@@ -324,15 +324,6 @@ struct HomeTabView: View {
             get: { settings.launchAtLoginEnabled },
             set: { setLaunchAtLogin(enabled: $0) }
         )
-    }
-
-    private func rowLabel(_ title: String, _ subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     @ViewBuilder
@@ -520,7 +511,6 @@ struct HomeTabView: View {
     }
 
     private func refreshReadiness() {
-        settings.syncLaunchAtLoginStatus()
         modelProvisioning.refreshInstalledState()
         let refreshed = AppReadiness.current()
         readiness = refreshed
@@ -543,32 +533,29 @@ struct HomeTabView: View {
         }
     }
 
-    private func assignToggleHotkey(keyCode: Int, modifiers: Int, name: String) {
+    private func assignToggleHotkey(keyCode: Int, modifiers: Int) {
         guard validateShortcut(keyCode: keyCode, modifiers: modifiers, excluding: .toggle) else { return }
 
         settings.toggleHotkeyKeyCode = keyCode
         settings.toggleHotkeyModifierFlags = modifiers
-        settings.toggleHotkeyDisplayName = name
         shortcutError = nil
         editingHotkey = nil
     }
 
-    private func assignPushToTalkHotkey(keyCode: Int, modifiers: Int, name: String) {
+    private func assignPushToTalkHotkey(keyCode: Int, modifiers: Int) {
         guard validateShortcut(keyCode: keyCode, modifiers: modifiers, excluding: .pushToTalk) else { return }
 
         settings.pttHotkeyKeyCode = keyCode
         settings.pttHotkeyModifierFlags = modifiers
-        settings.pttHotkeyDisplayName = name
         shortcutError = nil
         editingHotkey = nil
     }
 
-    private func assignCommandHotkey(keyCode: Int, modifiers: Int, name: String) {
+    private func assignCommandHotkey(keyCode: Int, modifiers: Int) {
         guard validateShortcut(keyCode: keyCode, modifiers: modifiers, excluding: .command) else { return }
 
         settings.commandHotkeyKeyCode = keyCode
         settings.commandHotkeyModifierFlags = modifiers
-        settings.commandHotkeyDisplayName = name
         shortcutError = nil
         editingHotkey = nil
     }
@@ -617,12 +604,10 @@ struct HomeTabView: View {
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            settings.syncLaunchAtLoginStatus()
             loginItemError = nil
         } catch {
             homeTabLog.error("Failed to update login item: \(error.localizedDescription)")
             loginItemError = "Failed to update login item. Make sure you're running the installed .app bundle."
-            settings.syncLaunchAtLoginStatus()
         }
     }
 

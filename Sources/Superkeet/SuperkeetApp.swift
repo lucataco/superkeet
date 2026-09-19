@@ -23,8 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         settings.applyAppearancePreference()
 
-        settings.syncLaunchAtLoginStatus()
-
         menuBarManager.setup()
 
         RecordingOverlayWindowController.shared.start()

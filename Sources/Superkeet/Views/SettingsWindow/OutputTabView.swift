@@ -165,12 +165,4 @@ struct OutputTabView: View {
         }
     }
 
-    private func rowLabel(_ title: String, _ subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
 }

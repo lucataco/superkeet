@@ -31,12 +31,7 @@ struct RecordingFeedbackSection: View {
                     Label(style.title, systemImage: style.symbolName).tag(style.rawValue)
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Sound Cues")
-                    Text("Start and stop sounds while recording")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                rowLabel("Sound Cues", "Start and stop sounds while recording")
             }
         } header: {
             Text("Recording Feedback")

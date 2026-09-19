@@ -22,7 +22,9 @@ final class ActionAuditStore: @unchecked Sendable {
     private let maxBytes: Int
     private let log = Logger(subsystem: "com.superkeet.app", category: "ActionAuditStore")
     private let lock = NSLock()
-    private var entryCount = 0
+    /// Counted lazily on the first append so creating the store (which happens at app launch even
+    /// with Actions Mode off) never reads the log file.
+    private var entryCount: Int?
 
     init(
         fileURL: URL = AppPaths.applicationSupportDirectory.appendingPathComponent("action-audit.log"),
@@ -32,7 +34,6 @@ final class ActionAuditStore: @unchecked Sendable {
         self.fileURL = fileURL
         self.maxEntries = max(1, maxEntries)
         self.maxBytes = max(1, maxBytes)
-        self.entryCount = Self.lineCount(at: fileURL)
     }
 
     var logFileURL: URL { fileURL }
@@ -105,7 +106,12 @@ final class ActionAuditStore: @unchecked Sendable {
                 try line.write(to: fileURL, options: .atomic)
                 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
             }
-            entryCount += 1
+            if let known = entryCount {
+                entryCount = known + 1
+            } else {
+                // First append this launch: the file now includes the line we just wrote.
+                entryCount = Self.lineCount(at: fileURL)
+            }
         } catch {
             log.error("Failed to append action audit entry: \(error.localizedDescription)")
         }
@@ -115,7 +121,7 @@ final class ActionAuditStore: @unchecked Sendable {
     private func pruneIfNeededLocked() {
         let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
         let size = (attributes?[.size] as? Int) ?? 0
-        guard entryCount > maxEntries || size > maxBytes else { return }
+        guard (entryCount ?? 0) > maxEntries || size > maxBytes else { return }
 
         guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
         let lines = contents
