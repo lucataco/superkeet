@@ -8,6 +8,20 @@ final class ModelProvisioningTests: XCTestCase {
         return url
     }
 
+    func testPhaseIgnoresDownloadProgressPayload() {
+        // Views observe `phase` so a 670 MB download does not trigger a readiness probe per event.
+        var early = ModelDownloadProgress()
+        early.overallFraction = 0.1
+        var late = ModelDownloadProgress()
+        late.overallFraction = 0.9
+        XCTAssertNotEqual(ModelProvisionState.downloading(early), ModelProvisionState.downloading(late))
+        XCTAssertEqual(ModelProvisionState.downloading(early).phase, ModelProvisionState.downloading(late).phase)
+
+        XCTAssertEqual(ModelProvisionState.failed("a").phase, ModelProvisionState.failed("b").phase)
+        XCTAssertNotEqual(ModelProvisionState.downloading(early).phase, ModelProvisionState.installed.phase)
+        XCTAssertNotEqual(ModelProvisionState.installed.phase, ModelProvisionState.failed("x").phase)
+    }
+
     @MainActor
     func testBootstrapExceptionPublishesFailureAndRetryStartsFreshTask() async {
         var attempts = 0

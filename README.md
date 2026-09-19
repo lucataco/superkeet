@@ -8,9 +8,10 @@ All transcription runs on-device through NVIDIA's Parakeet TDT 0.6B model via ON
 
 This repo is still in active development. The app now favors a simpler setup-first flow over a dashboard-style UI:
 
+- Four-step onboarding: welcome, permissions, output mode, ready
 - Setup checks for engine, microphone, runtime directory, and input devices
 - Two shortcuts are supported: toggle recording and push-to-talk
-- Clipboard-first output is the default
+- Clipboard output is always on
 - Auto-paste is still available, but treated as an advanced option
 - Saved history is opt-in for privacy
 - Aggregate usage stats store counts and durations only, never transcribed text
@@ -132,9 +133,9 @@ swift build -c release
 
 ### First launch behavior
 
-On first launch, Superkeet downloads the on-device speech model (~670 MB, INT8) once via the bundled engine's `parakeet download --progress json`. Onboarding shows a live progress step for this download, and the daemon start path provisions the model automatically if it is still missing (for example, if onboarding was skipped). The model is stored at `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3/` and verified by SHA-256, so subsequent launches reuse it and require no network.
+On first launch, Superkeet downloads the on-device speech model (~670 MB, INT8) once via the bundled engine's `parakeet download --progress json`. The download starts on the first onboarding screen and shows its progress in a footer bar while you grant permissions and pick an output mode, and the daemon start path provisions the model automatically if it is still missing (for example, if onboarding was skipped). The model is stored at `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3/` and verified by SHA-256, so subsequent launches reuse it and require no network.
 
-After the model is present, Superkeet starts the bundled Parakeet daemon in the background and waits for it to finish loading instead of failing after a fixed delay. If startup fails, the Setup tab shows the latest diagnostics and daemon stderr excerpt, and the Speech Model check offers a retry/re-download.
+After the model is present, Superkeet starts the bundled Parakeet daemon in the background and waits for it to finish loading instead of failing after a fixed delay. If startup fails, the General tab shows the latest diagnostics and daemon stderr excerpt, and the Speech Model check offers a retry/re-download.
 
 ## Usage
 
@@ -149,10 +150,12 @@ Click the menu bar icon to:
 - Open Settings
 - Quit the app
 
-For dictation, the icon turns red while recording. After stop, the menu bar shows “Transcribing”
-until success, no speech, a partial transcript, or failure is reported. A new
-recording waits for that completion. Recovery and text-processing settings live
-in Output & Privacy. See [transcription preservation](docs/transcription-preservation.md)
+For dictation, the icon turns red while recording and orange while transcribing.
+The recording overlay stays up through “Transcribing…” and then flashes the
+result — Copied, Pasted, Partial transcript, No speech, or Failed — before
+hiding. A new recording waits for that completion. Escape cancels without
+restarting the engine. Recovery and text-processing settings live in
+Output & Privacy. See [transcription preservation](docs/transcription-preservation.md)
 for command grammar, audio regression results and release dependencies.
 
 In Actions Mode, a blue waveform and “Listening…” status indicate live command
@@ -170,28 +173,35 @@ Superkeet supports three configurable shortcuts:
   enabled)
 
 Shortcut configuration lives in `Settings > General`. Escape cancels a recording
-or an in-flight action and clears queued commands.
+or an in-flight action and clears queued commands. Shortcuts are handled on a
+dedicated thread so a busy settings window never delays typing in other apps.
 
 ### Settings
 
-The settings window currently has five tabs:
+The settings window has five tabs (Actions is hidden on macOS versions that
+cannot run it):
 
 - General
-  - readiness checks
+  - usage stats, appearance, launch at login
+  - setup checklist and status
   - shortcut configuration
-  - daemon diagnostics
+  - recording feedback: overlay style and sound cues
+  - engine diagnostics
 - Output & Privacy
-  - overlay style
-  - clipboard and auto-paste behavior
-  - local history retention
+  - filler-word removal and spoken corrections
+  - auto-paste (every transcript is always copied to the clipboard)
+  - local history and usage-stat retention
+  - last transcript recovery
 - Actions
   - Actions Mode enablement and on-device model availability
   - MCP server management (add, edit, test, reconnect)
-  - approval policy (including **Don't Ask**), step budget, timeout, and the local action log
+  - approval policy (including **Don't Ask**) and the local action log
 - Advanced
-  - audio device selection
+  - audio device selection (the engine restarts automatically on change)
+  - app-scoped phrase replacements
   - model directory override
-  - idle daemon timeout
+  - idle engine shutdown
+  - Actions Mode step budget, tool timeout, and command deadline
 - About
   - version and credits
 
@@ -202,11 +212,16 @@ known limitations.
 
 Current defaults:
 
-- Copy to Clipboard: on
+- Copy to Clipboard: always
 - Paste Automatically: off
 - Save History: off
 
-This keeps the default flow safer and simpler. Auto-paste is available, but it depends on Accessibility access and can paste into the wrong place if focus changes. History is opt-in and remains local to the Mac.
+Every transcript is copied to the clipboard, so no combination of settings can
+strand text inside the app. Auto-paste is available, but it depends on
+Accessibility access and can paste into the wrong place if focus changes; when
+it is on you can choose whether the transcript stays on the clipboard afterwards
+or your previous clipboard is restored. History is opt-in and remains local to
+the Mac.
 
 ## Runtime paths
 
@@ -292,7 +307,7 @@ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
 ### App says `Failed to start Parakeet`
 
-Open `Settings > Setup` and check:
+Open `Settings > General` and check the Setup Checklist and Diagnostics:
 
 - Speech engine path
 - Runtime directory status
