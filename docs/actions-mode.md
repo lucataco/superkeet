@@ -17,8 +17,10 @@ normal recording still goes straight to the clipboard.
 | Apple Intelligence enabled | Supplies the on-device language model that plans tool calls |
 | MCP servers for additional capabilities | Provide tools beyond the built-in app/URL opening tools |
 
-If Apple Intelligence is unavailable, the Actions settings tab and onboarding
-step explain the issue and the rest of the app continues to work normally.
+Actions Mode is enabled from Settings > Actions after onboarding. If Apple
+Intelligence is turned off, that tab explains how to enable it; on macOS
+versions that cannot run it, the tab is hidden and the rest of the app works
+normally.
 
 ## How it works
 

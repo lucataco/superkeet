@@ -17,19 +17,16 @@ struct OnboardingView: View {
 
     var onComplete: () -> Void
 
+    /// Four screens. The model download runs in the background from the first screen and is shown
+    /// as a footer progress bar rather than a step; Actions Mode is configured later in Settings.
     private enum OnboardingStep: Int, CaseIterable {
         case welcome
-        case microphone
-        case model
-        case accessibility
+        case permissions
         case output
-        case actions
         case ready
     }
 
-    private var visibleSteps: [OnboardingStep] {
-        OnboardingStep.allCases.filter { $0 != .actions || actionsFeatureAvailable }
-    }
+    private var visibleSteps: [OnboardingStep] { OnboardingStep.allCases }
 
     private func step(after step: OnboardingStep) -> OnboardingStep? {
         guard let index = visibleSteps.firstIndex(of: step), index + 1 < visibleSteps.count else { return nil }
@@ -39,10 +36,6 @@ struct OnboardingView: View {
     private func step(before step: OnboardingStep) -> OnboardingStep? {
         guard let index = visibleSteps.firstIndex(of: step), index > 0 else { return nil }
         return visibleSteps[index - 1]
-    }
-
-    private var actionsFeatureAvailable: Bool {
-        AppleIntelligenceAvailability.osSupportsActionsMode
     }
 
     private enum OnboardingOutputMode {
@@ -55,15 +48,16 @@ struct OnboardingView: View {
             Group {
                 switch currentStep {
                 case .welcome: welcomeStep
-                case .microphone: microphoneStep
-                case .model: modelStep
-                case .accessibility: accessibilityStep
+                case .permissions: permissionsStep
                 case .output: outputStep
-                case .actions: actionsStep
                 case .ready: readyStep
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if currentStep != .welcome, !modelProvisioning.state.isInstalled {
+                modelDownloadBar
+            }
 
             Divider()
 
@@ -108,11 +102,8 @@ struct OnboardingView: View {
             modelProvisioning.startDownloadIfNeeded()
         }
         .onChange(of: currentStep) {
-            if currentStep == .model {
-                // Idempotent while a download is in flight; acts as a retry if an earlier attempt failed.
-                modelProvisioning.startDownloadIfNeeded()
-            }
-            if currentStep == .accessibility {
+            if currentStep == .permissions {
+                requestPermissionsInSequence()
                 startAccessibilityPolling()
             } else {
                 stopAccessibilityPolling()
@@ -160,7 +151,7 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Text("First-time setup downloads the on-device speech model (about 670 MB), then Superkeet runs completely offline.")
+            Text("Superkeet is downloading its on-device speech model (about 670 MB) in the background. After that it runs completely offline.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -206,191 +197,174 @@ struct OnboardingView: View {
         currentStep = previous
     }
 
-    private var microphoneStep: some View {
+    private var permissionsStep: some View {
         VStack(spacing: 0) {
             Spacer()
 
             VStack(spacing: 24) {
-                ZStack {
-                    Circle()
-                        .fill(microphoneGranted ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
-                        .frame(width: 80, height: 80)
-                    Image(systemName: microphoneGranted ? "checkmark.circle.fill" : "mic.circle.fill")
-                        .font(.system(size: 44))
-                        .foregroundColor(microphoneGranted ? .green : .blue)
-                }
-
                 VStack(spacing: 8) {
-                    Text("Microphone Access")
+                    Text("Two Permissions")
                         .font(.title)
                         .fontWeight(.bold)
 
-                    Text("Superkeet needs your microphone to hear\nand transcribe your voice.")
+                    Text("Microphone so Superkeet can hear you. Accessibility so your\nshortcuts work in every app and pasting can be automatic.")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
 
-                if microphoneGranted {
-                    statusPill(text: "Microphone access granted", tint: .green)
-                } else if microphoneAccessDenied {
-                    VStack(spacing: 12) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
-                            Text("Microphone access was denied")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.primary)
-                        }
+                VStack(spacing: 12) {
+                    microphonePermissionCard
+                    accessibilityPermissionCard
+                }
+                .frame(maxWidth: 440)
+            }
 
-                        Text("You can enable it in System Settings:")
+            Spacer()
+
+            Text("Audio never leaves your Mac. Accessibility is only used to listen for your shortcuts and send ⌘V.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 8)
+        }
+        .padding(24)
+    }
+
+    private var microphonePermissionCard: some View {
+        permissionCard(
+            icon: "mic.fill",
+            title: "Microphone",
+            granted: microphoneGranted,
+            grantedText: "Access granted"
+        ) {
+            if microphoneAccessDenied {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Access was denied. Turn it on for Superkeet in System Settings.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Button("Open Microphone Settings") { openMicrophoneSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            } else {
+                Button("Grant Microphone Access") { requestMicrophoneAccess() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private var accessibilityPermissionCard: some View {
+        permissionCard(
+            icon: "lock.shield.fill",
+            title: "Accessibility",
+            granted: accessibilityGranted,
+            grantedText: "Shortcuts and automatic paste enabled"
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("In System Settings, find **Superkeet** in the Accessibility list and turn it on. This screen updates automatically.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                HStack(spacing: 10) {
+                    Button("Open System Settings") { openAccessibilitySettings() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Waiting…")
                             .font(.caption)
                             .foregroundColor(.secondary)
-
-                        Button {
-                            openMicrophoneSettings()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "gear")
-                                Text("Open Microphone Settings")
-                            }
-                        }
-                        .buttonStyle(.bordered)
                     }
-                    .padding(16)
-                    .background(Color.orange.opacity(0.06))
-                    .cornerRadius(10)
-                } else {
-                    Button {
-                        requestMicrophoneAccess()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "mic.fill")
-                            Text("Grant Microphone Access")
-                        }
-                        .frame(minWidth: 200)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
                 }
-            }
-
-            Spacer()
-
-            Text("Audio never leaves your Mac. All processing happens locally.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.bottom, 8)
-        }
-        .padding(24)
-    }
-
-    private var modelStep: some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            VStack(spacing: 24) {
-                ZStack {
-                    Circle()
-                        .fill(modelStepIconBackground)
-                        .frame(width: 80, height: 80)
-                    Image(systemName: modelStepIconName)
-                        .font(.system(size: 44))
-                        .foregroundColor(modelStepIconColor)
-                }
-
-                VStack(spacing: 8) {
-                    Text(modelStepTitle)
-                        .font(.title)
-                        .fontWeight(.bold)
-
-                    Text(modelStepSubtitle)
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                modelStepStatusContent
-                    .frame(maxWidth: 340)
-            }
-
-            Spacer()
-
-            Text("The model runs entirely on your Mac. This download happens only once.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.bottom, 8)
-        }
-        .padding(24)
-    }
-
-    @ViewBuilder
-    private var modelStepStatusContent: some View {
-        switch modelProvisioning.state {
-        case .installed:
-            statusPill(text: "Speech model ready", tint: .green)
-
-        case .downloading(let progress):
-            VStack(spacing: 12) {
-                ProgressView(value: progress.overallFraction)
-                    .progressViewStyle(.linear)
-
-                HStack {
-                    Text("Downloading \(progress.currentFileName)")
-                    Spacer()
-                    Text("\(Int((progress.overallFraction * 100).rounded()))%")
-                        .monospacedDigit()
-                }
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-                Text(modelStepDetailLine(progress))
+                Text("You can skip this, but shortcuts won't work until it's granted. Recording from the menu bar still works.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-        case .failed(let message):
-            VStack(spacing: 12) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(message)
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Button {
-                    modelProvisioning.startDownloadIfNeeded()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Try Again")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .padding(14)
-            .background(Color.orange.opacity(0.06))
-            .cornerRadius(10)
-
-        case .verifying:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Verifying download…")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-        case .checking, .notInstalled, .unknown:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Preparing download…")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
         }
+    }
+
+    private func permissionCard<Pending: View>(
+        icon: String,
+        title: String,
+        granted: Bool,
+        grantedText: String,
+        @ViewBuilder pending: () -> Pending
+    ) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(granted ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
+                    .frame(width: 40, height: 40)
+                Image(systemName: granted ? "checkmark" : icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(granted ? .green : .blue)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                if granted {
+                    Text(grantedText)
+                        .font(.caption)
+                        .foregroundColor(.green)
+                } else {
+                    pending()
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03))
+        .cornerRadius(10)
+    }
+
+    /// Compact download status shown beneath every step after Welcome until the model is in place.
+    @ViewBuilder
+    private var modelDownloadBar: some View {
+        HStack(spacing: 10) {
+            switch modelProvisioning.state {
+            case .downloading(let progress):
+                ProgressView(value: progress.overallFraction)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: 220)
+                Text("Downloading speech model · \(Int((progress.overallFraction * 100).rounded()))% · \(modelStepDetailLine(progress))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            case .failed(let message):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                Button("Try Again") { modelProvisioning.startDownloadIfNeeded() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            case .verifying:
+                ProgressView().controlSize(.small)
+                Text("Verifying speech model…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 0)
+            case .checking, .notInstalled, .unknown:
+                ProgressView().controlSize(.small)
+                Text("Preparing speech model download (about 670 MB, one time)…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 0)
+            case .installed:
+                EmptyView()
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.03))
     }
 
     private func modelStepDetailLine(_ progress: ModelDownloadProgress) -> String {
@@ -401,151 +375,12 @@ struct OnboardingView: View {
         return "\(downloaded) of \(total) · \(filePosition)"
     }
 
-    private var modelStepTitle: String {
-        switch modelProvisioning.state {
-        case .installed: return "Speech Model Ready"
-        case .failed: return "Download Needs Attention"
-        default: return "Setting Up the Speech Engine"
-        }
-    }
-
-    private var modelStepSubtitle: String {
-        switch modelProvisioning.state {
-        case .installed:
-            return "Everything you need to transcribe now lives on your Mac."
-        case .failed:
-            return "Superkeet needs the on-device speech model before it can transcribe. You can retry now or later from Settings."
-        default:
-            return "Downloading the local speech model (about 670 MB).\nThis runs once — then transcription is fully offline."
-        }
-    }
-
-    private var modelStepIconName: String {
-        switch modelProvisioning.state {
-        case .installed: return "checkmark.circle.fill"
-        case .failed: return "exclamationmark.triangle.fill"
-        default: return "arrow.down.circle.fill"
-        }
-    }
-
-    private var modelStepIconColor: Color {
-        switch modelProvisioning.state {
-        case .installed: return .green
-        case .failed: return .orange
-        default: return .blue
-        }
-    }
-
-    private var modelStepIconBackground: Color {
-        switch modelProvisioning.state {
-        case .installed: return Color.green.opacity(0.12)
-        case .failed: return Color.orange.opacity(0.12)
-        default: return Color.blue.opacity(0.12)
-        }
-    }
-
     private static let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
         formatter.countStyle = .file
         return formatter
     }()
-
-    private var accessibilityStep: some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            VStack(spacing: 24) {
-                ZStack {
-                    Circle()
-                        .fill(accessibilityGranted ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
-                        .frame(width: 80, height: 80)
-                    Image(systemName: accessibilityGranted ? "checkmark.circle.fill" : "lock.shield.fill")
-                        .font(.system(size: 44))
-                        .foregroundColor(accessibilityGranted ? .green : .blue)
-                }
-
-                VStack(spacing: 8) {
-                    Text(accessibilityGranted ? "Accessibility Enabled" : "Authorize Superkeet")
-                        .font(.title)
-                        .fontWeight(.bold)
-
-                    Text(accessibilityGranted
-                        ? "Superkeet can now use global keyboard shortcuts\nand automatically paste transcribed text."
-                        : "Superkeet needs Accessibility permission to listen\nfor keyboard shortcuts and auto-paste text.")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                if accessibilityGranted {
-                    statusPill(text: "Accessibility access granted", tint: .green)
-                } else {
-                    VStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            instructionRow(number: "1", text: "Click \"Open System Settings\" below")
-                            instructionRow(number: "2", text: "Find **Superkeet** in the list")
-                            instructionRow(number: "3", text: "Toggle the switch to enable it")
-                        }
-                        .padding(.horizontal, 8)
-
-                        Button {
-                            openAccessibilitySettings()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "gear")
-                                Text("Open System Settings")
-                            }
-                            .frame(minWidth: 200)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Waiting for permission...")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-            }
-
-            Spacer()
-
-            if !accessibilityGranted {
-                VStack(spacing: 4) {
-                    Text("You can skip this step, but global hotkeys and auto-paste won't work.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("You can grant access later from the menu bar icon.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.bottom, 8)
-            }
-        }
-        .padding(24)
-        .onAppear {
-            triggerAccessibilityPromptIfNeeded()
-        }
-    }
-
-    private func instructionRow(number: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(number)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-                .frame(width: 22, height: 22)
-                .background(Color.accentColor)
-                .clipShape(Circle())
-
-            Text(LocalizedStringKey(text))
-                .font(.system(size: 13))
-                .foregroundColor(.primary)
-        }
-    }
 
     private var outputStep: some View {
         VStack(spacing: 0) {
@@ -614,77 +449,6 @@ struct OnboardingView: View {
                 .padding(.bottom, 8)
         }
         .padding(24)
-    }
-
-    private var actionsStep: some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            VStack(spacing: 24) {
-                ZStack {
-                    Circle()
-                        .fill(Color.purple.opacity(0.12))
-                        .frame(width: 80, height: 80)
-                    Image(systemName: "wand.and.stars")
-                        .font(.system(size: 40))
-                        .foregroundColor(.purple)
-                }
-
-                VStack(spacing: 8) {
-                    Text("Actions Mode (Optional)")
-                        .font(.title)
-                        .fontWeight(.bold)
-
-                    Text("Speak a task and let Superkeet plan and run tools from local MCP servers — with your approval before anything changes.")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle(isOn: $settings.actionsEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Enable Actions Mode")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("Adds a Run an Action shortcut alongside dictation")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .disabled(!AppleIntelligenceAvailability.current.isAvailable)
-
-                    availabilityNote
-                }
-                .padding(14)
-                .background(Color.primary.opacity(0.03))
-                .cornerRadius(10)
-                .frame(maxWidth: 440)
-            }
-
-            Spacer()
-
-            Text("Actions Mode keeps reasoning on-device with Apple Intelligence. Configure MCP servers later in Settings > Actions.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 8)
-        }
-        .padding(24)
-    }
-
-    @ViewBuilder
-    private var availabilityNote: some View {
-        let availability = AppleIntelligenceAvailability.current
-        if !availability.isAvailable {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                Text(availability.detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
     }
 
     private var readyStep: some View {
@@ -760,23 +524,6 @@ struct OnboardingView: View {
                     }
                     .padding(12)
                     .background(Color.orange.opacity(0.08))
-                    .cornerRadius(10)
-                }
-
-                if modelProvisioning.state.isBusy {
-                    HStack(alignment: .center, spacing: 10) {
-                        ProgressView()
-                            .controlSize(.small)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Finishing speech model download")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("You can start using Superkeet as soon as this completes.")
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.blue.opacity(0.06))
                     .cornerRadius(10)
                 }
 
@@ -947,6 +694,21 @@ struct OnboardingView: View {
                 microphoneGranted = granted
                 readiness = AppReadiness.current()
             }
+        }
+    }
+
+    /// Show the system prompts one at a time: microphone first (if never asked), then Accessibility.
+    private func requestPermissionsInSequence() {
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    microphoneGranted = granted
+                    readiness = AppReadiness.current()
+                    triggerAccessibilityPromptIfNeeded()
+                }
+            }
+        } else {
+            triggerAccessibilityPromptIfNeeded()
         }
     }
 
