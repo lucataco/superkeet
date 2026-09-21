@@ -31,7 +31,7 @@ enum ActionApprovalPolicy: String, CaseIterable, Identifiable {
         switch self {
         case .alwaysAsk: return "Ask Before Every Tool"
         case .readOnlyAuto: return "Only Ask Before Changes"
-        case .autoApprove: return "Don't Ask"
+        case .autoApprove: return "Just Do It (YOLO)"
         }
     }
 
@@ -42,7 +42,7 @@ enum ActionApprovalPolicy: String, CaseIterable, Identifiable {
         case .readOnlyAuto:
             return "Run read-only tools automatically; confirm anything that changes state."
         case .autoApprove:
-            return "Run everything without asking, except destructive tools."
+            return "Run everything without asking. Only destructive tools still confirm."
         }
     }
 

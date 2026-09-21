@@ -114,6 +114,16 @@ final class CommandPlanTests: XCTestCase {
         XCTAssertTrue(context.instructions(for: "x").contains("its window is on screen"))
     }
 
+    func testMarkingAWindowReadyKeepsTheCurrentAppOrder() {
+        var context = ActionPlanContext(command: "c")
+        context.recordOpened(NativeLaunchedApp(name: "Chrome", bundleIdentifier: nil, processIdentifier: 1, windowReady: false))
+        context.recordOpened(NativeLaunchedApp(name: "Notes", bundleIdentifier: nil, processIdentifier: 2, windowReady: true))
+        context.markWindowReady(processIdentifier: 1)
+        XCTAssertEqual(context.openedApps.map(\.name), ["Chrome", "Notes"])
+        XCTAssertEqual(context.openedApps.map(\.windowReady), [true, true])
+        XCTAssertEqual(context.currentApp?.name, "Notes")
+    }
+
     func testLongStepSummariesAreClippedInInstructions() {
         var context = ActionPlanContext(command: "c")
         context.stepCount = 2

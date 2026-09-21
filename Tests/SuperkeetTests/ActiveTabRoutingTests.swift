@@ -68,6 +68,8 @@ final class ActiveTabRoutingTests: XCTestCase {
 
     func testUnscopedOpenKeepsExistingRouting() throws {
         let tools = NativeOpenAction.tools + ActiveTabToolFixture.chrome() + (try CuaToolRankingFixture.tools())
-        XCTAssertEqual(ActionToolFilter.filtering(tools, task: "Open Chrome and go to example.com"), tools)
+        let useful = tools.filter { !ActionToolFilter.housekeepingNames.contains($0.toolName) }
+        XCTAssertEqual(ActionToolFilter.filtering(tools, task: "Open Chrome and go to example.com"), useful)
+        XCTAssertLessThan(useful.count, tools.count, "Cua Driver's housekeeping tools are withheld from every plan.")
     }
 }

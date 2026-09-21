@@ -4,6 +4,8 @@ enum CommandTranscriptDelivery: Equatable {
     case dictation
     case command(String)
     case empty
+    /// Speech that was only a reaction ("Great. Okay, thanks."): nothing to run, nothing to report.
+    case ignored
     case failure(String)
 
     static func decide(
@@ -18,6 +20,7 @@ enum CommandTranscriptDelivery: Equatable {
         let raw = event.text ?? ""
         guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .empty }
         let corrected = TranscriptTextProcessor.replacePhrases(raw, rules: replacements, bundleID: bundleID)
+        guard !CommandLeadIn.isAcknowledgement(corrected) else { return .ignored }
         return .command(corrected)
     }
 }

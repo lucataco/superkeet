@@ -50,7 +50,7 @@ struct SpeculativeIntentDetector {
     private(set) var commit: SpeculativeCommit?
     private(set) var disagreement = false
 
-    init(environment: Environment, stabilityThreshold: Int = 2) {
+    init(environment: Environment, stabilityThreshold: Int = 1) {
         self.environment = environment
         self.stabilityThreshold = max(1, stabilityThreshold)
     }
@@ -124,26 +124,19 @@ struct SpeculativeIntentDetector {
         let containsURL: Bool
     }
 
-    private static let fillers = try? NSRegularExpression(
-        pattern: #"\A(?:(?:hey|hi|ok|okay|please|um|uh|so|now|just|superkeet|can you|could you|would you|will you)\b[,\s]*)+"#,
-        options: .caseInsensitive
-    )
     private static let verb = try? NSRegularExpression(
-        pattern: #"\A(open(?:\s+up)?|launch|switch(?:\s+over)?\s+to|activate|bring\s+up|go\s+to)\b\s*(.*)\z"#,
+        pattern: #"\A(open(?:\s+up)?|launch|pull\s+up|fire\s+up|start|show\s+me|switch(?:\s+over)?\s+to|activate|bring\s+up|go\s+to)\b\s*(.*)\z"#,
         options: [.caseInsensitive, .dotMatchesLineSeparators]
     )
+    private static let launchVerbs: Set<String> = ["open", "open up", "launch", "pull up", "fire up", "start", "show me"]
     private static let boundary = try? NSRegularExpression(
-        pattern: #"\b(?:and\s+then|and|then|to|so)\b|[,;:\n]|\.(?=\s|\z)"#,
+        pattern: #"\b(?:and\s+then|and|then|to|so)\b|[,;:\n]|[.?!](?=\s|\z)"#,
         options: .caseInsensitive
     )
 
     static func leadingClause(in text: String) -> Clause? {
-        guard let fillers, let verbRegex = verb, let boundary else { return nil }
-        var working = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if let match = fillers.firstMatch(in: working, range: NSRange(working.startIndex..., in: working)),
-           let range = Range(match.range, in: working) {
-            working.removeSubrange(range)
-        }
+        guard let verbRegex = verb, let boundary else { return nil }
+        let working = SpokenURL.normalize(CommandLeadIn.strip(text.lowercased()))
         guard let match = verbRegex.firstMatch(in: working, range: NSRange(working.startIndex..., in: working)),
               let verbRange = Range(match.range(at: 1), in: working),
               let restRange = Range(match.range(at: 2), in: working) else { return nil }
@@ -157,7 +150,7 @@ struct SpeculativeIntentDetector {
             candidate = String(rest[..<stopRange.lowerBound])
             hasBoundary = true
         }
-        candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        candidate = CommandLeadIn.stripTrailing(candidate.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)))
         guard !candidate.isEmpty else { return nil }
 
         let tokens = candidate.split(whereSeparator: \.isWhitespace).map { NativeOpenAction.spokenURLToken(String($0)) }
@@ -165,7 +158,7 @@ struct SpeculativeIntentDetector {
             guard !token.hasSuffix(".app") else { return false }
             return token.hasPrefix("http://") || token.hasPrefix("https://") || ActionArgumentNormalizer.normalizedURL(token) != nil
         }
-        let verb: Clause.Verb = ["open", "open up", "launch"].contains(verbText) ? .open : .switchTo
+        let verb: Clause.Verb = launchVerbs.contains(verbText) ? .open : .switchTo
         return Clause(verb: verb, candidate: candidate, text: "\(verbText) \(candidate)", hasBoundary: hasBoundary, containsURL: containsURL)
     }
 
@@ -182,11 +175,13 @@ struct SpeculativeIntentDetector {
         }
     }
 
+    /// Another installed app whose name extends the spoken one ("Safari" while "Safari Technology
+    /// Preview" is installed, "Note" while "Notes" is) means the recogniser may still be mid-word,
+    /// so a stable sighting alone is not enough to launch.
     private mutating func isAmbiguous(_ app: SpeculativeApp) -> Bool {
         let names = cachedNames ?? environment.installedNames().map(AppResolver.normalizedName)
         cachedNames = names
         let own = AppResolver.normalizedName(app.name)
-        let prefix = app.spokenName + " "
-        return names.contains { $0 != app.spokenName && $0 != own && $0.hasPrefix(prefix) }
+        return names.contains { $0 != app.spokenName && $0 != own && $0.hasPrefix(app.spokenName) }
     }
 }

@@ -22,6 +22,17 @@ enum NativeOpenAction: Equatable, Sendable {
     case openApp(name: String)
     case openURL(url: URL, browser: String?)
     case pressShortcut(app: String, shortcut: KeyboardShortcut)
+    case typeText(app: String, text: String)
+
+    static let maximumTypedCharacters = 4_000
+    static let maximumAppNameWords = 6
+
+    /// Six words is already generous for an app name; anything longer is the rest of the
+    /// sentence, and resolving it would only waste a scan before the planner takes over.
+    static func isPlausibleAppName(_ name: String) -> Bool {
+        let words = AppResolver.normalizedName(name).split(whereSeparator: \.isWhitespace)
+        return !words.isEmpty && words.count <= maximumAppNameWords
+    }
 
     static let serverID = UUID(uuid: (0x53, 0x55, 0x50, 0x45, 0x52, 0x4b, 0x45, 0x45, 0x80, 0, 0, 0, 0, 0, 0, 1))
     static let tools = [
@@ -33,14 +44,35 @@ enum NativeOpenAction: Equatable, Sendable {
         """#),
         tool(name: "press_shortcut", title: "Press Shortcut", description: "Press a keyboard shortcut in a running app, e.g. keys [\"cmd\",\"n\"] for New or [\"cmd\",\"s\"] for Save. The app is brought to the front first.", schema: #"""
         {"type":"object","properties":{"app":{"type":"string","description":"Running app name, e.g. Notes."},"keys":{"type":"array","items":{"type":"string"},"description":"Modifiers then one key, e.g. [\"cmd\",\"shift\",\"z\"]. Keys: letters, digits, return, tab, space, delete, escape, arrows."}},"required":["app","keys"],"additionalProperties":false}
+        """#),
+        tool(name: "type_text", title: "Type Text", description: "Type text into a running app at its current insertion point, exactly as given. The app is brought to the front first.", schema: #"""
+        {"type":"object","properties":{"app":{"type":"string","description":"Running app name, e.g. Notes."},"text":{"type":"string","description":"The exact text to type. Use \n for a new line."}},"required":["app","text"],"additionalProperties":false}
         """#)
     ]
 
+    /// The tool this action runs as. Approval exemption is decided per action: opening an app or
+    /// URL never asks under the default policy, and neither do the harmless ⌘N / ⌘T shortcuts.
     var spec: ActionToolSpec {
+        var spec: ActionToolSpec
         switch self {
-        case .openApp: return Self.tools[0]
-        case .openURL: return Self.tools[1]
-        case .pressShortcut: return Self.tools[2]
+        case .openApp: spec = Self.tools[0]
+        case .openURL: spec = Self.tools[1]
+        case .pressShortcut: spec = Self.tools[2]
+        case .typeText: spec = Self.tools[3]
+        }
+        spec.approvalExempt = isApprovalExempt
+        return spec
+    }
+
+    /// Shortcuts that only create something new and can always be undone by closing it.
+    static let benignShortcuts: Set<KeyboardShortcut> = Set([["cmd", "n"], ["cmd", "t"]].compactMap { KeyboardShortcut(keys: $0) })
+
+    /// Typing the words the user just dictated into the app they named is what they asked for,
+    /// so like opening an app it runs without a card under the default policy.
+    var isApprovalExempt: Bool {
+        switch self {
+        case .openApp, .openURL, .typeText: return true
+        case .pressShortcut(_, let shortcut): return Self.benignShortcuts.contains(shortcut)
         }
     }
 
@@ -49,6 +81,7 @@ enum NativeOpenAction: Equatable, Sendable {
         case .openApp: return "open_app"
         case .openURL: return "open_url"
         case .pressShortcut: return "press_shortcut"
+        case .typeText: return "type_text"
         }
     }
 
@@ -61,6 +94,8 @@ enum NativeOpenAction: Equatable, Sendable {
             arguments = ["url": url.absoluteString].merging(browser.map { ["browser": $0] } ?? [:]) { _, new in new }
         case .pressShortcut(let app, let shortcut):
             arguments = ["app": app, "keys": shortcut.keys]
+        case .typeText(let app, let text):
+            arguments = ["app": app, "text": text]
         }
         let data = try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
         guard let json = String(data: data, encoding: .utf8) else {
@@ -76,6 +111,11 @@ enum NativeOpenAction: Equatable, Sendable {
             _ = try Self.webURL(url.absoluteString)
             if let browser { try Self.validateName(browser) }
         case .pressShortcut(let app, _): try Self.validateName(app)
+        case .typeText(let app, let text):
+            try Self.validateName(app)
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= Self.maximumTypedCharacters else {
+                throw NativeOpenActionError.invalidArguments("Provide the text to type (up to \(Self.maximumTypedCharacters) characters).")
+            }
         }
     }
 
@@ -107,10 +147,41 @@ enum NativeOpenAction: Equatable, Sendable {
                 throw NativeOpenActionError.invalidArguments("Unsupported key combination \(keys). Use modifiers such as cmd or shift plus one key.")
             }
             action = .pressShortcut(app: app, shortcut: shortcut)
+        case "type_text":
+            guard Set(object.keys) == ["app", "text"], let app = object["app"] as? String, let text = object["text"] as? String else {
+                throw NativeOpenActionError.invalidArguments("type_text requires an app name and the text to type.")
+            }
+            action = .typeText(app: app, text: text)
         default: throw NativeOpenActionError.invalidArguments("Unknown built-in open tool '\(toolName)'.")
         }
         try action.validate()
         return action
+    }
+
+    static let webSearchBase = "https://www.google.com/search"
+
+    static func luckySearchURL(for target: String) -> URL? {
+        let query = target.replacingOccurrences(of: #"\Athe\s+|\s+(?:website|site|page)\z"#, with: "", options: [.regularExpression, .caseInsensitive])
+        guard let url = webSearchURL(for: query), var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.queryItems?.append(URLQueryItem(name: "btnI", value: "1"))
+        return components.url
+    }
+
+    /// A search-engine URL for a spoken query; nil only when the query is empty.
+    static func webSearchURL(for query: String) -> URL? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var components = URLComponents(string: webSearchBase) else { return nil }
+        components.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+        return components.url
+    }
+
+    /// The query behind a search URL made by `webSearchURL(for:)`, for readable summaries.
+    static func webSearchQuery(from urlString: String) -> String? {
+        guard let components = URLComponents(string: urlString), let host = components.host?.lowercased(),
+              host == "www.google.com" || host == "google.com", components.path == "/search",
+              let query = components.queryItems?.first(where: { $0.name == "q" })?.value?.trimmingCharacters(in: .whitespaces),
+              !query.isEmpty else { return nil }
+        return query
     }
 
     static func fastPath(for intent: ActionIntent) -> Self? {
@@ -119,15 +190,29 @@ enum NativeOpenAction: Equatable, Sendable {
         switch intent.action {
         case .openApp:
             guard intent.app != nil, !CommandClauses.hasSequence(goal),
-                  let name = captures(#"\A(?:open|launch) (.+)\z"#, in: goal)?.first else { return nil }
+                  let captured = captures(#"\A(?:open(?: up)?|launch|pull up|fire up|start|show me) (.+)\z"#, in: goal)?.first else { return nil }
+            let name = CommandLeadIn.stripTrailing(captured)
+            guard isPlausibleAppName(name) else { return nil }
             return .openApp(name: name)
+        case .switchApp:
+            // Opening a running app brings it forward (and restores minimized windows), so a switch
+            // is just an open that happens to find the app already running.
+            guard intent.app != nil, !CommandClauses.hasSequence(goal),
+                  let captured = captures(#"\A(?:switch(?: over)? to|activate|bring up|go to) (.+)\z"#, in: goal)?.first else { return nil }
+            let name = CommandLeadIn.stripTrailing(captured)
+            guard isPlausibleAppName(name) else { return nil }
+            return .openApp(name: name)
+        case .webSearch:
+            guard let query = intent.query, !query.isEmpty, CommandClauses.split(goal).count <= 1,
+                  let url = webSearchURL(for: query) else { return nil }
+            return .openURL(url: url, browser: intent.browser)
         case .openURL:
             guard intent.url != nil else { return nil }
-            if let parts = captures(#"\Aopen (.+?) and go to (\S+)\z"#, in: goal),
+            if let parts = captures(#"\Aopen(?: up)? (.+?) and go to (\S+)\z"#, in: goal),
                !CommandClauses.hasSequence(parts[0]), let url = try? webURL(spokenURLToken(parts[1])) {
                 return .openURL(url: url, browser: parts[0])
             }
-            if let parts = captures(#"\A(?:open|go to) (\S+)(?: in (.+))?\z"#, in: goal),
+            if let parts = captures(#"\A(?:open(?: up)?|go to) (\S+)(?: in (.+))?\z"#, in: goal),
                let rawURL = parts.first, let url = try? webURL(spokenURLToken(rawURL)) {
                 let browser = parts.count > 1 ? parts[1] : nil
                 guard !CommandClauses.hasSequence(browser ?? "") else { return nil }
@@ -147,7 +232,9 @@ enum NativeOpenAction: Equatable, Sendable {
         guard HeuristicIntentExtractor.intent(for: goal).scope != .activeTab else { return false }
         return CommandClauses.split(goal).contains { clause in
             let intent = HeuristicIntentExtractor.intent(for: clause)
-            return (intent.scope == nil && [.openApp, .openURL].contains(intent.action)) || NativeAppRecipe.recipe(for: clause) != nil
+            return (intent.scope == nil && [.openApp, .switchApp, .openURL, .webSearch].contains(intent.action))
+                || NativeAppRecipe.recipe(for: clause) != nil
+                || NativeTypeRecipe.recipe(for: clause) != nil
         }
     }
 
@@ -183,7 +270,7 @@ enum NativeOpenAction: Equatable, Sendable {
     private static func tool(name: String, title: String, description: String, schema: String) -> ActionToolSpec {
         var spec = ActionToolSpec(descriptor: MCPToolDescriptor(serverID: serverID, serverName: "superkeet", name: name,
                                                               title: title, description: description, risk: .mutating, inputSchemaJSON: schema))
-        spec.approvalExempt = name == "open_app" || name == "open_url"
+        spec.approvalExempt = ["open_app", "open_url", "type_text"].contains(name)
         return spec
     }
 }

@@ -312,7 +312,18 @@ enum ActionToolFilter {
         filtering(tools, intent: HeuristicIntentExtractor.intent(for: task))
     }
 
+    /// Server housekeeping that a spoken command never needs. Offering these only invites the
+    /// model to call them (it asked Cua Driver to prompt for permissions mid-command).
+    static let housekeepingNames: Set<String> = [
+        "check_permissions", "check_for_update", "get_cursor_position", "get_screen_size", "health_report",
+        "get_config", "set_config", "install_ffmpeg", "start_recording", "stop_recording", "get_recording_state",
+        "replay_trajectory", "get_agent_cursor_state", "set_agent_cursor_enabled", "set_agent_cursor_motion",
+        "set_agent_cursor_theme", "start_session", "end_session", "get_session", "get_session_state", "list_sessions",
+        "escalate_session", "move_cursor", "clipboard_write", "kill_app", "zoom"
+    ]
+
     static func filtering(_ tools: [ActionToolSpec], intent: ActionIntent) -> [ActionToolSpec] {
+        let tools = tools.filter { !housekeepingNames.contains($0.toolName.lowercased()) }
         if intent.scope == .activeTab {
             guard ActionIntentPolicy.targetsActiveChromeTab(intent) else { return [] }
             let chrome = tools.filter { isChromeAutomation($0.serverName) }

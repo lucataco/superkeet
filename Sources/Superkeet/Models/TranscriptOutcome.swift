@@ -10,6 +10,8 @@ enum TranscriptOutcome: Equatable, Sendable {
     case noSpeech
     case failed
     case command
+    /// A command-mode take that was only a reaction ("Great, thanks."); nothing ran.
+    case ignored
 
     var label: String {
         switch self {
@@ -20,6 +22,7 @@ enum TranscriptOutcome: Equatable, Sendable {
         case .noSpeech: return "No speech detected"
         case .failed: return "Transcription failed"
         case .command: return "Working on it…"
+        case .ignored: return "Nothing to do"
         }
     }
 
@@ -31,6 +34,7 @@ enum TranscriptOutcome: Equatable, Sendable {
         case .noSpeech: return "mic.slash.fill"
         case .failed: return "xmark.octagon.fill"
         case .command: return "wand.and.stars"
+        case .ignored: return "ellipsis.circle"
         }
     }
 
@@ -41,7 +45,7 @@ enum TranscriptOutcome: Equatable, Sendable {
     var severity: Severity {
         switch self {
         case .copied, .pasted: return .success
-        case .done, .noSpeech, .command: return .neutral
+        case .done, .noSpeech, .command, .ignored: return .neutral
         case .partial: return .warning
         case .failed: return .failure
         }

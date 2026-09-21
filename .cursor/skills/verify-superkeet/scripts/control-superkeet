@@ -1,0 +1,738 @@
+#!/usr/bin/env bash
+# Drive the Superkeet macOS menu-bar app through Accessibility / System Events.
+# Invocation examples live in ../SKILL.md. This script is the harness.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+STATE_DIR="${SUPERKEET_VERIFY_STATE_DIR:-$ROOT/.run}"
+STATE_FILE="$STATE_DIR/state"
+ARTIFACT_ROOT="${SUPERKEET_VERIFY_ARTIFACTS:-$ROOT/artifacts}"
+PROCESS_NAME="Superkeet"
+BUNDLE_ID="com.superkeet.app"
+
+usage() {
+  cat <<'EOF'
+control-superkeet — drive Superkeet the way a user does
+
+  launch [--app PATH]     Start Superkeet only if nothing else owns the bundle
+  doctor                  Read-only health check for the instance this run started
+  menu open               Open the menu-bar extra
+  menu dump               Print menu item titles (opens the menu)
+  menu click <title>      Choose a menu item by exact title
+  windows                 List Superkeet windows (title, role, position, size)
+  exists --name <name>    Exit 0 if an AX element with that name exists
+  click --name <name>     Click a named AX element (walks the SwiftUI tree)
+  click --row <n>         Click outline row n (Settings sidebar: 1-based)
+  snapshot [--path FILE]  Dump the AX tree of Superkeet windows
+  screenshot [--path FILE] [--window TITLE]
+                          Capture a Superkeet window (or the first visible one)
+  close-window [--title T] Close a Superkeet window by title (or the front one)
+  quit                    Quit only the Superkeet process this run launched
+  cleanup                 Close verify-opened windows and quit if we launched
+
+Environment:
+  SUPERKEET_APP                 Bundle path override
+  SUPERKEET_VERIFY_STATE_DIR    Default: <skill>/.run
+  SUPERKEET_VERIFY_ARTIFACTS    Default: <skill>/artifacts
+EOF
+}
+
+die() { printf 'control-superkeet: %s\n' "$*" >&2; exit 1; }
+
+ensure_state_dir() { mkdir -p "$STATE_DIR"; }
+
+write_state() {
+  ensure_state_dir
+  cat >"$STATE_FILE" <<EOF
+RUN_ID=$1
+PID=$2
+BUNDLE=$3
+STARTED_AT=$4
+EOF
+}
+
+read_state() {
+  RUN_ID=""; PID=""; BUNDLE=""; STARTED_AT=""
+  if [[ -f "$STATE_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+  fi
+}
+
+bundle_candidates() {
+  local seen=()
+  local candidate
+  for candidate in "${SUPERKEET_APP:-}" "/Applications/Superkeet.app" "$HOME/Applications/Superkeet.app"; do
+    [[ -n "$candidate" ]] || continue
+    [[ -d "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+  done
+}
+
+resolve_bundle() {
+  local override="${1:-}"
+  if [[ -n "$override" ]]; then
+    [[ -d "$override" ]] || die "bundle not found: $override"
+    printf '%s\n' "$override"
+    return
+  fi
+  local first=""
+  while IFS= read -r candidate; do
+    first="$candidate"
+    break
+  done < <(bundle_candidates)
+  [[ -n "$first" ]] || die "no Superkeet.app found. Install with ./install.sh or set SUPERKEET_APP."
+  printf '%s\n' "$first"
+}
+
+bundle_version() {
+  local bundle="$1"
+  defaults read "$bundle/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || printf 'unknown'
+}
+
+live_pids() {
+  local out rc
+  set +e
+  out="$(pgrep -x "$PROCESS_NAME" 2>&1)"
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  if [[ $rc -eq 1 && -z "$out" ]]; then
+    return 0
+  fi
+  die "cannot list Superkeet processes (pgrep exit $rc: ${out:-no output}). Fail closed — do not launch."
+}
+
+pid_bundle() {
+  local pid="$1"
+  lsappinfo info -only bundlepath "pid=$pid" 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p' | head -n1
+}
+
+osascript_ok() {
+  osascript -l AppleScript "$@"
+}
+
+ax_process_exists() {
+  osascript_ok -e "tell application \"System Events\" to exists process \"$PROCESS_NAME\"" 2>/dev/null | grep -qi true
+}
+
+# Locate the status extra by AX description ("Superkeet" or "Superkeet: …").
+# Prints "<menuBarIndex> <itemIndex>".
+find_status_extra() {
+  osascript_ok <<'APPLESCRIPT'
+tell application "System Events"
+  tell process "Superkeet"
+    repeat with i from 1 to (count of menu bars)
+      repeat with itemN from 1 to (count of menu bar items of menu bar i)
+        set el to menu bar item itemN of menu bar i
+        set d to ""
+        try
+          set d to description of el
+        end try
+        set n to ""
+        try
+          set n to name of el
+        end try
+        if d starts with "Superkeet" or n is "Superkeet" then
+          return (i as text) & " " & (itemN as text)
+        end if
+      end repeat
+    end repeat
+  end tell
+end tell
+error "no Superkeet menu-bar extra"
+APPLESCRIPT
+}
+
+cmd_launch() {
+  local bundle_override=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app) bundle_override="${2:-}"; shift 2 ;;
+      *) die "unknown launch argument: $1" ;;
+    esac
+  done
+
+  read_state
+  local live
+  live="$(live_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+
+  if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+    printf 'already running under this verify run: pid=%s bundle=%s\n' "$PID" "${BUNDLE:-unknown}"
+    return 0
+  fi
+
+  if [[ -n "$live" ]]; then
+    die "Superkeet is already running (pid $live). This app shares UserDefaults ($BUNDLE_ID), the daemon socket, and the menu-bar extra. Refuse to drive a session this run did not start. Quit that instance, then launch again."
+  fi
+
+  local bundle
+  bundle="$(resolve_bundle "$bundle_override")"
+  local version
+  version="$(bundle_version "$bundle")"
+
+  local run_id
+  run_id="$(date +%Y%m%dT%H%M%S)-$$"
+  open "$bundle"
+
+  local pid=""
+  local i
+  for i in $(seq 1 40); do
+    pid="$(live_pids | head -n1 || true)"
+    if [[ -n "$pid" ]]; then
+      break
+    fi
+    sleep 0.25
+  done
+  [[ -n "$pid" ]] || die "launch timed out waiting for process $PROCESS_NAME"
+
+  for i in $(seq 1 40); do
+    if ax_process_exists; then
+      break
+    fi
+    sleep 0.25
+  done
+  ax_process_exists || die "System Events cannot see Superkeet. Grant Accessibility to the driving app (Cursor / Terminal), then re-run doctor."
+
+  write_state "$run_id" "$pid" "$bundle" "$(date +%Y-%m-%dT%H:%M:%S)"
+  printf 'launched pid=%s bundle=%s version=%s run=%s\n' "$pid" "$bundle" "$version" "$run_id"
+}
+
+cmd_doctor() {
+  read_state
+  local live
+  live="$(live_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+
+  if [[ -z "${PID:-}" || ! -f "$STATE_FILE" ]]; then
+    if [[ -n "$live" ]]; then
+      die "foreign Superkeet is running (pid $live) and this run did not start it. Do not drive it."
+    fi
+    die "no verify-owned Superkeet. Run: control-superkeet launch"
+  fi
+
+  if ! kill -0 "$PID" 2>/dev/null; then
+    die "recorded pid $PID is not live. Run cleanup, then launch."
+  fi
+
+  local extra
+  extra="$(live_pids | grep -v "^${PID}$" || true)"
+  if [[ -n "$extra" ]]; then
+    die "more than one Superkeet process is running (ours=$PID extras=$extra). Refuse to drive."
+  fi
+
+  local actual_bundle
+  actual_bundle="$(pid_bundle "$PID")"
+  if [[ -n "$actual_bundle" && -n "${BUNDLE:-}" && "$actual_bundle" != "$BUNDLE" ]]; then
+    die "pid $PID bundle $actual_bundle does not match launched $BUNDLE"
+  fi
+
+  ax_process_exists || die "System Events cannot see Superkeet. Grant Accessibility to the driving app."
+
+  local extra_loc menu_ok="no"
+  if extra_loc="$(find_status_extra)"; then
+    menu_ok="yes"
+  fi
+
+  local version
+  version="$(bundle_version "${BUNDLE:-/Applications/Superkeet.app}")"
+  local onboarding
+  onboarding="$(defaults read "$BUNDLE_ID" hasCompletedOnboarding 2>/dev/null || printf 'unknown')"
+
+  printf 'doctor ok\n'
+  printf '  pid: %s\n' "$PID"
+  printf '  bundle: %s\n' "${BUNDLE:-unknown}"
+  printf '  version: %s\n' "$version"
+  printf '  run: %s\n' "${RUN_ID:-unknown}"
+  printf '  ax: reachable\n'
+  printf '  menu-bar extra: %s (%s)\n' "$menu_ok" "${extra_loc:-missing}"
+  printf '  hasCompletedOnboarding: %s\n' "$onboarding"
+  if [[ "$menu_ok" != "yes" ]]; then
+    die "menu-bar extra is not visible. Look for an AX description that starts with Superkeet."
+  fi
+}
+
+require_owned() {
+  read_state
+  [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null || die "no verify-owned Superkeet. Run launch, then doctor."
+  ax_process_exists || die "System Events cannot see Superkeet."
+}
+
+cmd_menu_open() {
+  require_owned
+  local loc mb item
+  loc="$(find_status_extra)"
+  mb="${loc%% *}"
+  item="${loc##* }"
+  osascript_ok - "$mb" "$item" <<'APPLESCRIPT'
+on run argv
+  set mb to item 1 of argv as integer
+  set itemN to item 2 of argv as integer
+  tell application "System Events"
+    tell process "Superkeet"
+      click menu bar item itemN of menu bar mb
+    end tell
+  end tell
+end run
+APPLESCRIPT
+}
+
+cmd_menu_dump() {
+  require_owned
+  local loc mb item
+  loc="$(find_status_extra)"
+  mb="${loc%% *}"
+  item="${loc##* }"
+  osascript_ok - "$mb" "$item" <<'APPLESCRIPT'
+on run argv
+  set mb to item 1 of argv as integer
+  set itemN to item 2 of argv as integer
+  tell application "System Events"
+    tell process "Superkeet"
+      click menu bar item itemN of menu bar mb
+      delay 0.2
+      set titles to name of every menu item of menu 1 of menu bar item itemN of menu bar mb
+      set out to ""
+      repeat with t in titles
+        set label to t as text
+        if t is missing value or label is "missing value" then
+          set out to out & "(separator)" & linefeed
+        else
+          set out to out & label & linefeed
+        end if
+      end repeat
+      return out
+    end tell
+  end tell
+end run
+APPLESCRIPT
+}
+
+cmd_menu_click() {
+  require_owned
+  local title="${1:-}"
+  [[ -n "$title" ]] || die "menu click requires an exact item title"
+  local loc mb item
+  loc="$(find_status_extra)"
+  mb="${loc%% *}"
+  item="${loc##* }"
+  osascript_ok - "$title" "$mb" "$item" <<'APPLESCRIPT'
+on run argv
+  set itemTitle to item 1 of argv
+  set mb to item 2 of argv as integer
+  set itemN to item 3 of argv as integer
+  tell application "System Events"
+    tell process "Superkeet"
+      tell menu bar item itemN of menu bar mb
+        click
+        delay 0.2
+        click menu item itemTitle of menu 1
+      end tell
+    end tell
+  end tell
+end run
+APPLESCRIPT
+}
+
+cmd_windows() {
+  require_owned
+  osascript_ok <<'APPLESCRIPT'
+tell application "System Events"
+  tell process "Superkeet"
+    set out to ""
+    set n to count of windows
+    if n is 0 then return "(no windows)"
+    repeat with i from 1 to n
+      set w to window i
+      set t to name of w
+      if t is missing value then set t to ""
+      set r to role of w
+      set p to position of w
+      set s to size of w
+      set out to out & i & tab & t & tab & r & tab & (item 1 of p as text) & "," & (item 2 of p as text) & tab & (item 1 of s as text) & "x" & (item 2 of s as text) & linefeed
+    end repeat
+    return out
+  end tell
+end tell
+APPLESCRIPT
+}
+
+cmd_exists() {
+  require_owned
+  local name=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) name="${2:-}"; shift 2 ;;
+      *) die "unknown exists argument: $1" ;;
+    esac
+  done
+  [[ -n "$name" ]] || die "exists requires --name"
+  local result
+  result="$(osascript_ok - "$name" <<'APPLESCRIPT'
+on run argv
+  set target to item 1 of argv
+  tell application "System Events"
+    tell process "Superkeet"
+      if (count of windows) is 0 then return "no"
+      repeat with w in windows
+        try
+          if name of w is target then return "yes"
+        end try
+        if my namedExists(w, target, 8) then return "yes"
+      end repeat
+    end tell
+  end tell
+  return "no"
+end run
+
+on namedExists(el, target, depth)
+  if depth < 0 then return false
+  tell application "System Events"
+    try
+      if name of el is target then return true
+    end try
+    try
+      repeat with child in UI elements of el
+        if my namedExists(child, target, depth - 1) then return true
+      end repeat
+    end try
+  end tell
+  return false
+end namedExists
+APPLESCRIPT
+)"
+  printf '%s\n' "$result"
+  [[ "$result" == "yes" ]]
+}
+
+cmd_click() {
+  require_owned
+  local name="" row=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) name="${2:-}"; shift 2 ;;
+      --row) row="${2:-}"; shift 2 ;;
+      *) die "unknown click argument: $1" ;;
+    esac
+  done
+  if [[ -n "$row" ]]; then
+    osascript_ok - "$row" <<'APPLESCRIPT'
+on run argv
+  set rowIndex to item 1 of argv as integer
+  tell application "System Events"
+    tell process "Superkeet"
+      set frontmost to true
+      set contentsList to entire contents of window 1
+      repeat with el in contentsList
+        try
+          if role of el is "AXOutline" then
+            set r to row rowIndex of el
+            select r
+            click r
+            return "selected outline row " & rowIndex
+          end if
+        end try
+      end repeat
+      error "no outline in front window"
+    end tell
+  end tell
+end run
+APPLESCRIPT
+    return
+  fi
+  [[ -n "$name" ]] || die "click requires --name or --row"
+  osascript_ok - "$name" <<'APPLESCRIPT'
+on run argv
+  set target to item 1 of argv
+  tell application "System Events"
+    tell process "Superkeet"
+      set frontmost to true
+      delay 0.1
+      repeat with w in windows
+        set hit to my findNamed(w, target, 8)
+        if hit is not missing value then
+          click hit
+          return "clicked " & target
+        end if
+      end repeat
+      error "no element named " & target
+    end tell
+  end tell
+end run
+
+on findNamed(el, target, depth)
+  if depth < 0 then return missing value
+  tell application "System Events"
+    try
+      if name of el is target then return el
+    end try
+    try
+      repeat with child in UI elements of el
+        set hit to my findNamed(child, target, depth - 1)
+        if hit is not missing value then return hit
+      end repeat
+    end try
+  end tell
+  return missing value
+end findNamed
+APPLESCRIPT
+}
+
+dump_ax_tree() {
+  osascript_ok <<'APPLESCRIPT'
+on run
+  tell application "System Events"
+    tell process "Superkeet"
+      set out to "process Superkeet" & linefeed
+      set n to count of windows
+      if n is 0 then
+        set out to out & "  (no windows — menu-bar extra only)" & linefeed
+      end if
+      repeat with i from 1 to n
+        set w to window i
+        set t to name of w
+        if t is missing value then set t to ""
+        set out to out & "window[" & i & "] title=" & t & " role=" & (role of w) & linefeed
+        set out to out & my dumpEl(w, 1, 6)
+      end repeat
+      return out
+    end tell
+  end tell
+end run
+
+on dumpEl(el, indent, depth)
+  if depth < 0 then return ""
+  set pad to ""
+  repeat indent times
+    set pad to pad & "  "
+  end repeat
+  set acc to ""
+  tell application "System Events"
+    try
+      set kids to UI elements of el
+    on error
+      return ""
+    end try
+    repeat with child in kids
+      set cn to ""
+      try
+        set cn to name of child
+        if cn is missing value then set cn to ""
+      end try
+      set cr to ""
+      try
+        set cr to role of child
+      end try
+      set cv to ""
+      try
+        set cv to value of child as text
+        if cv is "missing value" then set cv to ""
+      end try
+      set acc to acc & pad & cr & " name=" & cn
+      if cv is not "" then set acc to acc & " value=" & cv
+      set acc to acc & linefeed
+      set acc to acc & my dumpEl(child, indent + 1, depth - 1)
+    end repeat
+  end tell
+  return acc
+end dumpEl
+APPLESCRIPT
+}
+
+cmd_snapshot() {
+  require_owned
+  local path=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --path) path="${2:-}"; shift 2 ;;
+      *) die "unknown snapshot argument: $1" ;;
+    esac
+  done
+  local tree
+  tree="$(dump_ax_tree)"
+  if [[ -n "$path" ]]; then
+    mkdir -p "$(dirname "$path")"
+    printf '%s\n' "$tree" >"$path"
+    printf 'wrote %s\n' "$path"
+  else
+    printf '%s\n' "$tree"
+  fi
+}
+
+window_rect() {
+  local title="${1:-}"
+  osascript_ok - "$title" <<'APPLESCRIPT'
+on run argv
+  set want to item 1 of argv
+  tell application "System Events"
+    tell process "Superkeet"
+      set frontmost to true
+      delay 0.1
+      set w to missing value
+      if want is not "" then
+        repeat with candidate in windows
+          set t to name of candidate
+          if t is missing value then set t to ""
+          if t is want then
+            set w to candidate
+            exit repeat
+          end if
+        end repeat
+      end if
+      if w is missing value then
+        if (count of windows) is 0 then error "no Superkeet windows"
+        set w to window 1
+      end if
+      set p to position of w
+      -- Off the current capture space (negative coords, other-space displays)
+      -- cannot be passed to screencapture -R. Park the window on-screen first.
+      if (item 1 of p) < 0 or (item 2 of p) < 0 then
+        set position of w to {120, 80}
+        delay 0.2
+        set p to position of w
+      end if
+      set s to size of w
+      return (item 1 of p as text) & "," & (item 2 of p as text) & "," & (item 1 of s as text) & "," & (item 2 of s as text)
+    end tell
+  end tell
+end run
+APPLESCRIPT
+}
+
+cmd_screenshot() {
+  require_owned
+  local path="" title=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --path) path="${2:-}"; shift 2 ;;
+      --window) title="${2:-}"; shift 2 ;;
+      *) die "unknown screenshot argument: $1" ;;
+    esac
+  done
+  [[ -n "$path" ]] || die "screenshot requires --path"
+  mkdir -p "$(dirname "$path")"
+  local rect
+  rect="$(window_rect "$title")"
+  screencapture -x -R "$rect" "$path"
+  [[ -f "$path" ]] || die "screencapture failed"
+  printf 'wrote %s rect=%s\n' "$path" "$rect"
+}
+
+cmd_close_window() {
+  require_owned
+  local title=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title) title="${2:-}"; shift 2 ;;
+      *) die "unknown close-window argument: $1" ;;
+    esac
+  done
+  osascript_ok - "$title" <<'APPLESCRIPT'
+on run argv
+  set want to item 1 of argv
+  tell application "System Events"
+    tell process "Superkeet"
+      if (count of windows) is 0 then return "no windows"
+      if want is not "" then
+        repeat with w in windows
+          set t to name of w
+          if t is missing value then set t to ""
+          if t is want then
+            try
+              click button 1 of w
+              return "closed " & want
+            end try
+            perform action "AXPress" of (first button of w)
+            return "closed " & want
+          end if
+        end repeat
+        error "no window titled " & want
+      end if
+      click button 1 of window 1
+      return "closed front window"
+    end tell
+  end tell
+end run
+APPLESCRIPT
+}
+
+cmd_quit() {
+  read_state
+  [[ -n "${PID:-}" ]] || die "no verify-owned Superkeet to quit"
+  if ! kill -0 "$PID" 2>/dev/null; then
+    rm -f "$STATE_FILE"
+    printf 'already exited pid=%s\n' "$PID"
+    return 0
+  fi
+  osascript_ok -e "tell application \"$PROCESS_NAME\" to quit" 2>/dev/null || true
+  local i
+  for i in $(seq 1 20); do
+    if ! kill -0 "$PID" 2>/dev/null; then
+      rm -f "$STATE_FILE"
+      printf 'quit pid=%s\n' "$PID"
+      return 0
+    fi
+    sleep 0.25
+  done
+  kill "$PID" 2>/dev/null || true
+  sleep 0.5
+  if kill -0 "$PID" 2>/dev/null; then
+    die "pid $PID did not exit. Not sending KILL; inspect it by pid."
+  fi
+  rm -f "$STATE_FILE"
+  printf 'quit pid=%s (SIGTERM)\n' "$PID"
+}
+
+cmd_cleanup() {
+  read_state
+  if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+    osascript_ok <<'APPLESCRIPT' 2>/dev/null || true
+tell application "System Events"
+  tell process "Superkeet"
+    repeat with w in windows
+      try
+        click button 1 of w
+      end try
+    end repeat
+  end tell
+end tell
+APPLESCRIPT
+    cmd_quit
+  else
+    rm -f "$STATE_FILE"
+    printf 'nothing to quit; state cleared\n'
+  fi
+  printf 'artifacts left in %s\n' "$ARTIFACT_ROOT"
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    ""|-h|--help) usage ;;
+    launch) cmd_launch "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    menu)
+      local sub="${1:-}"; shift || true
+      case "$sub" in
+        open) cmd_menu_open ;;
+        dump) cmd_menu_dump ;;
+        click) cmd_menu_click "${1:-}" ;;
+        *) die "menu commands: open | dump | click <title>" ;;
+      esac
+      ;;
+    windows) cmd_windows ;;
+    exists) cmd_exists "$@" ;;
+    click) cmd_click "$@" ;;
+    snapshot) cmd_snapshot "$@" ;;
+    screenshot) cmd_screenshot "$@" ;;
+    close-window) cmd_close_window "$@" ;;
+    quit) cmd_quit ;;
+    cleanup) cmd_cleanup ;;
+    *) die "unknown command: $cmd (see --help)" ;;
+  esac
+}
+
+main "$@"

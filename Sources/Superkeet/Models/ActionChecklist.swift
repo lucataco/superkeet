@@ -62,6 +62,14 @@ struct ActionChecklist: Equatable, Sendable {
         }
     }
 
+    mutating func addEarlyStep(_ result: SpeculativeStepResult) {
+        if result.succeeded {
+            items.append(.init(kind: .speculative, status: .done, title: "\(result.doneDescription) while you were speaking"))
+        } else if let failure = result.failure, failure != "cancelled" {
+            items.append(.init(kind: .speculative, status: .failed, title: "Couldn't \(result.lowercasedSummary) early", detail: failure))
+        }
+    }
+
     mutating func addStep(number: Int, total: Int, text: String) {
         items.append(.init(kind: .step(number: number, total: total), status: .running, title: text))
     }

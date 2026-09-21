@@ -1,15 +1,8 @@
 import Foundation
 
-enum MCPTransportKind: String, Codable, CaseIterable, Identifiable {
+/// Persisted on MCP server configs. Local stdio is the only transport Superkeet launches.
+enum MCPTransportKind: String, Codable {
     case stdio
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .stdio: return "Standard I/O (local process)"
-        }
-    }
 }
 
 struct MCPServerConfiguration: Identifiable, Codable, Equatable, Hashable {
@@ -106,9 +99,19 @@ enum MCPToolRiskClassifier {
         "list_network_requests", "list_resources", "list_tools", "list_prompts"
     ]
 
+    /// Ordinary UI interactions that some servers annotate as destructive (Cua Driver marks
+    /// `click` that way). They change state but delete nothing, so they are "changes state":
+    /// the default policy still asks, and Just Do It runs them without a card.
+    static let interactionNames: Set<String> = [
+        "click", "double_click", "right_click", "middle_click", "type_text", "press_key", "hotkey",
+        "scroll", "drag", "hover", "set_value", "move_mouse"
+    ]
+
     static func risk(for annotations: MCPToolAnnotations, name: String = "") -> ActionToolRisk {
         if annotations.readOnlyHint == true { return .readOnly }
-        if annotations.destructiveHint == true { return .destructive }
+        if annotations.destructiveHint == true {
+            return interactionNames.contains(name.lowercased()) ? .mutating : .destructive
+        }
         if !annotations.hasBehaviorHint, isObservationName(name) { return .readOnly }
         return .mutating
     }

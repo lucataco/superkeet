@@ -41,11 +41,13 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
 
     final class FakeLauncher: NativeAppLaunching {
         private(set) var launched: [URL] = []
+        private(set) var awaitedWindows: [Bool] = []
         var failure: Error?
         var delay: Duration = .zero
 
-        func launch(applicationAt url: URL) async throws -> NativeLaunchedApp {
+        func launch(applicationAt url: URL, awaitWindow: Bool) async throws -> NativeLaunchedApp {
             launched.append(url)
+            awaitedWindows.append(awaitWindow)
             if delay > .zero { try await Task.sleep(for: delay) }
             if let failure { throw failure }
             return NativeLaunchedApp(name: url.deletingPathExtension().lastPathComponent, bundleIdentifier: "com.fixture.app",
@@ -208,6 +210,7 @@ final class SpeculativeLaunchCoordinatorTests: XCTestCase {
         speakNotesCommand(fixture.source)
         await waitUntil { fixture.launcher.launched.count == 1 }
         XCTAssertEqual(fixture.launcher.launched, [fixture.notes])
+        XCTAssertEqual(fixture.launcher.awaitedWindows, [false], "Early launches never block on the app's window.")
         await waitUntil { fixture.coordinator.activity?.appName == "Notes" && fixture.coordinator.activity != .launching("Notes") }
         guard case .launched(let launched)? = fixture.coordinator.activity else {
             return XCTFail("Expected a launched activity, got \(String(describing: fixture.coordinator.activity))")

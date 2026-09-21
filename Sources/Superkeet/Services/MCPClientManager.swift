@@ -100,6 +100,16 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
         }
     }
 
+    /// Warm-up for app launch and for the moment Actions Mode or a server is switched on: connect
+    /// enabled servers that are not connected yet, and leave healthy connections alone.
+    func connectEnabledServersIfNeeded(settings: AppSettings = .shared) async {
+        guard settings.actionsEnabled else { return }
+        for server in configStore.enabledServers {
+            guard case .disconnected = state(for: server.id) else { continue }
+            await connect(server)
+        }
+    }
+
     func disconnectAll() async {
         for id in Set(connections.keys).union(connectionGenerations.keys) {
             await disconnect(id)

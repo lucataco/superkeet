@@ -47,10 +47,11 @@ final class ActionHUDWindowController {
             ActionApprovalController.shared.$pending,
             ActionApprovalController.shared.$pendingPlan,
             AgentSessionController.shared.$phase,
-            Publishers.CombineLatest3(
+            Publishers.CombineLatest4(
                 SpeculativeLaunchCoordinator.shared.$activity,
                 SpeculativeLaunchCoordinator.shared.$listening,
-                AgentSessionController.shared.$queuedCommands
+                AgentSessionController.shared.$queuedCommands,
+                ListeningSessionController.shared.$isActive
             )
         )
         .map { pending, plan, phase, live in
@@ -59,7 +60,9 @@ final class ActionHUDWindowController {
                 hasPendingPlan: plan != nil,
                 phase: phase,
                 hasSpeculativeActivity: live.0 != nil,
-                isListening: live.1 != nil,
+                // The pill stays up for the whole listening session, including the gap between
+                // one utterance's transcript and the next take opening.
+                isListening: live.1 != nil || live.3,
                 hasQueuedCommands: !live.2.isEmpty
             )
         }
@@ -103,7 +106,7 @@ final class ActionHUDWindowController {
             var current = self.visibility
             current.hasPendingApproval = ActionApprovalController.shared.pending != nil
             current.hasPendingPlan = ActionApprovalController.shared.pendingPlan != nil
-            current.isListening = SpeculativeLaunchCoordinator.shared.listening != nil
+            current.isListening = SpeculativeLaunchCoordinator.shared.listening != nil || ListeningSessionController.shared.isActive
             switch current.autoHideAction {
             case .hide:
                 self.hide()

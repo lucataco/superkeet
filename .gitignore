@@ -29,3 +29,6 @@ dist/
 .vscode/
 
 __pycache__/
+
+.cursor/skills/verify-superkeet/.run/
+.cursor/skills/verify-superkeet/artifacts/

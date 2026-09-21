@@ -15,6 +15,10 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     @AppStorage("commandHotkeyKeyCode") var commandHotkeyKeyCode: Int = 49
     @AppStorage("commandHotkeyModifierFlags") var commandHotkeyModifierFlags: Int = 655360
 
+    /// Hold-to-talk for Actions Mode; ⌃⇧Space by default (control 0x40000 + shift 0x20000).
+    @AppStorage("commandPTTHotkeyKeyCode") var commandPTTHotkeyKeyCode: Int = 49
+    @AppStorage("commandPTTHotkeyModifierFlags") var commandPTTHotkeyModifierFlags: Int = 393216
+
     // Display names are derived from the key code and modifiers so they can never drift.
     var toggleHotkeyDisplayName: String {
         displayNameForHotkey(keyCode: toggleHotkeyKeyCode, modifierFlags: toggleHotkeyModifierFlags)
@@ -26,6 +30,10 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     var commandHotkeyDisplayName: String {
         displayNameForHotkey(keyCode: commandHotkeyKeyCode, modifierFlags: commandHotkeyModifierFlags)
+    }
+
+    var commandPTTHotkeyDisplayName: String {
+        displayNameForHotkey(keyCode: commandPTTHotkeyKeyCode, modifierFlags: commandPTTHotkeyModifierFlags)
     }
 
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
@@ -71,6 +79,9 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     @AppStorage("actionRunDeadlineSeconds") var actionRunDeadlineSeconds: Int = 180
     @AppStorage("actionAuditEnabled") var actionAuditEnabled: Bool = true
     @AppStorage("instantAppLaunchEnabled") var instantAppLaunchEnabled: Bool = true
+    /// The Actions shortcut opens a listening session (speak several commands, each dispatched on
+    /// a pause) instead of one press-to-start, press-to-run take. Off restores the single take.
+    @AppStorage("actionListeningSessionEnabled") var actionListeningSessionEnabled: Bool = true
 
     @Published var isRecording: Bool = false
     @Published var isDaemonRunning: Bool = false

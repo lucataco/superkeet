@@ -38,6 +38,12 @@ final class FoundationModelActionPlanner: ContextualActionPlanning {
         if names.contains("press_shortcut") {
             text += "\nTo use a keyboard shortcut in an app that is already open, use press_shortcut with the app name and keys such as [\"cmd\",\"n\"] for New, [\"cmd\",\"s\"] for Save, or [\"cmd\",\"w\"] to close. Prefer it over clicking through menus."
         }
+        if names.contains("type_text") {
+            text += "\nTo type words into an app that is already open, use type_text with the app name and the exact text; it types at the current insertion point."
+        }
+        if tools.contains(where: { ObservationHandles.managesHandles(in: $0.inputSchemaJSON) }) {
+            text += "\nSuperkeet fills in pid, window_id, snapshot_id, element handles and session for you from the latest observation. Refer to a control by its element_index from the most recent get_window_state, and observe the window again before acting on controls you have not seen in this step."
+        }
         if let context, !context.isEmpty {
             let progress = context.instructions(for: task)
             if !progress.isEmpty { text += "\n\n" + progress }

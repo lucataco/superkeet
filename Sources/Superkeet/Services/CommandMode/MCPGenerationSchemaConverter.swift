@@ -11,11 +11,6 @@ enum MCPGenerationSchemaConverter {
         return try? GenerationSchema(root: root, dependencies: [])
     }
 
-    static func dynamicSchema(from object: [String: Any], toolName: String = "parameters") -> DynamicGenerationSchema? {
-        guard let projected = ActionToolSchema.project(object, toolName: toolName) else { return nil }
-        return convert(projected, toolName: toolName, path: [])
-    }
-
     private static func convert(_ object: [String: Any], toolName: String, path: [String]) -> DynamicGenerationSchema? {
         guard let types = ActionToolSchema.types(in: object) else { return nil }
         let type = types.first { $0 != "null" } ?? "null"

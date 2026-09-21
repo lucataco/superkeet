@@ -22,6 +22,7 @@ final class NativeOpenActionTests: XCTestCase {
     func testCombinedOpenAndNavigateIsOneNativeURLOpen() throws {
         let url = try XCTUnwrap(URL(string: "https://youtube.com"))
         XCTAssertEqual(fast("open Helium and go to youtube.com"), .openURL(url: url, browser: "Helium"))
+        XCTAssertEqual(fast("open up Helium and go to youtube.com"), .openURL(url: url, browser: "Helium"))
         XCTAssertEqual(fast("Open Google Chrome browser and go to youtube.com."), .openURL(url: url, browser: "Google Chrome browser"))
         XCTAssertEqual(fast("Open My Browser and go to youtube.com"), .openURL(url: url, browser: "My Browser"))
     }
@@ -29,6 +30,7 @@ final class NativeOpenActionTests: XCTestCase {
     func testURLUsesOnlyExplicitlyNamedBrowser() throws {
         let url = try XCTUnwrap(URL(string: "https://youtube.com"))
         XCTAssertEqual(fast("open youtube.com."), .openURL(url: url, browser: nil))
+        XCTAssertEqual(fast("open up youtube.com"), .openURL(url: url, browser: nil))
         XCTAssertEqual(fast("Go to youtube.com in Helium"), .openURL(url: url, browser: "Helium"))
         let browserWordInHost = try XCTUnwrap(URL(string: "https://helium.com"))
         XCTAssertEqual(fast("open https://helium.com"), .openURL(url: browserWordInHost, browser: nil))
@@ -41,10 +43,52 @@ final class NativeOpenActionTests: XCTestCase {
             "open Helium and search for cats", "open Discord then click Friends", "open Discord; quit Notes",
             "open Helium and go to youtube.com and search for cats", "open youtube.com then close the tab",
             "open youtube.com in Helium and clear history", "open Helium and go to youtube.com; quit Discord",
-            "open Helium. Go to youtube.com", "Search for cats", "Click Save in Notes"
+            "open Helium. Go to youtube.com", "search for cats and open Notes", "Click Save in Notes"
         ] {
             XCTAssertNil(fast(text), text)
         }
+    }
+
+    func testLeadInWordsAndExtraVerbsStillReachTheFastPath() {
+        XCTAssertEqual(fast("Lets open Chrome"), .openApp(name: "Chrome"))
+        XCTAssertEqual(fast("Let's open Chrome."), .openApp(name: "Chrome."))
+        XCTAssertEqual(fast("please open discord"), .openApp(name: "discord"))
+        XCTAssertEqual(fast("I want to pull up Notes"), .openApp(name: "Notes"))
+        XCTAssertEqual(fast("Okay, fire up Calculator"), .openApp(name: "Calculator"))
+        XCTAssertEqual(fast("switch to Notes"), .openApp(name: "Notes"), "Opening a running app brings it forward.")
+        XCTAssertEqual(fast("bring up Discord"), .openApp(name: "Discord"))
+        XCTAssertNil(fast("Lets open Chrome and search for cats"), "Compound commands are still decomposed first.")
+    }
+
+    func testWebSearchIsANativeURLOpen() throws {
+        let cats = try XCTUnwrap(URL(string: "https://www.google.com/search?q=cats"))
+        XCTAssertEqual(fast("Search for cats"), .openURL(url: cats, browser: nil))
+        XCTAssertEqual(fast("google cats"), .openURL(url: cats, browser: nil))
+        XCTAssertEqual(fast("look up cats"), .openURL(url: cats, browser: nil))
+        let freeman = try XCTUnwrap(URL(string: "https://www.google.com/search?q=Morgan%20Freeman"))
+        XCTAssertEqual(fast("search for Morgan Freeman in Chrome"), .openURL(url: freeman, browser: "chrome"))
+        XCTAssertEqual(fast("Lets search for Morgan Freeman using Safari"), .openURL(url: freeman, browser: "safari"))
+        let paris = try XCTUnwrap(URL(string: "https://www.google.com/search?q=restaurants%20in%20Paris"))
+        XCTAssertEqual(fast("search for restaurants in Paris"), .openURL(url: paris, browser: nil), "Only browser names are stripped.")
+        let pair = try XCTUnwrap(URL(string: "https://www.google.com/search?q=cats%20and%20dogs"))
+        XCTAssertEqual(fast("search for cats and dogs"), .openURL(url: pair, browser: nil), "\"and\" inside a query is not a new step.")
+        XCTAssertNil(fast("search for"), "A dangling verb has no query.")
+        XCTAssertNil(fast("search"))
+        XCTAssertEqual(NativeOpenAction.webSearchQuery(from: freeman.absoluteString), "Morgan Freeman")
+        XCTAssertNil(NativeOpenAction.webSearchQuery(from: "https://example.com/search?q=x"))
+    }
+
+    func testOnlyCreatingShortcutsAreExemptFromDefaultApproval() throws {
+        for (keys, exempt) in [(["cmd", "n"], true), (["cmd", "t"], true), (["cmd", "s"], false), (["cmd", "q"], false),
+                               (["cmd", "w"], false), (["cmd", "shift", "n"], false)] {
+            let action = NativeOpenAction.pressShortcut(app: "Notes", shortcut: try XCTUnwrap(KeyboardShortcut(keys: keys)))
+            XCTAssertEqual(action.isApprovalExempt, exempt, keys.joined(separator: "+"))
+            XCTAssertEqual(action.spec.approvalExempt, exempt, keys.joined(separator: "+"))
+            XCTAssertEqual(ActionApprovalPolicy.readOnlyAuto.requiresApproval(for: action.spec), !exempt, keys.joined(separator: "+"))
+            XCTAssertTrue(ActionApprovalPolicy.alwaysAsk.requiresApproval(for: action.spec), keys.joined(separator: "+"))
+        }
+        XCTAssertTrue(NativeOpenAction.openApp(name: "Notes").isApprovalExempt)
+        XCTAssertTrue(NativeOpenAction.openURL(url: try XCTUnwrap(URL(string: "https://example.com")), browser: nil).isApprovalExempt)
     }
 
     func testNativeArgumentsRoundTripWithoutShellSyntax() throws {

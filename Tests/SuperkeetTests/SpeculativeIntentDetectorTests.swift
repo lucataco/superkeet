@@ -43,8 +43,18 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         "Open the Notes app and create a new note."
     ]
 
-    func testProbeTranscriptCommitsOnceTheAppNameIsStable() {
+    func testDefaultThresholdTrustsTheFirstUnambiguousSighting() {
         var detector = SpeculativeIntentDetector(environment: environment())
+        XCTAssertEqual(detector.stabilityThreshold, 1)
+        let result = feed(&detector, notesProbe + ["Open the Notes app and create a new note."], finalLast: true)
+        XCTAssertEqual(result?.sequence, 3, "\"Open the Notes\" already names an installed app no other name extends.")
+        XCTAssertEqual(result?.commit.reason, .stable(count: 1))
+        XCTAssertEqual(result?.commit.action.app.name, "Notes")
+        XCTAssertFalse(detector.disagreement)
+    }
+
+    func testProbeTranscriptCommitsOnceTheAppNameIsStable() {
+        var detector = SpeculativeIntentDetector(environment: environment(), stabilityThreshold: 2)
         let result = feed(&detector, notesProbe + ["Open the Notes app and create a new note."], finalLast: true)
         XCTAssertEqual(result?.sequence, 4, "Commit on the second consecutive partial naming Notes, before the conjunction arrives.")
         XCTAssertEqual(result?.commit.action, .launch(SpeculativeApp(spokenName: "notes", url: url("Notes"))))
@@ -83,14 +93,14 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         XCTAssertEqual(result?.commit.action.app.name, "Notes")
     }
 
-    func testSingleVolatilePartialIsNotEnough() {
-        var detector = SpeculativeIntentDetector(environment: environment())
+    func testSingleVolatilePartialIsNotEnoughAtAHigherThreshold() {
+        var detector = SpeculativeIntentDetector(environment: environment(), stabilityThreshold: 2)
         XCTAssertNil(feed(&detector, ["Open Notes"]))
         XCTAssertNil(detector.commit)
     }
 
     func testStabilityCountsOnlyConsecutivePartialsNamingTheSameApp() {
-        var detector = SpeculativeIntentDetector(environment: environment())
+        var detector = SpeculativeIntentDetector(environment: environment(), stabilityThreshold: 2)
         let result = feed(&detector, ["Open Notes", "Open Nodes", "Open Notes", "Open Notes app"])
         XCTAssertEqual(result?.sequence, 4, "The unresolved partial in the middle resets the streak.")
         XCTAssertEqual(result?.commit.reason, .stable(count: 2))
@@ -109,11 +119,35 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         var finalized = SpeculativeIntentDetector(environment: environment())
         XCTAssertEqual(feed(&finalized, ["Open Safari", "Open Safari"], finalLast: true)?.commit.reason, .finalized)
 
-        var longer = SpeculativeIntentDetector(environment: environment())
+        var longer = SpeculativeIntentDetector(environment: environment(), stabilityThreshold: 2)
         let preview = feed(&longer, ["Open Safari", "Open Safari Tech", "Open Safari Technology Preview", "Open Safari Technology Preview app"])
         XCTAssertEqual(preview?.sequence, 4)
         XCTAssertEqual(preview?.commit.action.app.name, "Safari Technology Preview")
         XCTAssertEqual(preview?.commit.reason, .stable(count: 2))
+    }
+
+    func testANameThatIsAPrefixOfAnotherAppWaitsEvenWithoutASpace() {
+        // "Note" while "Notes" is installed: the recogniser may still be mid-word.
+        var waiting = SpeculativeIntentDetector(environment: environment(installed: ["Note", "Notes", "Discord"]))
+        XCTAssertNil(feed(&waiting, ["Open Note", "Open Note app"]))
+        let settled = waiting.observe(PartialTranscript(text: "Open Note and", isFinal: false, sequence: 3))
+        XCTAssertEqual(settled?.action.app.name, "Note", "A clause boundary settles it.")
+        XCTAssertEqual(settled?.reason, .clauseBoundary)
+
+        var full = SpeculativeIntentDetector(environment: environment(installed: ["Note", "Notes", "Discord"]))
+        XCTAssertEqual(feed(&full, ["Open Notes"])?.commit.reason, .stable(count: 1), "Nothing extends \"notes\", so it launches at once.")
+    }
+
+    func testLeadInPhrasesBeforeTheVerbAreSkipped() {
+        for phrase in [
+            "Lets open Chrome and", "Let's open Chrome and", "I want to open Chrome and", "Okay so can you open Chrome and",
+            "go ahead and pull up Chrome and", "fire up Chrome and", "Yeah, just start Chrome and"
+        ] {
+            var detector = SpeculativeIntentDetector(environment: environment())
+            let result = feed(&detector, [phrase])
+            XCTAssertEqual(result?.commit.action.app.name, "Google Chrome", phrase)
+            XCTAssertEqual(result?.commit.reason, .clauseBoundary, phrase)
+        }
     }
 
     func testAliasesResolveAndAmbiguityUsesTheSpokenName() {
@@ -171,7 +205,7 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
     }
 
     func testCommandsThatDoNotStartWithAnOpenVerbAreIgnored() {
-        for phrase in ["Create a new note in Notes and", "Click Save in Notes", "Notes open and", "and open Notes", "Open", "Open the"] {
+        for phrase in ["Create a new note in Notes and", "Click Save in Notes", "Notes open and", "Open", "Open the"] {
             var detector = SpeculativeIntentDetector(environment: environment())
             XCTAssertNil(feed(&detector, [phrase], finalLast: true), phrase)
         }
@@ -204,7 +238,7 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
     }
 
     func testOutOfOrderAndRepeatedPartialsAreIgnored() {
-        var detector = SpeculativeIntentDetector(environment: environment())
+        var detector = SpeculativeIntentDetector(environment: environment(), stabilityThreshold: 2)
         XCTAssertNil(detector.observe(PartialTranscript(text: "Open Notes", isFinal: false, sequence: 3)))
         XCTAssertNil(detector.observe(PartialTranscript(text: "Open Notes app", isFinal: false, sequence: 2)), "Older sequence numbers are dropped.")
         XCTAssertNil(detector.observe(PartialTranscript(text: "Open Notes", isFinal: false, sequence: 4)), "Identical text does not count as a second sighting.")
@@ -253,9 +287,11 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
                        "A .app suffix is not a web address.")
         XCTAssertEqual(SpeculativeIntentDetector.leadingClause(in: "Open the")?.candidate, "the",
                        "A bare article parses; resolution against installed apps rejects it.")
-        for text in ["open", "Open ", "and open Notes", "create a note", "", "   "] {
+        for text in ["open", "Open ", "create a note", "", "   "] {
             XCTAssertNil(SpeculativeIntentDetector.leadingClause(in: text), text)
         }
+        XCTAssertEqual(SpeculativeIntentDetector.leadingClause(in: "and open Notes")?.candidate, "notes",
+                       "\"And\" is how people connect the next command; it is a lead-in, not a blocker.")
     }
 
     @MainActor

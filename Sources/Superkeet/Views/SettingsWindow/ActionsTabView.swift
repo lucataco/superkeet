@@ -5,6 +5,7 @@ struct ActionsTabView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var store = MCPServerConfigStore.shared
     @ObservedObject private var manager = MCPClientManager.shared
+    @ObservedObject private var listeningSession = ListeningSessionController.shared
 
     @State private var editorRequest: MCPServerEditorRequest?
     @State private var auditEntries: [ActionAuditEntry] = []
@@ -22,14 +23,30 @@ struct ActionsTabView: View {
                     Toggle(isOn: $settings.actionsEnabled) {
                         rowLabel(
                             "Enable Actions Mode",
-                            "Adds a Run an Action shortcut that turns speech into tool actions instead of text"
+                            "Adds Run an Action shortcuts (\(settings.commandHotkeyDisplayName) to toggle, \(settings.commandPTTHotkeyDisplayName) to hold) that turn speech into actions instead of text"
                         )
                     }
                     availabilityCard
+                    if settings.actionsEnabled {
+                        Picker(selection: $settings.actionApprovalPolicy) {
+                            ForEach(ActionApprovalPolicy.allCases) { policy in
+                                Text(policy.title).tag(policy)
+                            }
+                        } label: {
+                            rowLabel("Approval", settings.actionApprovalPolicy.subtitle)
+                        }
+                        Toggle(isOn: $settings.actionListeningSessionEnabled) {
+                            rowLabel(
+                                "Keep listening between commands",
+                                "Press \(settings.commandHotkeyDisplayName) once to start listening, speak commands with a short pause between them, and press it again (or Escape) to stop. The microphone is off whenever listening is off."
+                            )
+                        }
+                        .disabled(listeningSession.isActive)
+                    }
                 } header: {
                     Text("Actions Mode")
                 } footer: {
-                    Text("Actions Mode is separate from dictation. Normal recordings keep going straight to the clipboard.")
+                    Text("Actions Mode is separate from dictation. Normal recordings keep going straight to the clipboard. Apps and web pages named in a command open without asking under every policy except Ask Before Every Tool.")
                 }
 
                 Section {
@@ -70,20 +87,13 @@ struct ActionsTabView: View {
                 InstantAppLaunchSettingsView()
 
                 Section {
-                    Picker(selection: $settings.actionApprovalPolicy) {
-                        ForEach(ActionApprovalPolicy.allCases) { policy in
-                            Text(policy.title).tag(policy)
-                        }
-                    } label: {
-                        rowLabel("Approval", settings.actionApprovalPolicy.subtitle)
-                    }
                     Toggle(isOn: $settings.actionAuditEnabled) {
                         rowLabel("Keep Action Log", "Record tool calls locally for review")
                     }
                 } header: {
                     Text("Safety")
                 } footer: {
-                    Text("Step, timeout, and deadline limits are under Advanced.")
+                    Text("The approval policy is under Actions Mode above. Step, timeout, and deadline limits are under Advanced.")
                 }
 
                 Section {
@@ -128,6 +138,13 @@ struct ActionsTabView: View {
             )
         }
         .onAppear { loadAudit() }
+        .onChange(of: settings.actionsEnabled) { _, enabled in
+            guard enabled else { return }
+            Task {
+                await SpeculativeLaunchCoordinator.shared.prepare()
+                await manager.connectEnabledServersIfNeeded()
+            }
+        }
     }
 
     private func loadAudit() {
@@ -270,7 +287,12 @@ struct ActionsTabView: View {
     private func enabledBinding(for server: MCPServerConfiguration) -> Binding<Bool> {
         Binding(
             get: { server.enabled },
-            set: { store.setEnabled($0, for: server.id) }
+            set: { enabled in
+                store.setEnabled(enabled, for: server.id)
+                // Connect now so the first command does not pay for the server's cold start.
+                guard enabled, settings.actionsEnabled, !manager.state(for: server.id).isConnected else { return }
+                Task { await manager.connect(server) }
+            }
         )
     }
 

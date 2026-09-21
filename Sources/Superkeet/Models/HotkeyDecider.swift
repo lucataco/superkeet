@@ -10,6 +10,8 @@ struct HotkeyConfig: Equatable, Sendable {
     var pttModifiers: Int
     var commandKeyCode: Int
     var commandModifiers: Int
+    var commandPTTKeyCode: Int
+    var commandPTTModifiers: Int
     var actionsEnabled: Bool
     var isRecording: Bool
     var isActionSessionActive: Bool
@@ -27,6 +29,8 @@ enum HotkeyAction: Equatable, Sendable {
     case pushToTalkStart
     case pushToTalkEnd
     case command
+    case commandPushToTalkStart
+    case commandPushToTalkEnd
 }
 
 struct HotkeyDecision: Equatable, Sendable {
@@ -45,19 +49,28 @@ struct HotkeyDecision: Equatable, Sendable {
 /// system, so nothing in here may block or hop threads.
 struct HotkeyDecider: Sendable {
     private(set) var pttKeyDown = false
+    private(set) var commandPTTKeyDown = false
     private(set) var fnKeyDown = false
 
     /// Releases a held push-to-talk key, e.g. when a shortcut recorder opens or the tap is disabled
-    /// mid-press. Returns the action needed to stop the recording that key started.
+    /// mid-press. Returns the actions needed to stop the recordings those keys started.
     mutating func releasePushToTalk() -> [HotkeyAction] {
         fnKeyDown = false
-        guard pttKeyDown else { return [] }
-        pttKeyDown = false
-        return [.pushToTalkEnd]
+        var actions: [HotkeyAction] = []
+        if pttKeyDown {
+            pttKeyDown = false
+            actions.append(.pushToTalkEnd)
+        }
+        if commandPTTKeyDown {
+            commandPTTKeyDown = false
+            actions.append(.commandPushToTalkEnd)
+        }
+        return actions
     }
 
     mutating func reset() {
         pttKeyDown = false
+        commandPTTKeyDown = false
         fnKeyDown = false
     }
 
@@ -94,6 +107,26 @@ struct HotkeyDecider: Sendable {
             case .toggle: return .consumed(.command)
             case .consumeRepeat: return .consumed()
             case .ignore: break
+            }
+        }
+
+        // Hold-to-talk for Actions Mode. A release always ends a recording the key started, even
+        // if Actions Mode was switched off mid-press.
+        if keyCode == config.commandPTTKeyCode, config.commandPTTKeyCode != HotkeyConfig.fnKeyCode,
+           config.actionsEnabled || commandPTTKeyDown {
+            switch PTTHotkeyPolicy.keyAction(
+                isKeyDown: isKeyDown,
+                pttAlreadyDown: commandPTTKeyDown,
+                modifiersMatch: config.actionsEnabled && Self.modifiersMatch(flags, required: config.commandPTTModifiers)
+            ) {
+            case .ignore: break
+            case .start:
+                commandPTTKeyDown = true
+                return .consumed(.commandPushToTalkStart)
+            case .consumeRepeat: return .consumed()
+            case .stop:
+                commandPTTKeyDown = false
+                return .consumed(.commandPushToTalkEnd)
             }
         }
 
@@ -147,6 +180,19 @@ struct HotkeyDecider: Sendable {
                 fnKeyDown = false
                 pttKeyDown = false
                 return .consumed(.pushToTalkEnd)
+            }
+            return .passThrough
+        }
+
+        if config.commandPTTKeyCode == HotkeyConfig.fnKeyCode && config.commandPTTModifiers == 0 && (config.actionsEnabled || commandPTTKeyDown) {
+            if fnPressed && !fnKeyDown && config.actionsEnabled {
+                fnKeyDown = true
+                commandPTTKeyDown = true
+                return .consumed(.commandPushToTalkStart)
+            } else if !fnPressed && commandPTTKeyDown {
+                fnKeyDown = false
+                commandPTTKeyDown = false
+                return .consumed(.commandPushToTalkEnd)
             }
             return .passThrough
         }

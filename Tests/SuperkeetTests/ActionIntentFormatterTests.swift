@@ -34,6 +34,17 @@ final class ActionIntentFormatterTests: XCTestCase {
         XCTAssertEqual(summary, "Type “https://duckduckgo.com” in Helium")
     }
 
+    func testWebSearchURLReadsAsASearch() {
+        XCTAssertEqual(
+            ActionIntentFormatter.summary(toolName: "open_url", argumentsJSON: #"{"url":"https://www.google.com/search?q=Morgan%20Freeman","browser":"chrome"}"#),
+            "Search the web for “Morgan Freeman” in chrome"
+        )
+        XCTAssertEqual(
+            ActionIntentFormatter.summary(toolName: "open_url", argumentsJSON: #"{"url":"https://www.google.com/search?q=cats"}"#),
+            "Search the web for “cats”"
+        )
+    }
+
     func testOpenURLIntent() {
         let summary = ActionIntentFormatter.summary(
             toolName: "navigate_page",

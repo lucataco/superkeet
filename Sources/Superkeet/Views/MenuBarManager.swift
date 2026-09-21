@@ -14,9 +14,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let settings = AppSettings.shared
     private let hotkeyManager = HotkeyManager.shared
     private let speculation = SpeculativeLaunchCoordinator.shared
+    private let listeningSession = ListeningSessionController.shared
     private var settingsWindowController: NSWindowController?
     private var historyWindowController: NSWindowController?
-    private var onboardingWindowController: NSWindowController?
     private let recordingStart = RecordingStartCoordinator()
     private var recordingRequested: Bool { recordingStart.requestID != nil }
     private var pttSessionActive: Bool = false
@@ -56,11 +56,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in self?.showSessionStatus(status) }
 
-        actionStateCancellable = Publishers.CombineLatest4(
-            settings.$isActionSessionActive,
-            speculation.$listening.map { $0 != nil }.removeDuplicates(),
-            settings.$isRecording,
-            parakeetService.$daemonState.map { $0 == .transcribing }.removeDuplicates()
+        actionStateCancellable = Publishers.CombineLatest(
+            Publishers.CombineLatest4(
+                settings.$isActionSessionActive,
+                speculation.$listening.map { $0 != nil }.removeDuplicates(),
+                settings.$isRecording,
+                parakeetService.$daemonState.map { $0 == .transcribing }.removeDuplicates()
+            ),
+            listeningSession.$isActive
         )
         .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in
@@ -75,7 +78,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         let statusText: String
         if settings.isActionSessionActive {
             statusText = settings.actionStatusText.isEmpty ? "Working on it…" : settings.actionStatusText
-        } else if speculation.listening != nil {
+        } else if speculation.listening != nil || listeningSession.isActive {
             statusText = "Listening…"
         } else if parakeetService.daemonState == .transcribing {
             statusText = "Transcribing…"
@@ -138,9 +141,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         addRecoveryItems(to: menu)
 
         if settings.actionsEnabled {
-            let commandItem = NSMenuItem(title: "Run an Action…", action: #selector(askSuperkeet), keyEquivalent: "")
+            let sessionActive = listeningSession.isActive
+            let commandTitle = sessionActive ? "Stop Listening" : (settings.actionListeningSessionEnabled ? "Start Listening for Actions" : "Run an Action…")
+            let commandItem = NSMenuItem(title: commandTitle, action: #selector(askSuperkeet), keyEquivalent: "")
             commandItem.target = self
-            commandItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "Run an Action")
+            commandItem.image = NSImage(systemSymbolName: sessionActive ? "ear.trianglebadge.exclamationmark" : "wand.and.stars", accessibilityDescription: commandTitle)
             menu.addItem(commandItem)
 
             let autoApproveItem = NSMenuItem(title: "Auto-Approve Actions", action: #selector(toggleAutoApproveActions), keyEquivalent: "")
@@ -269,6 +274,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         updateMenuBarIcon(recording: true)
+        // Inside a listening session the HUD pill is the indicator: one sound when the session
+        // opens, none per utterance, and no recording overlay flashing between commands.
+        guard !listeningSession.isActive else { return }
         CaptureSoundPlayer.play(.start)
 
         let style = settings.overlayAnimationStyle
@@ -294,7 +302,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @MainActor
     @objc private func stopRecording() {
         parakeetService.stopRecording()
-        CaptureSoundPlayer.play(.stop)
+        if !listeningSession.isActive { CaptureSoundPlayer.play(.stop) }
         // If the engine did not actually enter transcribing (nothing was recording), there is no
         // completion coming to dismiss the overlay, so hide it now.
         teardownRecordingUI(hideOverlay: parakeetService.daemonState != .transcribing)
@@ -306,7 +314,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         recordingStart.cancel()
         parakeetService.cancelRecording()
         if wasPending { parakeetService.sessionStatus = "Recording cancelled" }
-        CaptureSoundPlayer.play(.stop)
+        if !listeningSession.isActive { CaptureSoundPlayer.play(.stop) }
         teardownRecordingUI(hideOverlay: true)
     }
 
@@ -384,44 +392,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func runSetupAgain() {
-        if let existingWindow = onboardingWindowController?.window, existingWindow.isVisible {
-            existingWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let onboardingView = OnboardingView { [weak self] in
-            self?.onboardingWindowController?.window?.close()
-            self?.onboardingWindowController = nil
+        SetupWindowSession.shared.present {
+            SetupWindowSession.shared.close()
             NSApp.setActivationPolicy(.accessory)
-        }
-
-        let hostingController = NSHostingController(rootView: onboardingView)
-        let window = NSWindow(contentViewController: hostingController)
-        window.setContentSize(NSSize(width: 560, height: 580))
-        window.styleMask = [.titled, .closable, .resizable]
-        window.title = "Superkeet Setup"
-        window.minSize = NSSize(width: 560, height: 580)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        let controller = NSWindowController(window: window)
-        self.onboardingWindowController = controller
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(runSetupWindowWillClose),
-            name: NSWindow.willCloseNotification,
-            object: window
-        )
-    }
-
-    @objc private func runSetupWindowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === onboardingWindowController?.window else { return }
-        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
-        DispatchQueue.main.async { [weak self, weak window] in
-            guard let self, let window, self.onboardingWindowController?.window === window else { return }
-            self.onboardingWindowController = nil
         }
     }
 
@@ -437,7 +410,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     func updateMenuBarIcon(recording: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
-        if recording, speculation.listening == nil {
+        if recording, speculation.listening == nil, !listeningSession.isActive {
             let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
             if let image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Superkeet - Recording")?
                 .withSymbolConfiguration(config) {
@@ -453,7 +426,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     func updateMenuBarIconForAction(active: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
-        let listening = speculation.listening != nil
+        let listening = speculation.listening != nil || listeningSession.isActive
         guard !settings.isRecording || listening else { return }
         if active {
             setStatusImage("wand.and.stars", tint: .systemPurple, description: "Superkeet - Working")
@@ -523,8 +496,37 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         cancelRecording()
     }
 
+    /// Hold-to-talk for Actions Mode: arms command mode and records until the key is released.
+    @MainActor
+    func startCommandPushToTalk() {
+        guard settings.actionsEnabled, !settings.isRecording, !recordingRequested else { return }
+        parakeetService.armCommandMode()
+        pttSessionActive = true
+        startRecording()
+    }
+
+    /// Whether a recording start is in flight (the daemon may still be launching).
+    var isRecordingStartPending: Bool { recordingRequested }
+
+    /// Starts a Command Mode take without toggling anything: the listening session calls this
+    /// between utterances. A take already recording or starting is left alone.
+    @MainActor
+    func startCommandRecording() {
+        guard settings.actionsEnabled, !settings.isRecording, !recordingRequested,
+              parakeetService.daemonState != .transcribing else { return }
+        parakeetService.armCommandMode()
+        pttSessionActive = false
+        startRecording()
+    }
+
     @MainActor
     func toggleCommandRecording() {
+        // One shortcut, one session: press to start listening, press again to stop. The old
+        // press-to-start, press-to-run take stays available with the session setting off.
+        if settings.actionsEnabled, settings.actionListeningSessionEnabled {
+            ListeningSessionController.shared.toggle()
+            return
+        }
         switch CommandModeTogglePolicy.action(
             actionsEnabled: settings.actionsEnabled,
             isRecording: settings.isRecording,

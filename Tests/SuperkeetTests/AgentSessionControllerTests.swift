@@ -483,6 +483,12 @@ final class AgentSessionControllerTests: XCTestCase {
             .resolve(name)
     }
 
+    private func chromeResolver(_ name: String) -> URL? {
+        let apps = ["Notes", "Google Chrome"].map { URL(fileURLWithPath: "/fixture/Applications/\($0).app") }
+        return AppResolver(directories: [URL(fileURLWithPath: "/fixture/Applications")], applicationsInDirectory: { _ in apps })
+            .resolve(name)
+    }
+
     private func speculativeLaunch(
         app: String = "Notes", launched: Bool = true, disagreement: Bool = false, delay: Duration = .zero
     ) -> SpeculativeLaunch {
@@ -592,12 +598,15 @@ final class AgentSessionControllerTests: XCTestCase {
         router.outputs["open_app"] = NativeLaunchedApp(name: "Notes", bundleIdentifier: "com.apple.Notes", processIdentifier: 91, windowReady: false).summary
         let planner = ContextualPlanner()
         planner.results = ["Summarized the note."]
+        var awaited: [Int32] = []
         let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
-                                                resolveApp: { [self] in fixtureResolver($0) })
+                                                resolveApp: { [self] in fixtureResolver($0) },
+                                                awaitWindow: { awaited.append($0); return false })
         controller.handleCommand("open the notes app, then summarize my latest note")
         await waitUntilFinished(controller)
 
         XCTAssertEqual(router.executed, ["open_app"])
+        XCTAssertEqual(awaited, [91], "Before a planned step, the run waits once for the window of an app that had none.")
         XCTAssertEqual(planner.calls.count, 1)
         let call = try XCTUnwrap(planner.calls.first)
         XCTAssertEqual(call.task, "summarize my latest note", "The planner sees only its own step.")
@@ -618,7 +627,7 @@ final class AgentSessionControllerTests: XCTestCase {
         let planner = SequencePlanner([("open_app", #"{"name":"Pages"}"#)])
         let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
                                                 resolveApp: { [self] in fixtureResolver($0) })
-        controller.handleCommand("start writing my essay and then save it")
+        controller.handleCommand("begin writing my essay and then save it")
         await waitUntilFinished(controller)
         XCTAssertEqual(router.executed, ["open_app", "press_shortcut"])
         XCTAssertEqual(try NativeOpenAction.decode(toolName: "press_shortcut", argumentsJSON: XCTUnwrap(router.arguments.last)),
@@ -637,11 +646,42 @@ final class AgentSessionControllerTests: XCTestCase {
                                                 })
         controller.handleCommand("open Safari, go to youtube.com, and search for cats")
         await waitUntilFinished(controller)
+        XCTAssertEqual(router.executed, ["open_app", "open_url", "open_url"], "Every step is native; the search opens a search URL.")
+        XCTAssertEqual(try NativeOpenAction.decode(toolName: "open_url", argumentsJSON: XCTUnwrap(router.arguments[1])),
+                       .openURL(url: try XCTUnwrap(URL(string: "https://youtube.com")), browser: "Safari"))
+        XCTAssertEqual(try NativeOpenAction.decode(toolName: "open_url", argumentsJSON: XCTUnwrap(router.arguments[2])),
+                       .openURL(url: try XCTUnwrap(URL(string: "https://www.google.com/search?q=cats")), browser: "Safari"))
+        XCTAssertTrue(planner.calls.isEmpty, "No on-device model is needed for open, navigate, and search.")
+    }
+
+    func testYourExampleRunsWithoutAModelOrMCPServers() async throws {
+        let router = FakeRouter(specs: [])
+        router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        router.outputs["open_app"] = NativeLaunchedApp(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 8, windowReady: true).summary
+        var plannerCreated = false
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { plannerCreated = true; return nil },
+                                                resolveApp: { [self] in chromeResolver($0) })
+        controller.handleCommand("Lets open Chrome and search for Morgan Freeman")
+        await waitUntilFinished(controller)
         XCTAssertEqual(router.executed, ["open_app", "open_url"])
         XCTAssertEqual(try NativeOpenAction.decode(toolName: "open_url", argumentsJSON: XCTUnwrap(router.arguments.last)),
-                       .openURL(url: try XCTUnwrap(URL(string: "https://youtube.com")), browser: "Safari"))
-        XCTAssertEqual(planner.calls.map(\.task), ["search for cats"])
-        XCTAssertEqual(planner.calls.first?.context?.completed.count, 2)
+                       .openURL(url: try XCTUnwrap(URL(string: "https://www.google.com/search?q=Morgan%20Freeman")), browser: "Google Chrome"))
+        XCTAssertFalse(plannerCreated)
+        XCTAssertEqual(router.prepareCount, 0)
+        XCTAssertTrue(controller.phase.isOutcome)
+    }
+
+    func testYourExampleWithAnEarlyLaunchSkipsTheOpenAndSearchesInThatBrowser() async throws {
+        let router = FakeRouter(specs: [])
+        router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                resolveApp: { [self] in chromeResolver($0) })
+        controller.handleCommand("Lets open Chrome and search for Morgan Freeman", speculative: speculativeLaunch(app: "Google Chrome"))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(router.executed, ["open_url"], "Chrome opened while the user was speaking.")
+        XCTAssertEqual(try NativeOpenAction.decode(toolName: "open_url", argumentsJSON: XCTUnwrap(router.arguments.first)),
+                       .openURL(url: try XCTUnwrap(URL(string: "https://www.google.com/search?q=Morgan%20Freeman")), browser: "Google Chrome"))
+        XCTAssertTrue(controller.activityLog.contains("Already done: Google Chrome opened while you were speaking"))
     }
 
     func testAStepFailureStopsTheCommandAndKeepsEarlierEffects() async {
@@ -741,14 +781,14 @@ final class AgentSessionControllerTests: XCTestCase {
             let planner = ContextualPlanner()
             let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
                                                     resolveApp: { [self] in fixtureResolver($0) })
-            controller.handleCommand("open the notes app, create a new note, and summarize my day")
+            controller.handleCommand("open the notes app, save it, and summarize my day")
             await waitUntilFinished(controller)
 
             XCTAssertEqual(router.plans.count, 1)
             let plan = try XCTUnwrap(router.plans.first)
-            XCTAssertEqual(plan.command, "open the notes app, create a new note, and summarize my day")
-            XCTAssertEqual(plan.steps.map(\.summary), ["Open the notes app", "Press ⌘N in Notes", "Planned on-device; each tool call asks as usual"])
-            XCTAssertEqual(plan.steps.map(\.text), ["open the notes app", "create a new note", "summarize my day"])
+            XCTAssertEqual(plan.command, "open the notes app, save it, and summarize my day")
+            XCTAssertEqual(plan.steps.map(\.summary), ["Open the notes app", "Press ⌘S in Notes", "Planned on-device; each tool call asks as usual"])
+            XCTAssertEqual(plan.steps.map(\.text), ["open the notes app", "save it", "summarize my day"])
             XCTAssertEqual(plan.steps[1].risk, .mutating)
             XCTAssertEqual(plan.steps[2].route, .planned)
             XCTAssertTrue(plan.hasPlannedSteps)
@@ -782,12 +822,38 @@ final class AgentSessionControllerTests: XCTestCase {
             let planner = ContextualPlanner()
             let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
                                                     resolveApp: { [self] in fixtureResolver($0) })
-            controller.handleCommand("open the notes app and create a new note")
+            controller.handleCommand("open the notes app and save it")
             await waitUntilFinished(controller)
             XCTAssertEqual(router.plans.count, 1)
             XCTAssertTrue(router.executed.isEmpty)
             XCTAssertTrue(planner.calls.isEmpty)
             XCTAssertEqual(controller.phase, .failed(ActionExecutionError.planDenied.localizedDescription))
+        }
+    }
+
+    func testCreatingShortcutsRunWithoutAPlanCardUnderTheDefaultPolicy() async throws {
+        await withPolicy(.readOnlyAuto) {
+            let router = FakeRouter(specs: [])
+            router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+            router.outputs["open_app"] = NativeLaunchedApp(name: "Notes", bundleIdentifier: nil, processIdentifier: 91, windowReady: true).summary
+            router.planDecision = .deny
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                    resolveApp: { [self] in fixtureResolver($0) })
+            controller.handleCommand("open the notes app and create a new note")
+            await waitUntilFinished(controller)
+            XCTAssertTrue(router.plans.isEmpty, "⌘N only creates something; nothing on the card would ask.")
+            XCTAssertEqual(router.executed, ["open_app", "press_shortcut"])
+        }
+        await withPolicy(.alwaysAsk) {
+            let router = FakeRouter(specs: [])
+            router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+            router.planDecision = .deny
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                    resolveApp: { [self] in fixtureResolver($0) })
+            controller.handleCommand("open the notes app and create a new note")
+            await waitUntilFinished(controller)
+            XCTAssertEqual(router.plans.count, 1, "Ask Before Every Tool still shows the card.")
+            XCTAssertTrue(router.executed.isEmpty)
         }
     }
 
@@ -848,12 +914,12 @@ final class AgentSessionControllerTests: XCTestCase {
             router.planDecision = .approveAll
             let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
                                                     resolveApp: { [self] in fixtureResolver($0) })
-            controller.handleCommand("open the notes app and create a new note", speculative: speculativeLaunch())
+            controller.handleCommand("open the notes app and save it", speculative: speculativeLaunch())
             await waitUntilFinished(controller)
             let plan = try XCTUnwrap(router.plans.first)
             XCTAssertEqual(plan.steps.map(\.route.isAlreadyDone), [true, false])
             XCTAssertEqual(plan.steps.first?.summary, "Already open: Notes (opened while you were speaking)")
-            XCTAssertEqual(plan.steps.last?.summary, "Press ⌘N in Notes")
+            XCTAssertEqual(plan.steps.last?.summary, "Press ⌘S in Notes")
             XCTAssertEqual(plan.grants.count, 1, "Only the shortcut needs approval; the launch already happened.")
             XCTAssertEqual(router.executed, ["press_shortcut"])
         }
@@ -924,7 +990,8 @@ final class AgentSessionControllerTests: XCTestCase {
     func testQuotedTextInAStepIsNotSplit() async {
         let router = FakeRouter(specs: [makeSpec()])
         let planner = ContextualPlanner()
-        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
+                                                resolveApp: { _ in nil }, frontmostApp: { nil })
         controller.handleCommand(#"type "milk, eggs, and bread" into Body in Notes"#)
         await waitUntilFinished(controller)
         XCTAssertEqual(planner.calls.map(\.task), [#"type "milk, eggs, and bread" into Body in Notes"#])
@@ -1115,7 +1182,7 @@ final class AgentSessionControllerTests: XCTestCase {
         let router = FakeRouter(specs: [makeSpec(name: "search"), makeSpec(name: "other")])
         let planner = SequencePlanner([("search", "{}"), ("other", "{}"), ("search", "{}")])
         let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
-        controller.handleCommand("search twice")
+        controller.handleCommand("observe twice")
         await waitUntilFinished(controller)
         XCTAssertEqual(router.executed, ["search", "other"])
         XCTAssertTrue(controller.activityLog.contains { $0.hasPrefix("Reused") })
@@ -1205,38 +1272,37 @@ final class AgentSessionControllerTests: XCTestCase {
         let router = FakeRouter(specs: [makeSpec()])
         let planner = FakePlanner(calls: 0)
         let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
-        controller.handleCommand("open Helium and search for cats")
+        controller.handleCommand("open Helium and summarize the page")
         await waitUntilFinished(controller)
         XCTAssertEqual(controller.phase, .finished("tool-output done"))
         XCTAssertEqual(router.executed, ["open_app"], "The open step is deterministic and runs before any planning.")
         XCTAssertTrue(planner.invoked)
-        XCTAssertEqual(planner.tasks, ["search for cats"], "The planner receives only the step that needs it.")
+        XCTAssertEqual(planner.tasks, ["summarize the page"], "The planner receives only the step that needs it.")
         XCTAssertEqual(Array(planner.offeredTools.prefix(NativeOpenAction.tools.count)), NativeOpenAction.tools)
         XCTAssertEqual(router.prepareCount, 1)
     }
 
-    func testMissingAppFallsThroughBeforeAnyOpenSideEffect() async {
-        let router = FakeRouter(specs: [], failure: NativeOpenActionError.appNotFound("Missing"))
+    func testMissingAppOpensWebWithoutPlannerPreparation() async {
+        let router = FakeRouter(specs: [])
         let planner = FakePlanner(calls: 0)
-        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner }, resolveApp: { _ in nil })
         controller.handleCommand("open Missing")
         await waitUntilFinished(controller)
-        XCTAssertEqual(router.executed, ["open_app"])
-        XCTAssertEqual(router.prepareCount, 1)
-        XCTAssertTrue(planner.invoked)
-        XCTAssertEqual(Array(planner.offeredTools.prefix(NativeOpenAction.tools.count)), NativeOpenAction.tools)
-        XCTAssertEqual(controller.phase, .finished("done"))
+        XCTAssertEqual(router.executed, ["open_url"])
+        XCTAssertEqual(router.prepareCount, 0)
+        XCTAssertFalse(planner.invoked)
+        XCTAssertEqual(controller.phase, .finished("tool-output"))
     }
 
-    func testMissingAppInACompoundStepFallsThroughToThePlannerForThatStep() async {
-        let router = FakeRouter(specs: [makeSpec()], failure: NativeOpenActionError.appNotFound("Missing"))
+    func testMissingAppInACompoundStepOpensWebBeforePlanningTheRest() async {
+        let router = FakeRouter(specs: [makeSpec()])
         let planner = FakePlanner(calls: 0)
-        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
-        controller.handleCommand("open Missing and search for cats")
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner }, resolveApp: { _ in nil })
+        controller.handleCommand("open Missing and summarize the page")
         await waitUntilFinished(controller)
-        XCTAssertEqual(router.executed, ["open_app"], "The native attempt was a resolution miss, so nothing else ran natively.")
-        XCTAssertEqual(planner.tasks, ["open Missing", "search for cats"])
-        XCTAssertEqual(controller.phase, .finished("done done"))
+        XCTAssertEqual(router.executed, ["open_url"])
+        XCTAssertEqual(planner.tasks, ["summarize the page"])
+        XCTAssertEqual(controller.phase, .finished("tool-output done"))
     }
 
     func testMissingAppWithoutPlannerSurfacesResolutionError() async {

@@ -121,10 +121,6 @@ struct OutputTabView: View {
                 } header: {
                     Text("What Happens After Recording")
                 }
-
-                Section("Last Transcript & Recovery") {
-                    LastTranscriptView()
-                }
             }
             .formStyle(.grouped)
         }

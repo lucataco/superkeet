@@ -26,6 +26,7 @@ struct HomeTabView: View {
         case toggle
         case pushToTalk
         case command
+        case commandPushToTalk
     }
 
     var body: some View {
@@ -241,7 +242,7 @@ struct HomeTabView: View {
         if settings.actionsEnabled {
             HotkeyRow(
                 title: "Run an Action",
-                description: "Speak a task for Actions Mode, then approve tool calls",
+                description: "Press once to start speaking a task, press again to stop",
                 displayName: settings.commandHotkeyDisplayName,
                 isEditing: editingHotkey == .command,
                 onClickBadge: {
@@ -253,6 +254,25 @@ struct HomeTabView: View {
                 InteractiveHotkeyRecorder(
                     onRecord: { keyCode, modifiers, _ in
                         assignCommandHotkey(keyCode: keyCode, modifiers: modifiers)
+                    },
+                    onCancel: { editingHotkey = nil }
+                )
+            }
+
+            HotkeyRow(
+                title: "Hold to Run an Action",
+                description: "Hold while speaking a task, release to run it",
+                displayName: settings.commandPTTHotkeyDisplayName,
+                isEditing: editingHotkey == .commandPushToTalk,
+                onClickBadge: {
+                    editingHotkey = editingHotkey == .commandPushToTalk ? nil : .commandPushToTalk
+                }
+            )
+
+            if editingHotkey == .commandPushToTalk {
+                InteractiveHotkeyRecorder(
+                    onRecord: { keyCode, modifiers, _ in
+                        assignCommandPushToTalkHotkey(keyCode: keyCode, modifiers: modifiers)
                     },
                     onCancel: { editingHotkey = nil }
                 )
@@ -560,10 +580,20 @@ struct HomeTabView: View {
         editingHotkey = nil
     }
 
+    private func assignCommandPushToTalkHotkey(keyCode: Int, modifiers: Int) {
+        guard validateShortcut(keyCode: keyCode, modifiers: modifiers, excluding: .commandPushToTalk) else { return }
+
+        settings.commandPTTHotkeyKeyCode = keyCode
+        settings.commandPTTHotkeyModifierFlags = modifiers
+        shortcutError = nil
+        editingHotkey = nil
+    }
+
     private enum HotkeySlot {
         case toggle
         case pushToTalk
         case command
+        case commandPushToTalk
     }
 
     private func assignedShortcuts(excluding slot: HotkeySlot) -> [(keyCode: Int, modifiers: Int)] {
@@ -576,6 +606,9 @@ struct HomeTabView: View {
         }
         if settings.actionsEnabled, slot != .command {
             shortcuts.append((settings.commandHotkeyKeyCode, settings.commandHotkeyModifierFlags))
+        }
+        if settings.actionsEnabled, slot != .commandPushToTalk {
+            shortcuts.append((settings.commandPTTHotkeyKeyCode, settings.commandPTTHotkeyModifierFlags))
         }
         return shortcuts
     }

@@ -41,6 +41,10 @@ struct NativeLaunchedApp: Equatable, Sendable {
         self.processIdentifier = processIdentifier
         self.windowReady = windowReady
     }
+
+    func withWindowReady(_ ready: Bool) -> NativeLaunchedApp {
+        NativeLaunchedApp(name: name, bundleIdentifier: bundleIdentifier, processIdentifier: processIdentifier, windowReady: ready)
+    }
 }
 
 @MainActor

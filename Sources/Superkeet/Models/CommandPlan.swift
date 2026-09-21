@@ -70,6 +70,11 @@ struct ActionPlanContext: Equatable, Sendable {
         openedApps.append(app)
     }
 
+    /// Marks an app's window as on screen without changing which app is current.
+    mutating func markWindowReady(processIdentifier: Int32) {
+        openedApps = openedApps.map { $0.processIdentifier == processIdentifier ? $0.withWindowReady(true) : $0 }
+    }
+
     func instructions(for clause: String) -> String {
         var lines: [String] = []
         if stepCount > 1 {

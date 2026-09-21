@@ -10,6 +10,7 @@ final class HotkeyDeciderTests: XCTestCase {
         toggle: (Int, Int) = (49, 524_288),
         ptt: (Int, Int) = (63, 0),
         command: (Int, Int) = (49, 655_360),
+        commandPTT: (Int, Int) = (49, 393_216),
         actionsEnabled: Bool = false,
         isRecording: Bool = false,
         actionActive: Bool = false,
@@ -19,6 +20,7 @@ final class HotkeyDeciderTests: XCTestCase {
             toggleKeyCode: toggle.0, toggleModifiers: toggle.1,
             pttKeyCode: ptt.0, pttModifiers: ptt.1,
             commandKeyCode: command.0, commandModifiers: command.1,
+            commandPTTKeyCode: commandPTT.0, commandPTTModifiers: commandPTT.1,
             actionsEnabled: actionsEnabled,
             isRecording: isRecording,
             isActionSessionActive: actionActive,
@@ -47,6 +49,49 @@ final class HotkeyDeciderTests: XCTestCase {
         let press = key(49, [.maskAlternate, .maskShift])
         XCTAssertEqual(decider.decide(press, config: config(actionsEnabled: false)), .passThrough)
         XCTAssertEqual(decider.decide(press, config: config(actionsEnabled: true)), .consumed(.command))
+    }
+
+    func testCommandPushToTalkTracksPressAndReleaseOnlyWhenActionsAreEnabled() {
+        var decider = HotkeyDecider()
+        let hold = key(49, [.maskControl, .maskShift])
+        let release = key(49, [.maskControl, .maskShift], down: false)
+        XCTAssertEqual(decider.decide(hold, config: config(actionsEnabled: false)), .passThrough)
+        XCTAssertEqual(decider.decide(release, config: config(actionsEnabled: false)), .passThrough)
+
+        let cfg = config(actionsEnabled: true)
+        XCTAssertEqual(decider.decide(hold, config: cfg), .consumed(.commandPushToTalkStart))
+        XCTAssertTrue(decider.commandPTTKeyDown)
+        XCTAssertEqual(decider.decide(key(49, [.maskControl, .maskShift], repeat: true), config: cfg), .consumed())
+        XCTAssertEqual(decider.decide(release, config: cfg), .consumed(.commandPushToTalkEnd))
+        XCTAssertFalse(decider.commandPTTKeyDown)
+        XCTAssertEqual(decider.decide(key(49, [.maskAlternate, .maskShift]), config: cfg), .consumed(.command), "the toggle still works")
+        XCTAssertEqual(decider.decide(key(49, .maskAlternate), config: cfg), .consumed(.toggle), "dictation toggle unaffected")
+    }
+
+    func testCommandPushToTalkReleaseStillEndsAfterActionsAreDisabledMidPress() {
+        var decider = HotkeyDecider()
+        XCTAssertEqual(decider.decide(key(49, [.maskControl, .maskShift]), config: config(actionsEnabled: true)), .consumed(.commandPushToTalkStart))
+        XCTAssertEqual(decider.decide(key(49, [.maskControl, .maskShift], down: false), config: config(actionsEnabled: false)), .consumed(.commandPushToTalkEnd))
+        XCTAssertEqual(decider.releasePushToTalk(), [])
+    }
+
+    func testReleasingExternallyEndsBothHeldKeys() {
+        var decider = HotkeyDecider()
+        let cfg = config(ptt: (3, 0), actionsEnabled: true)
+        _ = decider.decide(key(3), config: cfg)
+        _ = decider.decide(key(49, [.maskControl, .maskShift]), config: cfg)
+        XCTAssertEqual(decider.releasePushToTalk(), [.pushToTalkEnd, .commandPushToTalkEnd])
+        XCTAssertFalse(decider.pttKeyDown)
+        XCTAssertFalse(decider.commandPTTKeyDown)
+    }
+
+    func testFnAsCommandPushToTalk() {
+        var decider = HotkeyDecider()
+        let cfg = config(ptt: (3, 0), commandPTT: (63, 0), actionsEnabled: true)
+        XCTAssertEqual(decider.decide(fn(pressed: true), config: cfg), .consumed(.commandPushToTalkStart))
+        XCTAssertEqual(decider.decide(fn(pressed: true), config: cfg), .passThrough)
+        XCTAssertEqual(decider.decide(fn(pressed: false), config: cfg), .consumed(.commandPushToTalkEnd))
+        XCTAssertEqual(decider.decide(fn(pressed: true), config: config(ptt: (3, 0), commandPTT: (63, 0), actionsEnabled: false)), .passThrough)
     }
 
     func testFnPushToTalkTracksPressAndRelease() {

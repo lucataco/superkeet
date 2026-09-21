@@ -18,6 +18,32 @@ final class ActionIntentTests: XCTestCase {
         XCTAssertEqual(HeuristicIntentExtractor.intent(for: "Search for red pandas").query, "red pandas")
     }
 
+    func testLeadInsAndExtraVerbsAreRecognised() {
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "Lets open Chrome and search for Morgan Freeman").action, .openApp)
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "please open Chrome").app, "chrome")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "I want to pull up Notes").action, .openApp)
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "I want to pull up Notes").app, "Notes")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "fire up Calculator").action, .openApp)
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "show me the weather").app, "the weather")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "bring up Discord").action, .switchApp)
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "go to Notes").action, .switchApp)
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "Lets open youtube.com").action, .openURL)
+    }
+
+    func testWebSearchQueryDropsOnlyATrailingBrowser() {
+        let chrome = HeuristicIntentExtractor.intent(for: "search for Morgan Freeman in Chrome")
+        XCTAssertEqual(chrome.action, .webSearch)
+        XCTAssertEqual(chrome.query, "Morgan Freeman")
+        XCTAssertEqual(chrome.browser, "chrome")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "google Morgan Freeman").query, "Morgan Freeman")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "look up the capital of Peru").query, "the capital of Peru")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "search the web for cats").query, "cats")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "search cats.").query, "cats")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "search for restaurants in Paris").query, "restaurants in Paris")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "search for Morgan Freeman using the Safari browser").query, "Morgan Freeman")
+        XCTAssertEqual(HeuristicIntentExtractor.intent(for: "search for Morgan Freeman using the Safari browser").browser, "safari")
+    }
+
     func testUnsupportedIntentsAndBrowserWordBoundaries() {
         XCTAssertEqual(HeuristicIntentExtractor.intent(for: "Please organize my files").action, .other)
         XCTAssertNil(HeuristicIntentExtractor.intent(for: "Open archive").browser)

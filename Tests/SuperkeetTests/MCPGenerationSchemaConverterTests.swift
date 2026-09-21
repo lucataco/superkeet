@@ -157,10 +157,11 @@ final class MCPGenerationSchemaConverterTests: XCTestCase {
         let lateLaunch = fixture.filter { $0.toolName != "launch_app" } + [launch]
         let intent = HeuristicIntentExtractor.intent(for: "open discord")
         let bridges = FoundationModelActionPlanner.toolBridges(from: lateLaunch, intent: intent, execute: { _, _ in "" })
-        XCTAssertEqual(bridges.count, 40)
+        let offered = ActionToolFilter.filtering(lateLaunch, intent: intent).count
+        XCTAssertEqual(bridges.count, min(40, offered), "Housekeeping tools are withheld first; the cap applies to what is left.")
         XCTAssertEqual(bridges.first?.name, "launch_app")
         let native = FoundationModelActionPlanner.toolBridges(from: lateLaunch + NativeOpenAction.tools, intent: intent, execute: { _, _ in "" })
-        XCTAssertEqual(native.prefix(4).map(\.name), ["open_app", "open_url", "press_shortcut", "launch_app"])
+        XCTAssertEqual(native.prefix(5).map(\.name), ["open_app", "open_url", "press_shortcut", "type_text", "launch_app"])
     }
 
     @MainActor

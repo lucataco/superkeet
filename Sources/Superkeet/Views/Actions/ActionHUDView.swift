@@ -5,22 +5,29 @@ struct ActionHUDView: View {
     @ObservedObject private var approvals = ActionApprovalController.shared
     @ObservedObject private var agent = AgentSessionController.shared
     @ObservedObject private var speculation = SpeculativeLaunchCoordinator.shared
+    @ObservedObject private var session = ListeningSessionController.shared
 
     @State private var showDetails = false
 
     static let visibleChecklistRows = 6
+    static let sessionPrompt = "Go ahead, I’m listening."
 
     private var showsActionContent: Bool {
         approvals.pending != nil || approvals.pendingPlan != nil || agent.phase.showsHUD
     }
 
+    /// Live text is flowing, or a listening session is between utterances.
+    private var isListening: Bool { speculation.listening != nil || session.isActive }
+
+    private var listeningPlaceholder: String { session.isActive ? Self.sessionPrompt : "Say a command…" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             content
-            if let listening = speculation.listening, showsActionContent {
+            if isListening, showsActionContent {
                 Divider()
-                listeningFooter(listening)
+                listeningFooter(speculation.listening?.transcript ?? "")
             }
         }
         .padding(16)
@@ -63,7 +70,7 @@ struct ActionHUDView: View {
         } else if agent.phase.isActive {
             ProgressView()
                 .controlSize(.small)
-        } else if speculation.listening != nil, !agent.phase.isOutcome {
+        } else if isListening, !agent.phase.isOutcome {
             Image(systemName: "waveform")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
@@ -84,6 +91,11 @@ struct ActionHUDView: View {
             Button("Dismiss") { agent.reset() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+        } else if approvals.pending == nil, approvals.pendingPlan == nil, session.isActive {
+            Button("Stop") { session.end(dispatchPending: false) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Stop listening (\(settings.commandHotkeyDisplayName) or Escape)")
         }
     }
 
@@ -96,11 +108,16 @@ struct ActionHUDView: View {
         case .failed: return "Couldn’t finish"
         default: break
         }
-        guard speculation.listening != nil else { return "Superkeet" }
-        return settings.isRecording ? "Listening…" : "Transcribing…"
+        if speculation.listening != nil { return settings.isRecording ? "Listening…" : "Transcribing…" }
+        return session.isActive ? "Listening" : "Superkeet"
     }
 
     private var subtitle: String? {
+        if session.isActive, !agent.phase.showsHUD, approvals.pending == nil, approvals.pendingPlan == nil {
+            let count = session.dispatchedCommands
+            let commands = count == 0 ? "" : " · \(count) command\(count == 1 ? "" : "s") so far"
+            return "Press \(settings.commandHotkeyDisplayName) to stop\(commands)"
+        }
         guard approvals.pendingPlan == nil, agent.phase.showsHUD || approvals.pending != nil else { return nil }
         let command = agent.commandText
         guard !command.isEmpty else { return nil }
@@ -145,6 +162,9 @@ struct ActionHUDView: View {
             outcomeContent
         } else if let listening = speculation.listening {
             listeningContent(listening)
+        } else if session.isActive {
+            // Between utterances: the take just ended and the next one is opening.
+            LiveTranscriptText(transcript: "", isRecording: false, placeholder: Self.sessionPrompt)
         }
     }
 
@@ -267,7 +287,7 @@ struct ActionHUDView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if settings.actionApprovalPolicy == .autoApprove {
-                Label("Auto-approving · destructive tools still ask", systemImage: "shield")
+                Label("Just Do It · destructive tools still ask", systemImage: "bolt.shield")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -386,17 +406,42 @@ struct ActionHUDView: View {
 
     private func listeningContent(_ listening: SpeculativeLaunchCoordinator.Listening) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            LiveTranscriptText(transcript: listening.transcript, isRecording: settings.isRecording)
+            LiveTranscriptText(
+                transcript: listening.transcript, isRecording: settings.isRecording,
+                placeholder: listeningPlaceholder
+            )
             if let activity = speculation.activity {
                 speculativeStatus(activity)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+            }
+            if let step = speculation.stepActivity {
+                stepStatus(step)
                     .font(.system(size: 11))
                     .lineLimit(1)
             }
         }
     }
 
-    private func listeningFooter(_ listening: SpeculativeLaunchCoordinator.Listening) -> some View {
-        Label("Listening: \(listening.transcript.isEmpty ? "Say a command…" : listening.transcript)", systemImage: "waveform")
+    @ViewBuilder
+    private func stepStatus(_ step: SpeculativeLaunchCoordinator.StepActivity) -> some View {
+        switch step {
+        case .running(let running):
+            let summary = SpeculativeStepResult(step: running, output: nil, failure: nil).summary
+            Label("\(summary)…", systemImage: "bolt.fill")
+                .foregroundStyle(.secondary)
+        case .done(let result):
+            Label(result.doneDescription, systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed(let result):
+            Label("Couldn’t \(result.lowercasedSummary)", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .help(result.failure ?? "")
+        }
+    }
+
+    private func listeningFooter(_ transcript: String) -> some View {
+        Label("Listening: \(transcript.isEmpty ? listeningPlaceholder : transcript)", systemImage: "waveform")
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .lineLimit(2)
@@ -464,11 +509,12 @@ struct ActionHUDView: View {
 private struct LiveTranscriptText: View {
     let transcript: String
     let isRecording: Bool
+    var placeholder = "Say a command…"
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cursorVisible = true
 
-    private var displayedText: String { transcript.isEmpty ? "Say a command…" : transcript }
+    private var displayedText: String { transcript.isEmpty ? placeholder : transcript }
 
     var body: some View {
         (Text(displayedText) + Text(isRecording ? "▍" : "").foregroundColor(cursorVisible ? .primary : .clear))

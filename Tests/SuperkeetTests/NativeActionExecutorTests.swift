@@ -8,6 +8,9 @@ final class NativeActionExecutorTests: XCTestCase {
         var openedURLs: [(URL, URL?)] = []
         var failure: Error?
         var windowReady = true
+        /// What the window wait reports; the initial open always reports no window yet.
+        var windowAppears = true
+        private(set) var waitedFor: [Int32] = []
         func applicationURL(bundleIdentifier: String) -> URL? { nil }
         func openApplication(at url: URL) async throws -> NativeLaunchedApp {
             if let failure { throw failure }
@@ -15,6 +18,10 @@ final class NativeActionExecutorTests: XCTestCase {
             let name = url.deletingPathExtension().lastPathComponent
             return NativeLaunchedApp(name: name, bundleIdentifier: "com.fixture.\(name.lowercased())",
                                      processIdentifier: 4_242, windowReady: windowReady)
+        }
+        func waitForWindow(processIdentifier: Int32) async throws -> Bool {
+            waitedFor.append(processIdentifier)
+            return windowAppears
         }
         func openURL(_ url: URL, in application: URL?) async throws {
             if let failure { throw failure }
@@ -141,8 +148,36 @@ final class NativeActionExecutorTests: XCTestCase {
     func testReportsWhenNoWindowAppearedWithoutFailing() async throws {
         let workspace = Workspace()
         workspace.windowReady = false
+        workspace.windowAppears = false
         let output = try await executor(workspace).execute(.openApp(name: "Discord"))
         XCTAssertEqual(output, "Opened Discord (pid 4242, com.fixture.discord). No window has appeared yet.")
+        XCTAssertEqual(workspace.waitedFor, [4_242], "The open_app tool waits for a window before reporting.")
+    }
+
+    func testOpenToolWaitsForAWindowThatAppearsLater() async throws {
+        let workspace = Workspace()
+        workspace.windowReady = false
+        let output = try await executor(workspace).execute(.openApp(name: "Discord"))
+        XCTAssertEqual(output, "Opened Discord (pid 4242, com.fixture.discord). Its window is on screen.")
+        XCTAssertEqual(workspace.waitedFor, [4_242])
+    }
+
+    func testSpeculativeLaunchDoesNotWaitForAWindowAndCanCatchUpLater() async throws {
+        let workspace = Workspace()
+        workspace.windowReady = false
+        let launched = try await executor(workspace).launch(applicationAt: URL(fileURLWithPath: "/fixture/Applications/Notes.app"), awaitWindow: false)
+        XCTAssertFalse(launched.windowReady)
+        XCTAssertTrue(workspace.waitedFor.isEmpty, "Launching while the user is still speaking must not block on a window.")
+        let ready = await executor(workspace).waitForWindow(processIdentifier: launched.processIdentifier)
+        XCTAssertTrue(ready)
+        XCTAssertEqual(workspace.waitedFor, [4_242])
+        XCTAssertTrue(launched.withWindowReady(true).windowReady)
+    }
+
+    func testAlreadyReadyWindowSkipsTheWait() async throws {
+        let workspace = Workspace()
+        _ = try await executor(workspace).execute(.openApp(name: "Discord"))
+        XCTAssertTrue(workspace.waitedFor.isEmpty)
     }
 
     func testLaunchSummaryOmitsMissingBundleIdentifier() {

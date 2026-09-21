@@ -23,6 +23,39 @@ final class MCPConnectionLifecycleTests: XCTestCase {
         throw ActionExecutionError.timedOut
     }
 
+    func testWarmUpConnectsOnlyEnabledDisconnectedServersAndOnlyWhenActionsAreOn() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("mcp-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let store = MCPServerConfigStore(fileURL: fileURL, secrets: InMemoryMCPSecretStore())
+        let enabled = MCPServerConfiguration(name: "enabled", command: "unused", enabled: true)
+        let disabled = MCPServerConfiguration(name: "disabled", command: "unused", enabled: false)
+        store.add(enabled)
+        store.add(disabled)
+        var connected: [String] = []
+        let manager = MCPClientManager(configStore: store, connector: { server, _ in
+            connected.append(server.name)
+            return self.connection(server)
+        }, toolLoader: { server, _, _ in [self.tool("t", server: server)] })
+
+        let settings = AppSettings.shared
+        let saved = settings.actionsEnabled
+        defer { settings.actionsEnabled = saved }
+
+        settings.actionsEnabled = false
+        await manager.connectEnabledServersIfNeeded(settings: settings)
+        XCTAssertTrue(connected.isEmpty, "Nothing is launched while Actions Mode is off.")
+
+        settings.actionsEnabled = true
+        await manager.connectEnabledServersIfNeeded(settings: settings)
+        XCTAssertEqual(connected, ["enabled"])
+        XCTAssertEqual(manager.state(for: enabled.id), .connected)
+        XCTAssertEqual(manager.state(for: disabled.id), .disconnected)
+
+        await manager.connectEnabledServersIfNeeded(settings: settings)
+        XCTAssertEqual(connected, ["enabled"], "A healthy connection is left alone.")
+        await manager.disconnectAll()
+    }
+
     func testLateInventoryAndTerminationCannotOverwriteReplacement() async throws {
         for failOldLoad in [false, true] {
             let server = MCPServerConfiguration(name: "fixture", command: "unused")

@@ -188,7 +188,7 @@ final class ActionApprovalControllerTests: XCTestCase {
         let controller = ActionApprovalController()
         defer { controller.cancelPending() }
         let open = NativeOpenAction.openApp(name: "Notes")
-        let shortcut = NativeOpenAction.pressShortcut(app: "Notes", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"])))
+        let shortcut = NativeOpenAction.pressShortcut(app: "Notes", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "s"])))
         let request = plan([
             .alreadyDone,
             .native(spec: open.spec, argumentsJSON: try open.argumentsJSON()),
@@ -207,8 +207,8 @@ final class ActionApprovalControllerTests: XCTestCase {
         XCTAssertNil(controller.pendingPlan)
         XCTAssertEqual(controller.grants.count, 2, "Only the two native steps become grants.")
         XCTAssertTrue(controller.isGranted(open.spec, argumentsJSON: try open.argumentsJSON()))
-        XCTAssertTrue(controller.isGranted(shortcut.spec, argumentsJSON: #"{"keys":["cmd","n"],"app":"Notes"}"#), "Key order does not matter.")
-        XCTAssertFalse(controller.isGranted(shortcut.spec, argumentsJSON: #"{"app":"Notes","keys":["cmd","s"]}"#), "Approving the plan does not approve other shortcuts.")
+        XCTAssertTrue(controller.isGranted(shortcut.spec, argumentsJSON: #"{"keys":["cmd","s"],"app":"Notes"}"#), "Key order does not matter.")
+        XCTAssertFalse(controller.isGranted(shortcut.spec, argumentsJSON: #"{"app":"Notes","keys":["cmd","q"]}"#), "Approving the plan does not approve other shortcuts.")
     }
 
     func testStepByStepAndDenyLeaveNoGrants() async throws {
@@ -247,8 +247,11 @@ final class ActionApprovalControllerTests: XCTestCase {
         XCTAssertFalse(plan(steps).needsApproval(under: .readOnlyAuto))
         XCTAssertTrue(plan(steps).needsApproval(under: .alwaysAsk))
 
-        let shortcut = NativeOpenAction.pressShortcut(app: "Safari", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "t"])))
-        XCTAssertTrue(plan(steps + [.native(spec: shortcut.spec, argumentsJSON: try shortcut.argumentsJSON())]).needsApproval(under: .readOnlyAuto))
+        let newTab = NativeOpenAction.pressShortcut(app: "Safari", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "t"])))
+        XCTAssertFalse(plan(steps + [.native(spec: newTab.spec, argumentsJSON: try newTab.argumentsJSON())]).needsApproval(under: .readOnlyAuto),
+                       "⌘T only opens a tab; it is exempt like the opens.")
+        let closeTab = NativeOpenAction.pressShortcut(app: "Safari", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "w"])))
+        XCTAssertTrue(plan(steps + [.native(spec: closeTab.spec, argumentsJSON: try closeTab.argumentsJSON())]).needsApproval(under: .readOnlyAuto))
     }
 
     func testAutoApprovePlanSkipsMutatingNativeStepsButStillRequiresDestructiveApproval() throws {

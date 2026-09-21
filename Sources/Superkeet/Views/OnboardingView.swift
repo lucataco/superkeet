@@ -17,16 +17,20 @@ struct OnboardingView: View {
 
     var onComplete: () -> Void
 
-    /// Four screens. The model download runs in the background from the first screen and is shown
-    /// as a footer progress bar rather than a step; Actions Mode is configured later in Settings.
+    /// Five screens on macOS 26, four elsewhere. The model download runs in the background from
+    /// the first screen and is shown as a footer progress bar rather than a step. The Actions step
+    /// only appears on systems that can run the on-device planner.
     private enum OnboardingStep: Int, CaseIterable {
         case welcome
         case permissions
         case output
+        case actions
         case ready
     }
 
-    private var visibleSteps: [OnboardingStep] { OnboardingStep.allCases }
+    private var visibleSteps: [OnboardingStep] {
+        OnboardingStep.allCases.filter { $0 != .actions || AppleIntelligenceAvailability.osSupportsActionsMode }
+    }
 
     private func step(after step: OnboardingStep) -> OnboardingStep? {
         guard let index = visibleSteps.firstIndex(of: step), index + 1 < visibleSteps.count else { return nil }
@@ -50,6 +54,7 @@ struct OnboardingView: View {
                 case .welcome: welcomeStep
                 case .permissions: permissionsStep
                 case .output: outputStep
+                case .actions: actionsStep
                 case .ready: readyStep
                 }
             }
@@ -121,6 +126,13 @@ struct OnboardingView: View {
         .onChange(of: modelProvisioning.state.phase) {
             // Re-probe only on state transitions, not on every download progress tick.
             readiness = AppReadiness.current()
+        }
+        .onChange(of: settings.actionsEnabled) { _, enabled in
+            guard enabled else { return }
+            Task {
+                await SpeculativeLaunchCoordinator.shared.prepare()
+                await MCPClientManager.shared.connectEnabledServersIfNeeded()
+            }
         }
     }
 
@@ -451,6 +463,98 @@ struct OnboardingView: View {
         .padding(24)
     }
 
+    private var actionsStep: some View {
+        let availability = AppleIntelligenceAvailability.current
+        return VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 20) {
+                ZStack {
+                    Circle()
+                        .fill(Color.purple.opacity(0.12))
+                        .frame(width: 80, height: 80)
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 40))
+                        .foregroundColor(.purple)
+                }
+
+                VStack(spacing: 8) {
+                    Text("Do Things by Voice")
+                        .font(.title)
+                        .fontWeight(.bold)
+
+                    Text("Say “open Chrome and search for Morgan Freeman” and Superkeet opens Chrome while you are still talking, then runs the search. Optional, and separate from dictation.")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 460)
+                }
+
+                Toggle(isOn: $settings.actionsEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable Actions Mode")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(availability.isAvailable
+                             ? "Apps and web pages open instantly. Broader tasks use Apple Intelligence on this Mac."
+                             : availability.detail)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .frame(maxWidth: 460)
+
+                if settings.actionsEnabled {
+                    HStack(spacing: 12) {
+                        ForEach(ActionApprovalPolicy.allCases) { policy in
+                            OnboardingOutputModeOption(
+                                title: policy.title,
+                                description: policy.subtitle,
+                                icon: approvalPolicyIcon(policy),
+                                isSelected: settings.actionApprovalPolicy == policy,
+                                action: { settings.actionApprovalPolicy = policy }
+                            )
+                        }
+                    }
+                    .frame(maxWidth: 560)
+
+                    VStack(spacing: 8) {
+                        shortcutRow(
+                            title: "Run an Action",
+                            description: "Press once to start speaking, press again to run",
+                            displayName: settings.commandHotkeyDisplayName
+                        )
+                        shortcutRow(
+                            title: "Hold to Run an Action",
+                            description: "Hold while speaking, release to run",
+                            displayName: settings.commandPTTHotkeyDisplayName
+                        )
+                    }
+                    .frame(maxWidth: 560)
+                }
+            }
+
+            Spacer()
+
+            Text(settings.actionsEnabled
+                 ? "Apps named in a command open before you finish speaking. Browser and app-control MCP servers are optional and live in Settings ▸ Actions."
+                 : "You can turn this on later in Settings ▸ Actions.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.bottom, 8)
+        }
+        .padding(24)
+    }
+
+    private func approvalPolicyIcon(_ policy: ActionApprovalPolicy) -> String {
+        switch policy {
+        case .alwaysAsk: return "hand.raised"
+        case .readOnlyAuto: return "shield.lefthalf.filled"
+        case .autoApprove: return "bolt.fill"
+        }
+    }
+
     private var readyStep: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 24) {
@@ -496,8 +600,14 @@ struct OnboardingView: View {
                     if settings.actionsEnabled {
                         shortcutRow(
                             title: "Run an Action",
-                            description: "Speak a task for Actions Mode",
+                            description: "Press once to start speaking a task, press again to run it",
                             displayName: settings.commandHotkeyDisplayName
+                        )
+
+                        shortcutRow(
+                            title: "Hold to Run an Action",
+                            description: "Hold while speaking a task, release to run it",
+                            displayName: settings.commandPTTHotkeyDisplayName
                         )
                     }
 

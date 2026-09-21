@@ -13,7 +13,8 @@ enum ActionIntentFormatter {
             let parts = argv.compactMap { $0 as? String }
             phrase = parts.isEmpty ? nil : "Run: \(parts.joined(separator: " "))"
         } else if let url = string(arguments["url"]) {
-            phrase = string(arguments["browser"]).map { "Open \(url) in \($0)" } ?? "Open \(url)"
+            let subject = NativeOpenAction.webSearchQuery(from: url).map { "Search the web for “\($0)”" } ?? "Open \(url)"
+            phrase = string(arguments["browser"]).map { "\(subject) in \($0)" } ?? subject
         } else if toolName == "open_app", let name = string(arguments["name"]) {
             phrase = "Open \(name)"
         } else if toolName == "press_shortcut", let keys = arguments["keys"] as? [String] {

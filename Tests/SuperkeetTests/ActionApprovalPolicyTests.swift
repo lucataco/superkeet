@@ -55,6 +55,11 @@ final class ActionApprovalPolicyTests: XCTestCase {
         }
     }
 
+    func testYoloPolicyIsNamedForWhatItDoes() {
+        XCTAssertEqual(ActionApprovalPolicy.autoApprove.title, "Just Do It (YOLO)")
+        XCTAssertTrue(ActionApprovalPolicy.autoApprove.subtitle.contains("destructive"))
+    }
+
     func testPoliciesAreOrderedFromLeastToMostPermissiveWithStableRawValues() {
         XCTAssertEqual(ActionApprovalPolicy.allCases, [.alwaysAsk, .readOnlyAuto, .autoApprove])
         XCTAssertEqual(ActionApprovalPolicy.allCases.map(\.rawValue), ["alwaysAsk", "readOnlyAuto", "autoApprove"])

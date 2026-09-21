@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 import os.log
 
 private let appLog = Logger(subsystem: "com.superkeet.app", category: "AppDelegate")
@@ -12,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings.shared
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
-    private var onboardingWindowController: NSWindowController?
     private var didFinishOnboarding: Bool = false
     private var isTerminating: Bool = false
 
@@ -63,50 +61,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.menuBarManager.toggleCommandRecording()
             }
         }
+        hotkeyManager.onCommandPushToTalkStarted = { [weak self] in
+            DispatchQueue.main.async {
+                appLog.info("Command PTT start callback fired — starting command recording")
+                self?.menuBarManager.startCommandPushToTalk()
+            }
+        }
+        hotkeyManager.onCommandPushToTalkEnded = { [weak self] in
+            DispatchQueue.main.async {
+                appLog.info("Command PTT end callback fired — stopping command recording")
+                self?.menuBarManager.stopPushToTalk()
+            }
+        }
         hotkeyManager.onEscapePressed = { [weak self] in
             appLog.info("Escape callback fired — cancelling active work")
+            ListeningSessionController.shared.end(dispatchPending: false)
             self?.menuBarManager.cancelRecordingOnly()
             AgentSessionController.shared.cancel()
         }
     }
 
     private func showOnboardingWindow() {
-        if let existingWindow = onboardingWindowController?.window, existingWindow.isVisible {
-            existingWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let onboardingView = OnboardingView { [weak self] in
+        SetupWindowSession.shared.present { [weak self] in
             self?.completeOnboarding()
-        }
-
-        let hostingController = NSHostingController(rootView: onboardingView)
-        let window = NSWindow(contentViewController: hostingController)
-        window.setContentSize(NSSize(width: 560, height: 580))
-        window.styleMask = [.titled, .closable, .resizable]
-        window.title = "Superkeet Setup"
-        window.minSize = NSSize(width: 560, height: 580)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        let controller = NSWindowController(window: window)
-        self.onboardingWindowController = controller
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(onboardingWindowWillClose),
-            name: NSWindow.willCloseNotification,
-            object: window
-        )
-    }
-
-    @objc private func onboardingWindowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === onboardingWindowController?.window else { return }
-        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
-        DispatchQueue.main.async { [weak self, weak window] in
-            guard let self, let window, self.onboardingWindowController?.window === window else { return }
-            self.onboardingWindowController = nil
         }
     }
 
@@ -114,8 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !didFinishOnboarding else { return }
         didFinishOnboarding = true
         settings.hasCompletedOnboarding = true
-        onboardingWindowController?.window?.close()
-        onboardingWindowController = nil
+        SetupWindowSession.shared.close()
         NSApp.setActivationPolicy(.accessory)
         activatePostOnboardingServices()
         startDaemonWithErrorHandling()
@@ -128,6 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyManager.startRetryTimer()
         }
         Task { await SpeculativeLaunchCoordinator.shared.prepare() }
+        // Connect enabled MCP servers now rather than on the first command, so a cold `npx` start
+        // is not on the critical path of the first action.
+        Task { await MCPClientManager.shared.connectEnabledServersIfNeeded() }
         // Build the level-meter audio graph once startup has settled so the first recording's
         // overlay appears without paying for HAL setup on the hot path.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {

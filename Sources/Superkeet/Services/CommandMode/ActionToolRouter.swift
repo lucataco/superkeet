@@ -63,15 +63,21 @@ final class ActionToolRouter: ActionRouting {
     func execute(spec: ActionToolSpec, argumentsJSON: String) async throws -> String {
         dispatchPrecondition(condition: .onQueue(.main))
         try Task.checkCancellation()
-        let spec = try canonicalSpec(spec)
+        let canonical = try canonicalSpec(spec)
         var argumentsJSON = ActionArgumentNormalizer.normalize(
             argumentsJSON: argumentsJSON,
-            schemaJSON: spec.inputSchemaJSON
+            schemaJSON: canonical.inputSchemaJSON
         )
-        if spec.compactObservation {
-            argumentsJSON = ActionArgumentNormalizer.applyingObservationDefaults(argumentsJSON: argumentsJSON, schemaJSON: spec.inputSchemaJSON)
+        if canonical.compactObservation {
+            argumentsJSON = ActionArgumentNormalizer.applyingObservationDefaults(argumentsJSON: argumentsJSON, schemaJSON: canonical.inputSchemaJSON)
         }
         try ActionLimits.validateArguments(argumentsJSON)
+        // Built-in actions decide their own approval exemption from their arguments (⌘N is
+        // harmless, ⌘Q is not), so decode before consulting the policy.
+        let nativeAction: NativeOpenAction? = canonical.serverID == NativeActionExecutor.serverID
+            ? try NativeOpenAction.decode(toolName: canonical.toolName, argumentsJSON: argumentsJSON)
+            : nil
+        let spec = nativeAction?.spec ?? canonical
 
         var successOutcome = "succeeded"
         if settings.actionApprovalPolicy.requiresApproval(for: spec) {
@@ -93,6 +99,8 @@ final class ActionToolRouter: ActionRouting {
             successOutcome = "succeeded (auto-approved)"
         }
 
+        let clock = ContinuousClock()
+        let started = clock.now
         do {
             try Task.checkCancellation()
             let timeout = max(5, settings.actionTimeoutSeconds)
@@ -102,21 +110,44 @@ final class ActionToolRouter: ActionRouting {
                 seconds: Double(timeout),
                 timeoutError: ActionExecutionError.timedOut
             ) { [callTool, nativeExecutor] in
-                if spec.serverID == NativeActionExecutor.serverID {
-                    let action = try NativeOpenAction.decode(toolName: spec.toolName, argumentsJSON: finalArguments)
-                    return try await nativeExecutor.execute(action)
+                if let nativeAction {
+                    return try await nativeExecutor.execute(nativeAction)
                 }
-                return try await callTool(spec.serverID, spec.toolName, finalArguments, structured)
+                do {
+                    return try await callTool(spec.serverID, spec.toolName, finalArguments, structured)
+                } catch {
+                    try Task.checkCancellation()
+                    guard !ActionErrorHandling.isCancellation(error), spec.toolName != "start_session",
+                          let session = Self.endedSessionID(in: error.localizedDescription) else { throw error }
+                    let arguments = try ActionJSON.encode(["session": session])
+                    _ = try await callTool(spec.serverID, "start_session", arguments, false)
+                    try Task.checkCancellation()
+                    return try await callTool(spec.serverID, spec.toolName, finalArguments, structured)
+                }
             }
-            record(spec, argumentsJSON, outcome: successOutcome, detail: structured ? nil : output)
+            record(spec, argumentsJSON, outcome: successOutcome, detail: structured ? nil : output,
+                   durationMs: Self.milliseconds(started.duration(to: clock.now)))
             if structured { return output }
             return ActionResultText.truncate(output, limit: ActionResultText.modelLimit)
         } catch {
             let cancelled = Task.isCancelled || ActionErrorHandling.isCancellation(error)
+            // The error text is the only clue to why an observation failed; always keep it.
             record(spec, argumentsJSON, outcome: cancelled ? "cancelled" : "failed",
-                   detail: spec.compactObservation ? nil : ActionErrorHandling.userFacingMessage(for: error))
+                   detail: ActionErrorHandling.userFacingMessage(for: error),
+                   durationMs: Self.milliseconds(started.duration(to: clock.now)))
             throw error
         }
+    }
+
+    nonisolated static func milliseconds(_ duration: Duration) -> Int {
+        Int(duration / .milliseconds(1))
+    }
+
+    nonisolated static func endedSessionID(in message: String) -> String? {
+        guard let expression = try? NSRegularExpression(pattern: #"\bsession '([^'\r\n]+)' has ended\b"#, options: .caseInsensitive),
+              let match = expression.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)),
+              let range = Range(match.range(at: 1), in: message) else { return nil }
+        return String(message[range])
     }
 
     func requestPlanApproval(_ plan: ActionPlanApprovalRequest) async -> ActionPlanApprovalDecision {
@@ -149,7 +180,7 @@ final class ActionToolRouter: ActionRouting {
         return native
     }
 
-    private func record(_ spec: ActionToolSpec, _ argumentsJSON: String, outcome: String, detail: String? = nil) {
+    private func record(_ spec: ActionToolSpec, _ argumentsJSON: String, outcome: String, detail: String? = nil, durationMs: Int? = nil) {
         guard settings.actionAuditEnabled else { return }
         audit.record(
             serverName: spec.serverName,
@@ -157,7 +188,8 @@ final class ActionToolRouter: ActionRouting {
             risk: spec.risk,
             argumentsJSON: argumentsJSON,
             outcome: outcome,
-            detail: detail.map { ActionResultText.truncate(ActionRedactor.redactText($0)) }
+            detail: detail.map { ActionResultText.truncate(ActionRedactor.redactText($0)) },
+            durationMs: durationMs
         )
     }
 }

@@ -548,19 +548,25 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 return
             }
 
-            // Confirm the engine is back at idle before reusing it. Older engines omit `state`
-            // from the cancel reply, so fall back to a status probe. Only restart if it is stuck.
+            // Confirm the engine is back at idle before reusing it. The cancel reply always reports
+            // "transcribing" (the engine flips the phase before its worker drains the audio), and
+            // older engines omit `state` entirely, so probe status for a moment and restart only
+            // if the engine is genuinely stuck.
             var engineState = cancelEnvelope.state
-            if engineState == nil {
+            var polls = 0
+            while case .poll(let delay) = EngineCancelPolicy.nextStep(engineState: engineState, polls: polls) {
+                if let delay { try? await Task.sleep(for: delay) }
+                guard self.daemonState == .transcribing, self.outputGate.sessionID == nil else { return }
                 let statusResponse = await self.sendSocketCommandAsync("status")
                 engineState = self.decodeSocketResponse(statusResponse ?? "")?.state
+                polls += 1
             }
             guard self.daemonState == .transcribing, self.outputGate.sessionID == nil else { return }
             if engineState == "idle" {
                 self.daemonState = .idle
                 self.resetIdleTimer()
             } else {
-                parakeetLog.warning("Engine state after cancel was \(engineState ?? "unknown", privacy: .public); restarting")
+                parakeetLog.warning("Engine state after cancel was \(engineState ?? "unknown", privacy: .public) after \(polls) status probes; restarting")
                 try? await self.restartDaemon()
             }
         }
@@ -797,8 +803,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             lastRawTranscription = raw
             lastTranscription = corrected
             canUndoTextChanges = false
-            let earlyLaunch = speculation.take(sessionID: event.sessionID)
-            AgentSessionController.shared.handleCommand(corrected, speculative: earlyLaunch)
+            let handoff = speculation.takeHandoff(sessionID: event.sessionID)
+            AgentSessionController.shared.handleCommand(corrected, handoff: handoff)
             sessionStatus = "Working on it…"
             publishOutcome(.command)
             return finishSession()
@@ -810,6 +816,13 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         case .empty:
             sessionStatus = "No speech detected"
             publishOutcome(.noSpeech)
+            return finishSession()
+        case .ignored:
+            lastRawTranscription = raw
+            lastTranscription = raw
+            canUndoTextChanges = false
+            sessionStatus = "Nothing to do"
+            publishOutcome(.ignored)
             return finishSession()
         case .dictation: break
         }

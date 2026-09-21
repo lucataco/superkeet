@@ -8,7 +8,7 @@ All transcription runs on-device through NVIDIA's Parakeet TDT 0.6B model via ON
 
 This repo is still in active development. The app now favors a simpler setup-first flow over a dashboard-style UI:
 
-- Four-step onboarding: welcome, permissions, output mode, ready
+- Onboarding: welcome, permissions, output mode, Actions Mode (macOS 26), ready
 - Setup checks for engine, microphone, runtime directory, and input devices
 - Two shortcuts are supported: toggle recording and push-to-talk
 - Clipboard output is always on
@@ -28,7 +28,8 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - App-scoped phrase replacements and opt-in spoken correction commands with undo
 - Setup diagnostics for microphone access, engine presence, runtime directory, and daemon state
 - Optional **Actions Mode** that turns a spoken command into tool calls on local MCP servers, planned on-device and approved by you, or auto-approved if you choose
-- **Instant app launch** in Actions Mode: “open Notes and…” opens Notes while you are still speaking, spotting the app name in the engine's own interim text (parakeet-cli 0.1.7) or, on older engines, Apple's on-device recogniser
+- **Instant app launch** in Actions Mode: “let's open Chrome and…” opens Chrome while you are still speaking, spotting the app name in the engine's own interim text (parakeet-cli 0.1.7) or, on older engines, Apple's on-device recogniser
+- **Native web search**: “search for Morgan Freeman” opens a search in the browser you named or just opened, with no model call
 - 100% local transcription via `parakeet`
 
 ## Requirements
@@ -165,12 +166,14 @@ up to three commands waiting in order.
 
 ### Shortcuts
 
-Superkeet supports three configurable shortcuts:
+Superkeet supports four configurable shortcuts:
 
-- Toggle Recording: press once to start, press again to stop
-- Push to Talk: hold to record, release to stop
-- Run an Action: speak a task for Actions Mode (visible when Actions Mode is
-  enabled)
+- Toggle Recording (⌥Space): press once to start, press again to stop
+- Push to Talk (fn): hold to record, release to stop
+- Run an Action (⌥⇧Space): press once to start speaking a task, press again to
+  run it (visible when Actions Mode is enabled)
+- Hold to Run an Action (⌃⇧Space): hold while speaking a task, release to run
+  it (visible when Actions Mode is enabled)
 
 Shortcut configuration lives in `Settings > General`. Escape cancels a recording
 or an in-flight action and clears queued commands. Shortcuts are handled on a
@@ -191,11 +194,10 @@ cannot run it):
   - filler-word removal and spoken corrections
   - auto-paste (every transcript is always copied to the clipboard)
   - local history and usage-stat retention
-  - last transcript recovery
 - Actions
   - Actions Mode enablement and on-device model availability
   - MCP server management (add, edit, test, reconnect)
-  - approval policy (including **Don't Ask**) and the local action log
+  - approval policy (including **Just Do It (YOLO)**) and the local action log
 - Advanced
   - audio device selection (the engine restarts automatically on change)
   - app-scoped phrase replacements

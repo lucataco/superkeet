@@ -22,6 +22,8 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
     var onPushToTalkStarted: (() -> Void)?
     var onPushToTalkEnded: (() -> Void)?
     var onCommandHotkeyPressed: (() -> Void)?
+    var onCommandPushToTalkStarted: (() -> Void)?
+    var onCommandPushToTalkEnded: (() -> Void)?
     var onEscapePressed: (@MainActor () -> Void)?
 
     private let settings = AppSettings.shared
@@ -30,6 +32,9 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
     private var tapThread: EventTapThread?
     private var configObservers: Set<AnyCancellable> = []
     private var hotkeyCaptureCount: Int = 0
+    /// Tap-thread copy of `ListeningSessionController.isActive`. The controller is main-actor
+    /// isolated; the snapshot lock is how Escape still sees an open session between utterances.
+    private let listeningSessionActive = OSAllocatedUnfairLock(initialState: false)
 
     // Shared with the tap thread.
     private let decider = OSAllocatedUnfairLock(initialState: HotkeyDecider())
@@ -192,6 +197,12 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
             .store(in: &configObservers)
     }
 
+    /// Listening sessions live on the main actor; copy the flag so Escape still cancels between utterances.
+    func noteListeningSessionActive(_ active: Bool) {
+        listeningSessionActive.withLock { $0 = active }
+        refreshConfigSnapshot()
+    }
+
     private func refreshConfigSnapshot() {
         let snapshot = currentConfig()
         config.withLock { $0 = snapshot }
@@ -205,8 +216,12 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
             pttModifiers: settings.pttHotkeyModifierFlags,
             commandKeyCode: settings.commandHotkeyKeyCode,
             commandModifiers: settings.commandHotkeyModifierFlags,
+            commandPTTKeyCode: settings.commandPTTHotkeyKeyCode,
+            commandPTTModifiers: settings.commandPTTHotkeyModifierFlags,
             actionsEnabled: settings.actionsEnabled,
-            isRecording: settings.isRecording,
+            // A listening session counts as recording for Escape: between utterances the
+            // microphone is about to reopen, and Escape must be able to close the session.
+            isRecording: settings.isRecording || listeningSessionActive.withLock { $0 },
             isActionSessionActive: settings.isActionSessionActive,
             captureActive: hotkeyCaptureCount > 0
         )
@@ -289,11 +304,13 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         case .command:
             hotkeyLog.info("Command hotkey pressed")
             onCommandHotkeyPressed?()
+        case .commandPushToTalkStart:
+            hotkeyLog.info("Command PTT key pressed — starting command recording")
+            onCommandPushToTalkStarted?()
+        case .commandPushToTalkEnd:
+            hotkeyLog.info("Command PTT key released — stopping command recording")
+            onCommandPushToTalkEnded?()
         }
-    }
-
-    static func modifiersMatch(_ eventFlags: CGEventFlags, required: Int) -> Bool {
-        HotkeyDecider.modifiersMatch(eventFlags, required: required)
     }
 }
 
@@ -303,6 +320,7 @@ extension HotkeyConfig {
         toggleKeyCode: -1, toggleModifiers: 0,
         pttKeyCode: -1, pttModifiers: 0,
         commandKeyCode: -1, commandModifiers: 0,
+        commandPTTKeyCode: -1, commandPTTModifiers: 0,
         actionsEnabled: false, isRecording: false, isActionSessionActive: false, captureActive: false
     )
 }

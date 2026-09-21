@@ -11,7 +11,8 @@ ENTITLEMENTS_PATH="${SCRIPT_DIR}/Resources/Superkeet.entitlements"
 PARAKEET_BINARY_PATH="${PARAKEET_BINARY_PATH:-}"
 PARAKEET_SOURCE_DIR="${PARAKEET_SOURCE_DIR:-}"
 PARAKEET_OVERRIDE="${PARAKEET_CLI_PATH:-}"
-CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
+AUTO_IDENTITY=0
 PARAKEET_REPOSITORY_URL="https://github.com/lucataco/parakeet-cli.git"
 PARAKEET_REF="${PARAKEET_REF:-v0.1.7}"
 LOCAL_PARAKEET_SOURCE_DIR="${SCRIPT_DIR}/.build/parakeet-cli-${PARAKEET_REF}"
@@ -118,6 +119,21 @@ verify_parakeet_architecture() {
 require_command swift
 require_command codesign
 
+# An ad-hoc signature changes with every build, so macOS drops the Accessibility grant and
+# asks again after each reinstall. A real identity from the keychain keeps the grant. Pass
+# CODESIGN_IDENTITY explicitly to override, or CODESIGN_IDENTITY=- to force ad-hoc.
+if [[ -z "$CODESIGN_IDENTITY" ]]; then
+    for pattern in "Apple Development:" "Developer ID Application:" "Superkeet Dev"; do
+        candidate="$(security find-identity -v -p codesigning 2>/dev/null | grep -F "\"${pattern}" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')"
+        if [[ -n "$candidate" ]]; then
+            CODESIGN_IDENTITY="$candidate"
+            AUTO_IDENTITY=1
+            break
+        fi
+    done
+    CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+fi
+
 if [[ -n "$PARAKEET_SOURCE_DIR" && -z "$PARAKEET_BINARY_PATH" && -z "$PARAKEET_OVERRIDE" ]]; then
     build_parakeet_source_dir "$PARAKEET_SOURCE_DIR"
 fi
@@ -163,7 +179,12 @@ chmod 755 "$BUNDLE_DIR/Contents/Resources/bin/parakeet"
 
 printf '==> Signing %s...\n' "$BUNDLE_NAME"
 SIGN_ARGS=(--force --sign "$CODESIGN_IDENTITY" --options runtime)
-if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
+if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+    :
+elif [[ "$AUTO_IDENTITY" == 1 ]]; then
+    # A local development install needs no trusted timestamp (and no network round-trip for one).
+    SIGN_ARGS+=(--timestamp=none)
+else
     SIGN_ARGS+=(--timestamp)
 fi
 
