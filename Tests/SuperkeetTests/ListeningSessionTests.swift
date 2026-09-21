@@ -141,10 +141,10 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testEngineBackAtIdleReopensTheMicrophone() async {
-        let fixture = makeFixture()
+        let fixture = makeFixture(silence: .milliseconds(250))
         fixture.controller.begin()
         fixture.transcript.send("open Notes")
-        await settle(.milliseconds(120))
+        await settle(.milliseconds(400))
         XCTAssertEqual(fixture.recorder.stops, 1)
         fixture.transcript.send(nil)
         fixture.daemonState.send(.transcribing)
