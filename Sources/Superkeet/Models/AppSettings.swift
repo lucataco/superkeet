@@ -46,7 +46,7 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     @AppStorage("audioInputDevice") var audioInputDevice: String = ""
     @AppStorage("modelDirectory") var modelDirectory: String = ""
-    @AppStorage("idleTimeoutMinutes") var idleTimeoutMinutes: Int = 0
+    @AppStorage("idleTimeoutMinutes") var idleTimeoutMinutes: Int = IdleEnginePolicy.defaultTimeoutMinutes
 
     @AppStorage("recordingOverlayStyle") var recordingOverlayStyle: String = OverlayAnimationStyle.mini.rawValue
 
@@ -143,7 +143,12 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
         AppReadiness.runtimeFilesDirectory().appendingPathComponent("parakeet.pid").path
     }
 
-    private init() {}
+    private init() {
+        if Bundle.main.bundleIdentifier == "com.superkeet.app" {
+            IdleEnginePolicy.applyUpgrade(defaults: .standard)
+            idleTimeoutMinutes = UserDefaults.standard.integer(forKey: IdleEnginePolicy.timeoutDefaultsKey)
+        }
+    }
 
     @MainActor
     func applyAppearancePreference() {
