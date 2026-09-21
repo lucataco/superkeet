@@ -242,7 +242,7 @@ struct HomeTabView: View {
         if settings.actionsEnabled {
             HotkeyRow(
                 title: "Run an Action",
-                description: "Press once to start speaking a task, press again to stop",
+                description: "Press once to start listening, press again to stop",
                 displayName: settings.commandHotkeyDisplayName,
                 isEditing: editingHotkey == .command,
                 onClickBadge: {

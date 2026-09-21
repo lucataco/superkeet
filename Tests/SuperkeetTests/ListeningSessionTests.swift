@@ -115,15 +115,15 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testAPauseAfterSpeechDispatchesTheUtterance() async {
-        let fixture = makeFixture()
+        let fixture = makeFixture(silence: .milliseconds(250))
         fixture.controller.begin()
         fixture.transcript.send("")
         fixture.transcript.send("open")
-        await settle(.milliseconds(30))
+        await settle(.milliseconds(40))
         fixture.transcript.send("open Notes")
-        await settle(.milliseconds(30))
+        await settle(.milliseconds(40))
         XCTAssertEqual(fixture.recorder.stops, 0, "Text still changing; no dispatch yet.")
-        await settle(.milliseconds(70))
+        await settle(.milliseconds(300))
         XCTAssertEqual(fixture.recorder.stops, 1, "Unchanged text for the pause length ends the take.")
         XCTAssertEqual(fixture.controller.dispatchedCommands, 1)
         XCTAssertTrue(fixture.controller.isActive, "The session outlives the utterance.")
@@ -141,10 +141,10 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testEngineBackAtIdleReopensTheMicrophone() async {
-        let fixture = makeFixture()
+        let fixture = makeFixture(silence: .milliseconds(250))
         fixture.controller.begin()
         fixture.transcript.send("open Notes")
-        await settle(.milliseconds(120))
+        await settle(.milliseconds(400))
         XCTAssertEqual(fixture.recorder.stops, 1)
         fixture.transcript.send(nil)
         fixture.daemonState.send(.transcribing)

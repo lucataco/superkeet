@@ -33,6 +33,12 @@ final class ActionHUDWindowController {
         var autoHideDelay: TimeInterval { isListening || hasQueuedCommands ? 2 : 8 }
     }
 
+    private struct LiveInputs: Equatable {
+        var hasSpeculativeActivity: Bool
+        var isListening: Bool
+        var hasQueuedCommands: Bool
+    }
+
     private var panel: NSPanel?
     private var cancellables: Set<AnyCancellable> = []
     private var autoHideWorkItem: DispatchWorkItem?
@@ -43,27 +49,35 @@ final class ActionHUDWindowController {
         guard !started else { return }
         started = true
 
+        let liveInputs = Publishers.CombineLatest4(
+            SpeculativeLaunchCoordinator.shared.$activity,
+            SpeculativeLaunchCoordinator.shared.$listening,
+            AgentSessionController.shared.$queuedCommands,
+            ListeningSessionController.shared.$isActive
+        )
+        .map { activity, listening, queued, sessionActive in
+            LiveInputs(
+                hasSpeculativeActivity: activity != nil,
+                isListening: listening != nil || sessionActive,
+                hasQueuedCommands: !queued.isEmpty
+            )
+        }
+        .eraseToAnyPublisher()
+
         Publishers.CombineLatest4(
             ActionApprovalController.shared.$pending,
             ActionApprovalController.shared.$pendingPlan,
             AgentSessionController.shared.$phase,
-            Publishers.CombineLatest4(
-                SpeculativeLaunchCoordinator.shared.$activity,
-                SpeculativeLaunchCoordinator.shared.$listening,
-                AgentSessionController.shared.$queuedCommands,
-                ListeningSessionController.shared.$isActive
-            )
+            liveInputs
         )
         .map { pending, plan, phase, live in
             Visibility(
                 hasPendingApproval: pending != nil,
                 hasPendingPlan: plan != nil,
                 phase: phase,
-                hasSpeculativeActivity: live.0 != nil,
-                // The pill stays up for the whole listening session, including the gap between
-                // one utterance's transcript and the next take opening.
-                isListening: live.1 != nil || live.3,
-                hasQueuedCommands: !live.2.isEmpty
+                hasSpeculativeActivity: live.hasSpeculativeActivity,
+                isListening: live.isListening,
+                hasQueuedCommands: live.hasQueuedCommands
             )
         }
         .removeDuplicates()

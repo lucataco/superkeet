@@ -35,7 +35,7 @@ struct AboutTabView: View {
                 VStack(spacing: 4) {
                     creditRow("Speech Engine", "Parakeet TDT 0.6B v3 (ONNX)")
                     creditRow("Voice Detection", "Silero VAD v5")
-                    creditRow("Inference", "ONNX Runtime with CoreML")
+                    creditRow("Inference", "ONNX Runtime")
                     creditRow("Framework", "SwiftUI + AppKit")
                 }
             }

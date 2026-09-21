@@ -170,8 +170,8 @@ Superkeet supports four configurable shortcuts:
 
 - Toggle Recording (⌥Space): press once to start, press again to stop
 - Push to Talk (fn): hold to record, release to stop
-- Run an Action (⌥⇧Space): press once to start speaking a task, press again to
-  run it (visible when Actions Mode is enabled)
+- Run an Action (⌥⇧Space): press once to start listening, press again to
+  stop (visible when Actions Mode is enabled)
 - Hold to Run an Action (⌃⇧Space): hold while speaking a task, release to run
   it (visible when Actions Mode is enabled)
 

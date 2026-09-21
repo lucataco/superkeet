@@ -181,7 +181,12 @@ struct SpeculativeIntentDetector {
     private mutating func isAmbiguous(_ app: SpeculativeApp) -> Bool {
         let names = cachedNames ?? environment.installedNames().map(AppResolver.normalizedName)
         cachedNames = names
-        let own = AppResolver.normalizedName(app.name)
-        return names.contains { $0 != app.spokenName && $0 != own && $0.hasPrefix(app.spokenName) }
+        let spokenKey = AppResolver.matchKey(app.spokenName)
+        let ownKey = AppResolver.matchKey(app.name)
+        guard !spokenKey.isEmpty else { return true }
+        return names.contains {
+            let key = AppResolver.matchKey($0)
+            return key != spokenKey && key != ownKey && key.hasPrefix(spokenKey)
+        }
     }
 }

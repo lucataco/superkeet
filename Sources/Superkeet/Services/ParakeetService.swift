@@ -324,6 +324,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 autoPasteEnabled: self.settings.autoPasteEnabled
             )
             self.autoRestartPolicy.recordReady()
+            self.resetIdleTimer()
         }
     }
 

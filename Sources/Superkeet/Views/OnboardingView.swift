@@ -147,7 +147,7 @@ struct OnboardingView: View {
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
-                Text("Local voice-to-text powered by Parakeet.\nFast, private, and fully offline.")
+                Text("Local voice-to-text powered by Parakeet.\nFast, private, and on-device.")
                     .font(.title3)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -521,7 +521,7 @@ struct OnboardingView: View {
                     VStack(spacing: 8) {
                         shortcutRow(
                             title: "Run an Action",
-                            description: "Press once to start speaking, press again to run",
+                            description: "Press once to start listening, press again to stop",
                             displayName: settings.commandHotkeyDisplayName
                         )
                         shortcutRow(
@@ -600,7 +600,7 @@ struct OnboardingView: View {
                     if settings.actionsEnabled {
                         shortcutRow(
                             title: "Run an Action",
-                            description: "Press once to start speaking a task, press again to run it",
+                            description: "Press once to start listening, press again to stop",
                             displayName: settings.commandHotkeyDisplayName
                         )
 

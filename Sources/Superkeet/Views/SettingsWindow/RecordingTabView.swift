@@ -73,7 +73,7 @@ struct RecordingTabView: View {
                 } header: {
                     Text("Engine")
                 } footer: {
-                    Text("Stopping the speech engine frees about a gigabyte of memory. It restarts automatically on your next recording, which adds a few seconds.")
+                    Text("Stopping the speech engine frees about 1.8 GB of memory. It restarts automatically on your next recording, which takes about a second.")
                 }
 
                 if AppleIntelligenceAvailability.osSupportsActionsMode {

@@ -478,7 +478,7 @@ final class AgentSessionControllerTests: XCTestCase {
     }
 
     private func fixtureResolver(_ name: String) -> URL? {
-        let apps = ["Notes", "Discord"].map { URL(fileURLWithPath: "/fixture/Applications/\($0).app") }
+        let apps = ["Notes", "Discord", "Helium"].map { URL(fileURLWithPath: "/fixture/Applications/\($0).app") }
         return AppResolver(directories: [URL(fileURLWithPath: "/fixture/Applications")], applicationsInDirectory: { _ in apps })
             .resolve(name)
     }
@@ -899,7 +899,8 @@ final class AgentSessionControllerTests: XCTestCase {
         await withPolicy(.readOnlyAuto) {
             let router = FakeRouter(specs: [])
             router.planDecision = .deny
-            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil })
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                    resolveApp: { [self] in fixtureResolver($0) })
             controller.handleCommand("open Discord")
             await waitUntilFinished(controller)
             XCTAssertTrue(router.plans.isEmpty)
@@ -1254,7 +1255,7 @@ final class AgentSessionControllerTests: XCTestCase {
             let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: {
                 plannerCreated = true
                 return nil
-            })
+            }, resolveApp: { [self] in fixtureResolver($0) })
             controller.handleCommand(command)
             await waitUntilFinished(controller)
             XCTAssertEqual(controller.phase, .finished("tool-output"))
@@ -1271,7 +1272,8 @@ final class AgentSessionControllerTests: XCTestCase {
     func testCompoundOpenRunsTheOpenNativelyThenPlansTheRest() async {
         let router = FakeRouter(specs: [makeSpec()])
         let planner = FakePlanner(calls: 0)
-        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
+                                                resolveApp: { [self] in fixtureResolver($0) })
         controller.handleCommand("open Helium and summarize the page")
         await waitUntilFinished(controller)
         XCTAssertEqual(controller.phase, .finished("tool-output done"))
@@ -1320,7 +1322,8 @@ final class AgentSessionControllerTests: XCTestCase {
         for failure in failures {
             let router = FakeRouter(specs: [], failure: failure)
             let planner = FakePlanner(calls: 0)
-            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
+                                                    resolveApp: { [self] in fixtureResolver($0) })
             controller.handleCommand("open discord")
             await waitUntilFinished(controller)
             XCTAssertFalse(planner.invoked)
