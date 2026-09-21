@@ -65,7 +65,7 @@ enum NativeOpenAction: Equatable, Sendable {
     }
 
     /// Shortcuts that only create something new and can always be undone by closing it.
-    static let benignShortcuts: Set<KeyboardShortcut> = Set([["cmd", "n"], ["cmd", "t"]].compactMap { KeyboardShortcut(keys: $0) })
+    static let benignShortcuts: Set<KeyboardShortcut> = Set([["cmd", "n"], ["cmd", "t"], ["return"]].compactMap { KeyboardShortcut(keys: $0) })
 
     /// Typing the words the user just dictated into the app they named is what they asked for,
     /// so like opening an app it runs without a card under the default policy.

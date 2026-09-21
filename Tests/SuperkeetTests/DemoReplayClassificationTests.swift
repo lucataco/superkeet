@@ -55,16 +55,16 @@ final class DemoReplayClassificationTests: XCTestCase {
         return lines
     }
 
-    func testEngineTranscriptKeepsCaptureOnThePlanner() throws {
+    func testEngineTranscriptRoutesCaptureNatively() throws {
         let transcript = try String(contentsOf: fixtures.appendingPathComponent("expected-transcript.txt"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let expected = try loadSection("engine")
         let actual = routeLines(for: transcript)
         XCTAssertEqual(actual, expected)
-        XCTAssertTrue(actual.contains("PLAN\tlet's take a picture of me"), actual.joined(separator: "\n"))
+        XCTAssertTrue(actual.contains("NAT\tlet's take a picture of me\tpress_shortcut"), actual.joined(separator: "\n"))
     }
 
-    func testIdealizedUtterancesRouteNativeExceptCapture() throws {
+    func testIdealizedUtterancesRouteCaptureNatively() throws {
         let expected = try loadSection("ideal")
         let utterances = [
             "Alright, can you open up the notes app for me and once you're there can you create a new note and inside this new note let's make the title say hello",
@@ -85,7 +85,21 @@ final class DemoReplayClassificationTests: XCTestCase {
             }
         }
         XCTAssertEqual(actual, expected)
-        XCTAssertTrue(actual.contains("PLAN\tlet's take a picture of me"), actual.joined(separator: "\n"))
+        XCTAssertTrue(actual.contains("NAT\tlet's take a picture of me\tpress_shortcut"), actual.joined(separator: "\n"))
+    }
+
+    func testCaptureDoesNotFireWhenPhotoBoothIsNotRunning() {
+        let notesOnly = NativeClauseContext(
+            currentApp: "Notes",
+            resolveApp: { [notes, photoBooth] name in
+                let normalized = AppResolver.normalizedName(name)
+                if normalized.contains("note") { return notes }
+                if normalized.contains("photo") || normalized.contains("camera") { return photoBooth }
+                return nil
+            },
+            isRunning: { [notes] in $0 == notes }
+        )
+        XCTAssertNil(NativeClauseRouter.action(for: "let's take a picture of me", context: notesOnly))
     }
 
     func testCommaRestoresTheNotesCompound() {
