@@ -138,6 +138,24 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         XCTAssertEqual(feed(&full, ["Open Notes"])?.commit.reason, .stable(count: 1), "Nothing extends \"notes\", so it launches at once.")
     }
 
+    func testSpokenTwoWordNameCommitsCamelCaseAppWithoutWaitingForFinal() {
+        var detector = SpeculativeIntentDetector(environment: environment(installed: ["TextEdit", "Notes"]))
+        let result = feed(&detector, ["Open", "Open text", "Open text edit", "Open text edit and"])
+        XCTAssertEqual(result?.sequence, 3, "\"Open text edit\" is already TextEdit; the recogniser split the CamelCase name.")
+        XCTAssertEqual(result?.commit.reason, .stable(count: 1))
+        XCTAssertEqual(result?.commit.action.app.name, "TextEdit")
+        XCTAssertEqual(result?.commit.clause, "open text edit")
+    }
+
+    func testTruncatedCamelCaseNameDoesNotLaunchALongerApp() {
+        var detector = SpeculativeIntentDetector(environment: environment(installed: ["TextEdit", "Notes"]))
+        XCTAssertNil(feed(&detector, ["Open text", "Open text app"]))
+        XCTAssertNil(detector.commit)
+        let settled = detector.observe(PartialTranscript(text: "Open text edit and", isFinal: false, sequence: 3))
+        XCTAssertEqual(settled?.action.app.name, "TextEdit")
+        XCTAssertEqual(settled?.reason, .clauseBoundary)
+    }
+
     func testLeadInPhrasesBeforeTheVerbAreSkipped() {
         for phrase in [
             "Lets open Chrome and", "Let's open Chrome and", "I want to open Chrome and", "Okay so can you open Chrome and",
@@ -304,6 +322,7 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         let ready = await inventory.waitUntilReady(timeout: .seconds(10))
         XCTAssertTrue(ready)
         XCTAssertNotNil(environment.resolveApp("the notes app"), "Notes ships with macOS.")
+        XCTAssertNotNil(environment.resolveApp("text edit"), "TextEdit ships with macOS; the recogniser splits the CamelCase name.")
         XCTAssertNil(environment.resolveApp("definitely not an installed application"))
         XCTAssertTrue(environment.installedNames().contains { $0.caseInsensitiveCompare("Notes") == .orderedSame })
 

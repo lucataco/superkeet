@@ -61,17 +61,19 @@ struct AppResolver: Sendable {
         if let bundleID, let registered = bundleLookup(bundleID), registered.isFileURL {
             return registered
         }
-        let target = Self.normalizedName(alias?.name ?? normalized)
+        let target = alias?.name ?? name
         if let match = exactMatch(target) { return match }
         return fuzzy ? fuzzyResolve(normalized, bundleLookup: bundleLookup) : nil
     }
 
     private func exactMatch(_ target: String) -> URL? {
+        let targetKey = Self.matchKey(target)
+        guard !targetKey.isEmpty else { return nil }
         for directory in directories {
             let match = applicationsInDirectory(directory)
                 .filter { $0.isFileURL && $0.pathExtension.lowercased() == "app" }
                 .sorted { $0.path < $1.path }
-                .first { Self.normalizedName($0.deletingPathExtension().lastPathComponent) == target }
+                .first { Self.matchKey($0.deletingPathExtension().lastPathComponent) == targetKey }
             if let match { return match }
         }
         return nil
@@ -98,7 +100,7 @@ struct AppResolver: Sendable {
         }
         for spoken in Self.aliases.keys.sorted() {
             guard let alias = Self.aliases[spoken] else { continue }
-            consider(spoken, bundleLookup(alias.bundleID) ?? exactMatch(Self.normalizedName(alias.name)))
+            consider(spoken, bundleLookup(alias.bundleID) ?? exactMatch(alias.name))
         }
         return best?.url
     }
@@ -193,6 +195,30 @@ struct AppResolver: Sendable {
             result = String(result.dropLast(suffix.count)).trimmingCharacters(in: edges)
         }
         return result.trimmingCharacters(in: edges)
+    }
+
+    /// ASR often splits CamelCase app names ("TextEdit" → "text edit"). Matching ignores those
+    /// spaces so instant launch can fire without falling back to sound-alike guessing.
+    static func matchKey(_ name: String) -> String {
+        String(normalizedName(insertingWordBreaks(name)).filter { !$0.isWhitespace })
+    }
+
+    static func insertingWordBreaks(_ name: String) -> String {
+        let characters = Array(name)
+        var result = ""
+        result.reserveCapacity(characters.count + 4)
+        for index in characters.indices {
+            let character = characters[index]
+            if index > 0, character.isUppercase {
+                let previous = characters[index - 1]
+                let nextIsLowercase = index + 1 < characters.count && characters[index + 1].isLowercase
+                if previous.isLowercase || (previous.isUppercase && nextIsLowercase) {
+                    result.append(" ")
+                }
+            }
+            result.append(character)
+        }
+        return result
     }
 
     private static func applications(in directory: URL) -> [URL] {

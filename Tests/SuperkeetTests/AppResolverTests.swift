@@ -27,6 +27,20 @@ final class AppResolverTests: XCTestCase {
         XCTAssertNil(resolver.resolve("   "))
     }
 
+    func testSpokenSpacesMatchCamelCaseFilenames() {
+        let textEdit = system.appendingPathComponent("TextEdit.app")
+        let studio = system.appendingPathComponent("Android Studio.app")
+        let resolver = AppResolver(directories: [system], applicationsInDirectory: { _ in [textEdit, studio] })
+        XCTAssertEqual(AppResolver.matchKey("TextEdit"), "textedit")
+        XCTAssertEqual(AppResolver.matchKey("text edit"), "textedit")
+        XCTAssertEqual(AppResolver.matchKey("XMLParser"), "xmlparser")
+        XCTAssertEqual(resolver.resolve("text edit"), textEdit)
+        XCTAssertEqual(resolver.resolve("the TextEdit app"), textEdit)
+        XCTAssertEqual(resolver.resolve("TextEdit"), textEdit)
+        XCTAssertEqual(resolver.resolve("android studio"), studio)
+        XCTAssertNil(resolver.resolve("text"), "A truncated CamelCase name must wait for the rest of the words.")
+    }
+
     func testAliasesUseRegisteredBundleBeforeScanning() {
         let registered = URL(fileURLWithPath: "/fixture/Registered/Google Chrome.app")
         let scanned = system.appendingPathComponent("Google Chrome.app")
