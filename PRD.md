@@ -212,7 +212,7 @@ Requirement IDs are stable handles for discussion and issue tracking. "Must" is 
 | ENG-3 | The model directory can be overridden; `--model-dir` is always passed so download and serve agree. | Shipped |
 | ENG-4 | Daemon startup waits for readiness instead of a fixed delay; failures surface diagnostics; duplicate starts are prevented; unreachable processes are cleaned up; stubborn processes are killed on timeout. | Shipped |
 | ENG-5 | Crash recovery uses bounded restart backoff; short-lived ready/crash cycles preserve restart history and a sustained healthy run resets it. | Shipped |
-| ENG-6 | The bundled engine version is pinned (currently parakeet-cli v0.1.7, protocol 2) in `install.sh`, the release workflow, and `DevelopmentEngineLocator`. | Shipped |
+| ENG-6 | The bundled engine version is pinned (currently parakeet-cli v0.1.8, protocol 2) in `install.sh`, the release workflow, and `DevelopmentEngineLocator`. | Shipped |
 
 ### 7.10 Actions Mode
 

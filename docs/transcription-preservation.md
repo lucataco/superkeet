@@ -104,11 +104,10 @@ manifest/runner; voice versions may change the waveform and recorded hashes.
 
 ## Release dependency
 
-Superkeet v1.6.0 uses the published
-[parakeet-cli v0.1.7 release](https://github.com/lucataco/parakeet-cli/releases/tag/v0.1.7).
-The release, installer and development pins target v0.1.7 and accept transcript
-protocol 1 or 2. Local development can use `PARAKEET_SOURCE_DIR` or the adjacent
-Formulae checkout.
+The release, installer and development pins target
+[parakeet-cli v0.1.8](https://github.com/lucataco/parakeet-cli/releases/tag/v0.1.8)
+and accept transcript protocol 1 or 2. Local development can use
+`PARAKEET_SOURCE_DIR` or the adjacent Formulae checkout.
 
 The client speaks daemon protocols 1 and 2 (`ParakeetService.supportedProtocolVersions`)
 and records which one the running engine reported. Protocol 2 (parakeet-cli
