@@ -1,14 +1,14 @@
 import XCTest
 @testable import Superkeet
 
+private let resolveTelegramFixture: @MainActor @Sendable (String) -> URL? = { name in
+    guard AppResolver.normalizedName(name) == "telegram" else { return nil }
+    return URL(fileURLWithPath: "/fixture/Telegram.app")
+}
+
 @MainActor
 final class OpenTargetRoutingTests: XCTestCase {
     private let telegram = NativeLaunchedApp(name: "Telegram", bundleIdentifier: "org.telegram.desktop", processIdentifier: 91, windowReady: true)
-
-    private func resolve(_ name: String) -> URL? {
-        guard AppResolver.normalizedName(name) == "telegram" else { return nil }
-        return URL(fileURLWithPath: "/fixture/Telegram.app")
-    }
 
     private func waitUntilFinished(_ controller: AgentSessionController) async {
         let deadline = Date().addingTimeInterval(5)
@@ -18,7 +18,7 @@ final class OpenTargetRoutingTests: XCTestCase {
     func testUnresolvedNamesAndExplicitWebsitesOpenLuckySearchWithoutPlanning() async throws {
         for command in ["open the Hacker News website", "open Hacker News site", "open Hacker News page", "open Hacker News"] {
             let router = AgentSessionControllerTests.FakeRouter(specs: [])
-            let controller = AgentSessionController(router: router, plannerFactory: { nil }, resolveApp: resolve)
+            let controller = AgentSessionController(router: router, plannerFactory: { nil }, resolveApp: resolveTelegramFixture)
             controller.handleCommand(command)
             await waitUntilFinished(controller)
             XCTAssertEqual(router.executed, ["open_url"], command)
@@ -37,7 +37,7 @@ final class OpenTargetRoutingTests: XCTestCase {
         router.outputs["open_app"] = telegram.summary
         let planner = AgentSessionControllerTests.ContextualPlanner()
         let controller = AgentSessionController(
-            router: router, plannerFactory: { planner }, resolveApp: resolve, isAppRunning: { _ in true },
+            router: router, plannerFactory: { planner }, resolveApp: resolveTelegramFixture, isAppRunning: { _ in true },
             isListeningSessionActive: { true }
         )
         controller.handleCommand("open Telegram and open Saved Messages")
