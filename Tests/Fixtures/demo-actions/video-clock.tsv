@@ -1,0 +1,13 @@
+t_ms	event	note
+1000	listening	HUD Go ahead, I'm listening
+3500	speech	Alright. Can you open
+4500	notes_open	Notes window while naming the app
+8500	new_note	New Note row
+11500	title_hello	title hello visible
+17500	arc	Arc Google homepage
+21000	search	Norbert Wiener results
+25500	xcom	x.com loading
+31500	photobooth	Photo Booth window
+34500	capture_clause	HUD take a picture of me
+37000	countdown	Photo Booth 3-2-1 during speech
+48130	end	video ends
