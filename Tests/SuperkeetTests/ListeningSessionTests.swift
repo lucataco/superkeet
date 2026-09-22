@@ -103,6 +103,20 @@ final class ListeningSessionControllerTests: XCTestCase {
         try? await Task.sleep(for: duration)
     }
 
+    /// The controller hops Combine events onto the main queue, so a fixed sleep after `send`
+    /// can miss the pause timer on a loaded CI runner. Spin until the hook side effect shows up.
+    private func waitUntil(
+        timeout: Duration = .seconds(2),
+        poll: Duration = .milliseconds(10),
+        _ condition: @escaping () -> Bool
+    ) async {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return }
+            try? await Task.sleep(for: poll)
+        }
+    }
+
     func testBeginOpensTheMicrophoneOnceWithOneSound() async {
         let fixture = makeFixture()
         fixture.controller.begin()
@@ -144,14 +158,14 @@ final class ListeningSessionControllerTests: XCTestCase {
         let fixture = makeFixture(silence: .milliseconds(250))
         fixture.controller.begin()
         fixture.transcript.send("open Notes")
-        await settle(.milliseconds(400))
+        await waitUntil { fixture.recorder.stops == 1 }
         XCTAssertEqual(fixture.recorder.stops, 1)
         fixture.transcript.send(nil)
         fixture.daemonState.send(.transcribing)
         await settle()
         XCTAssertEqual(fixture.recorder.starts, 1, "Not while the engine is still transcribing.")
         fixture.daemonState.send(.idle)
-        await settle()
+        await waitUntil { fixture.recorder.starts == 2 }
         XCTAssertEqual(fixture.recorder.starts, 2, "The next take starts as soon as the engine is idle.")
         XCTAssertEqual(fixture.recorder.sounds, [.start], "No per-utterance sounds inside a session.")
         fixture.controller.end(dispatchPending: false)
