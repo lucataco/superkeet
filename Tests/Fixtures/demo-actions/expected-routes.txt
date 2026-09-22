@@ -5,7 +5,7 @@ NAT	can you open up the Arc browser	open_app
 NAT	can you Google search Norbert Wiener	open_url
 PLAN	Now can you open up x.com Nice
 NAT	Um now can you open up the photo booth	open_app
-PLAN	let's take a picture of me
+NAT	let's take a picture of me	press_shortcut
 # ideal
 NAT	can you open up the notes app for me	open_app
 PLAN	once you're there can you create a new note and inside this new note let's make the title say hello
@@ -13,4 +13,4 @@ NAT	can you open up the Arc browser	open_app
 NAT	once you're there can you Google search Norbert Wiener	open_url
 NAT	Now can you open up x.com	open_url
 NAT	now can you open up the photo booth	open_app
-PLAN	let's take a picture of me
+NAT	let's take a picture of me	press_shortcut

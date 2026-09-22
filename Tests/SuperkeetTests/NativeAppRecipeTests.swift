@@ -59,6 +59,19 @@ final class NativeAppRecipeTests: XCTestCase {
         XCTAssertEqual(recipe("quit it")?.target, .current)
     }
 
+    func testTakeAPictureMapsToReturnInACameraApp() {
+        XCTAssertEqual(recipe("take a picture of me")?.keys, "Return")
+        XCTAssertEqual(recipe("take a picture of me")?.target, .named("photo booth"))
+        XCTAssertEqual(recipe("let's take a picture of me")?.keys, "Return")
+        XCTAssertEqual(recipe("capture a photo")?.keys, "Return")
+        XCTAssertEqual(recipe("snap a selfie")?.keys, "Return")
+        XCTAssertEqual(recipe("take a picture in Photo Booth")?.target, .named("photo booth"))
+        XCTAssertEqual(recipe("take a picture in the camera")?.target, .named("camera"))
+        XCTAssertNil(recipe("take a picture in Notes"))
+        XCTAssertNil(recipe("take a picture of the document"))
+        XCTAssertNil(recipe("take a look"))
+    }
+
     func testUnrelatedClausesHaveNoRecipe() {
         for clause in ["open Notes", "search for cats", "click Save", "type hello", "save the whales from extinction",
                        "create a note", "close friends", "undo button", "select the third row", "new", ""] {

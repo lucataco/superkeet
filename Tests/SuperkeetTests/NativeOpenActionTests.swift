@@ -79,8 +79,8 @@ final class NativeOpenActionTests: XCTestCase {
     }
 
     func testOnlyCreatingShortcutsAreExemptFromDefaultApproval() throws {
-        for (keys, exempt) in [(["cmd", "n"], true), (["cmd", "t"], true), (["cmd", "s"], false), (["cmd", "q"], false),
-                               (["cmd", "w"], false), (["cmd", "shift", "n"], false)] {
+        for (keys, exempt) in [(["cmd", "n"], true), (["cmd", "t"], true), (["return"], true), (["cmd", "s"], false),
+                               (["cmd", "q"], false), (["cmd", "w"], false), (["cmd", "shift", "n"], false)] {
             let action = NativeOpenAction.pressShortcut(app: "Notes", shortcut: try XCTUnwrap(KeyboardShortcut(keys: keys)))
             XCTAssertEqual(action.isApprovalExempt, exempt, keys.joined(separator: "+"))
             XCTAssertEqual(action.spec.approvalExempt, exempt, keys.joined(separator: "+"))

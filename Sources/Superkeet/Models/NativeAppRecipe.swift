@@ -30,7 +30,8 @@ struct NativeAppRecipe: Equatable, Sendable {
         rule(#"\Aundo(?:\s+(?:that|it|this|the\s+last\s+(?:change|edit|action)))?(?=\s+(?:in)\b|\z)"#, ["cmd", "z"]) { _, _ in "undo" },
         rule(#"\Aredo(?:\s+(?:that|it|this))?(?=\s+(?:in)\b|\z)"#, ["cmd", "shift", "z"]) { _, _ in "redo" },
         rule(#"\Aselect\s+all(?:\s+(?:the\s+)?text)?(?=\s+(?:in)\b|\z)"#, ["cmd", "a"]) { _, _ in "select all" },
-        rule(#"\Aquit(?:\s+(?:it|this|that|the\s+app))?(?=\s+(?:in)\b|\z)"#, ["cmd", "q"]) { _, _ in "quit" }
+        rule(#"\Aquit(?:\s+(?:it|this|that|the\s+app))?(?=\s+(?:in)\b|\z)"#, ["cmd", "q"]) { _, _ in "quit" },
+        rule(#"\A(?:take|capture|snap)(?:\s+(?:a|an|my))?\s+(?:picture|photo|selfie|shot)(?:\s+of\s+(?:me|us|myself|this))?\z"#, ["return"]) { _, _ in "take a picture" }
     ] as [Rule?]).compactMap { $0 }
 
     private static let trailingTarget = try? NSRegularExpression(
@@ -38,6 +39,7 @@ struct NativeAppRecipe: Equatable, Sendable {
     )
 
     static func recipe(for clause: String) -> NativeAppRecipe? {
+        if let capture = captureRecipe(in: clause) { return capture }
         var text = clause.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".,;:!?")))
         text = text.replacingOccurrences(of: #"\A(?:please\s+|now\s+|then\s+|also\s+)+"#, with: "", options: .regularExpression)
         guard !text.isEmpty else { return nil }
@@ -49,7 +51,7 @@ struct NativeAppRecipe: Equatable, Sendable {
             text = String(text[..<range.lowerBound])
         }
 
-        for rule in rules {
+        for rule in rules where rule.keys != ["return"] {
             guard let match = rule.pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                   let shortcut = KeyboardShortcut(keys: rule.keys) else { continue }
             return NativeAppRecipe(shortcut: shortcut, target: target, description: rule.description(match, text))
@@ -65,7 +67,36 @@ struct NativeAppRecipe: Equatable, Sendable {
     }
 
     static var ruleCount: Int { rules.count }
-    static let expectedRuleCount = 12
+    static let expectedRuleCount = 13
+
+    private static func captureRecipe(in clause: String) -> NativeAppRecipe? {
+        var text = CommandLeadIn.trim(clause)
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".,;:!?")))
+        guard !text.isEmpty else { return nil }
+        var target = Target.current
+        if let trailingTarget, let match = trailingTarget.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let range = Range(match.range, in: text), let name = capture(match, 1, in: text) {
+            target = .named(name)
+            text = String(text[..<range.lowerBound])
+        }
+        guard let rule = rules.first(where: { $0.keys == ["return"] }),
+              let match = rule.pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let shortcut = KeyboardShortcut(keys: rule.keys),
+              let cameraTarget = cameraTarget(target) else { return nil }
+        return NativeAppRecipe(shortcut: shortcut, target: cameraTarget, description: rule.description(match, text))
+    }
+
+    private static func cameraTarget(_ target: Target) -> Target? {
+        switch target {
+        case .current:
+            return .named("photo booth")
+        case .named(let name):
+            let normalized = AppResolver.normalizedName(name)
+            guard normalized.contains("photo") || normalized.contains("camera") else { return nil }
+            return target
+        }
+    }
 
     private static func rule(_ pattern: String, _ keys: [String], description: @escaping @Sendable (NSTextCheckingResult, String) -> String) -> Rule? {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
