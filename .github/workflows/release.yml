@@ -23,19 +23,24 @@ env:
   PARAKEET_REF: v0.1.9
   HOMEBREW_TAP_REPOSITORY: lucataco/homebrew-tap
 
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-26
+    timeout-minutes: 60
     steps:
       - name: Check out source for tag push
         if: github.event_name != 'workflow_dispatch'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
       - name: Check out source for manual publish
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
           ref: refs/tags/${{ github.event.inputs.tag }}
@@ -78,18 +83,33 @@ jobs:
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
           echo "parakeet_ref=$PARAKEET_REF" >> "$GITHUB_OUTPUT"
 
+      # A tag must pass the same gate as CI before anything is signed or published.
+      - name: Install SwiftLint
+        run: ./scripts/install_swiftlint.sh
+
+      - name: Lint
+        run: swiftlint lint --strict
+
+      - name: Run test suite
+        run: swift test
+
+      - name: Run script tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.98.1"
 
       - name: Check out pinned parakeet-cli source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ env.PARAKEET_REPOSITORY }}
           ref: ${{ steps.vars.outputs.parakeet_ref }}
           path: .release/parakeet-cli
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ".release/parakeet-cli"
 
@@ -200,11 +220,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.vars.outputs.tag }}
         run: |
-          gh release upload "$TAG" .release/dist/*.zip .release/dist/*.sha256 --clobber
+          # Never replace a published zip: a re-run would produce a new checksum and break any
+          # cask already pointing at the old one. Delete the assets by hand to republish.
+          EXISTING="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          for file in .release/dist/*.zip .release/dist/*.sha256; do
+            if printf '%s\n' "$EXISTING" | grep -qxF "$(basename "$file")"; then
+              echo "::error::$(basename "$file") is already attached to $TAG; refusing to overwrite it."
+              exit 1
+            fi
+          done
+          gh release upload "$TAG" .release/dist/*.zip .release/dist/*.sha256
 
       - name: Check out Homebrew tap
         if: steps.tap.outputs.enabled == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ env.HOMEBREW_TAP_REPOSITORY }}
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -224,7 +253,6 @@ jobs:
 
       - name: Create Homebrew tap pull request
         if: steps.tap.outputs.enabled == 'true'
-        continue-on-error: true
         env:
           TAG: ${{ steps.vars.outputs.tag }}
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -256,9 +284,10 @@ jobs:
             --repo "${{ env.HOMEBREW_TAP_REPOSITORY }}"; then
             echo "Pull request created."
           else
-            echo "::warning::Could not create PR with the current token (needs pull_requests:write scope on the tap repo)."
-            echo "::warning::The branch '$BRANCH' was pushed — open the PR manually:"
-            echo "::warning::https://github.com/${{ env.HOMEBREW_TAP_REPOSITORY }}/compare/main...$BRANCH"
+            echo "::error::Could not create PR with the current token (needs pull_requests:write scope on the tap repo)."
+            echo "::error::The branch '$BRANCH' was pushed — open the PR manually:"
+            echo "::error::https://github.com/${{ env.HOMEBREW_TAP_REPOSITORY }}/compare/main...$BRANCH"
+            exit 1
           fi
 
       - name: Warn when tap sync is disabled

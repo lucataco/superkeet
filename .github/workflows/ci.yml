@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -13,23 +16,26 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Record Swift toolchain
+        id: toolchain
+        run: echo "swift=$(swift --version 2>&1 | head -1 | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
 
       - name: Cache SPM build directory
-        uses: actions/cache@v4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          # Include the toolchain so an Xcode update on the runner doesn't restore stale objects.
+          key: spm-${{ runner.os }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
-            spm-${{ runner.os }}-
+            spm-${{ runner.os }}-${{ steps.toolchain.outputs.swift }}-
 
       - name: Install SwiftLint
-        run: |
-          if ! command -v swiftlint >/dev/null 2>&1; then
-            brew install swiftlint
-          fi
+        run: ./scripts/install_swiftlint.sh
 
       - name: Lint
         run: swiftlint lint --strict
