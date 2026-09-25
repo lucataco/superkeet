@@ -138,19 +138,21 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testReDecodeFlickerDuringAPauseStillEndsTheTake() async {
-        let fixture = makeFixture(silence: .milliseconds(350))
+        // The engine keeps flipping between readings of words already heard, faster than the
+        // pause length and for well past it. Only new words may restart the timer, so the take
+        // still ends. (Asserting nothing about intermediate timing keeps this stable on slow CI.)
+        let fixture = makeFixture(silence: .milliseconds(200))
         fixture.controller.begin()
-        fixture.transcript.send("can you open up x.com?")
-        await settle(.milliseconds(40))
-        fixture.transcript.send("can you open up x dot com.")
-        // The engine keeps flipping between readings of words already heard.
-        for text in ["can you open up x.com?", "Can you open up x dot com", "can you open up x.com?"] {
-            await settle(.milliseconds(70))
-            fixture.transcript.send(text)
+        let readings = ["can you open up x.com?", "can you open up x dot com.", "Can you open up x dot com", "can you open up x.com"]
+        let deadline = ContinuousClock.now + .milliseconds(1_500)
+        var index = 0
+        while fixture.recorder.stops == 0, ContinuousClock.now < deadline {
+            fixture.transcript.send(readings[index % readings.count])
+            index += 1
+            await settle(.milliseconds(40))
         }
-        XCTAssertEqual(fixture.recorder.stops, 0)
-        await settle(.milliseconds(250))
         XCTAssertEqual(fixture.recorder.stops, 1, "Only new words restart the pause timer.")
+        XCTAssertGreaterThan(index, 4, "Flicker kept arriving before the pause ended the take.")
         fixture.controller.end(dispatchPending: false)
     }
 
