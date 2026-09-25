@@ -1,0 +1,61 @@
+{"end_ms": 7630, "start_ms": 0, "take": 0, "type": "take"}
+{"at_ms": 2550, "sequence": 1, "take": 0, "text": "Alright.", "type": "partial"}
+{"at_ms": 3060, "sequence": 2, "take": 0, "text": "Alright, can you open it?", "type": "partial"}
+{"at_ms": 3570, "sequence": 3, "take": 0, "text": "Alright, can you open up the", "type": "partial"}
+{"at_ms": 4080, "sequence": 4, "take": 0, "text": "Alright, can you open up the notes app for", "type": "partial"}
+{"at_ms": 4590, "sequence": 5, "take": 0, "text": "Alright, can you open up the Notes app for me?", "type": "partial"}
+{"at_ms": 5100, "sequence": 6, "take": 0, "text": "Alright, can you open up the Notes app for me and um", "type": "partial"}
+{"at_ms": 5610, "sequence": 7, "take": 0, "text": "Alright, can you open up the notes app for me and um try there", "type": "partial"}
+{"at_ms": 6120, "sequence": 8, "take": 0, "text": "Alright, can you open up the notes app for me and um once you're there can you create a", "type": "partial"}
+{"at_ms": 6630, "sequence": 9, "take": 0, "text": "Alright, can you open up the notes app for me and um once you're there can you create a new note", "type": "partial"}
+{"at_ms": 7140, "sequence": 10, "take": 0, "text": "Alright, can you open up the notes app for me and um once you're there can you create a new note?", "type": "partial"}
+{"at_ms": 7630, "take": 0, "text": "Alright, can you open up the notes app for me and um once you're there, can you create a new note? And", "type": "final"}
+{"end_ms": 11020, "start_ms": 7980, "take": 1, "type": "take"}
+{"at_ms": 9000, "sequence": 1, "take": 1, "text": "No, let's make the time.", "type": "partial"}
+{"at_ms": 9510, "sequence": 2, "take": 1, "text": "No, let's make the title say.", "type": "partial"}
+{"at_ms": 10020, "sequence": 3, "take": 1, "text": "Let's make the title say hello.", "type": "partial"}
+{"at_ms": 11020, "take": 1, "text": "No, let's make the title say hello.", "type": "final"}
+{"end_ms": 17470, "start_ms": 11370, "take": 2, "type": "take"}
+{"at_ms": 11880, "sequence": 1, "take": 2, "text": "Alright.", "type": "partial"}
+{"at_ms": 12390, "sequence": 2, "take": 2, "text": "Alright, right.", "type": "partial"}
+{"at_ms": 12900, "sequence": 3, "take": 2, "text": "Right, great. Okay.", "type": "partial"}
+{"at_ms": 13410, "sequence": 4, "take": 2, "text": "Great, great. Okay. Um", "type": "partial"}
+{"at_ms": 13920, "sequence": 5, "take": 2, "text": "Great, great. Okay. Um let's move on.", "type": "partial"}
+{"at_ms": 14430, "sequence": 6, "take": 2, "text": "Great, great. Okay. Um let's move on and", "type": "partial"}
+{"at_ms": 14940, "sequence": 7, "take": 2, "text": "Great, great. Okay. Um let's move on and can you.", "type": "partial"}
+{"at_ms": 15450, "sequence": 8, "take": 2, "text": "Great, great. Okay. Um let's move on and can you open up.", "type": "partial"}
+{"at_ms": 15960, "sequence": 9, "take": 2, "text": "Great, great. Okay. Um let's move on and can you open up the arc?", "type": "partial"}
+{"at_ms": 16470, "sequence": 10, "take": 2, "text": "Great, great. Okay. Um let's move on and can you open up the Arc browser?", "type": "partial"}
+{"at_ms": 17470, "take": 2, "text": "Great, great. Okay. Um let's move on and can you open up the Arc browser? And once", "type": "final"}
+{"end_ms": 21370, "start_ms": 17820, "take": 3, "type": "take"}
+{"at_ms": 18330, "sequence": 1, "take": 3, "text": "Can you go?", "type": "partial"}
+{"at_ms": 18840, "sequence": 2, "take": 3, "text": "Can you google search?", "type": "partial"}
+{"at_ms": 19350, "sequence": 3, "take": 3, "text": "Can you go search and order we're going to be able to do it?", "type": "partial"}
+{"at_ms": 19860, "sequence": 4, "take": 3, "text": "Can you google Search Norbert Wiener?", "type": "partial"}
+{"at_ms": 20370, "sequence": 5, "take": 3, "text": "Can you go search Norbert Wiener?", "type": "partial"}
+{"at_ms": 21370, "take": 3, "text": "Can you go search Norbert Wiener?", "type": "final"}
+{"end_ms": 23740, "start_ms": 21720, "take": 4, "type": "take"}
+{"at_ms": 22230, "sequence": 1, "take": 4, "text": "Can you open up?", "type": "partial"}
+{"at_ms": 22740, "sequence": 2, "take": 4, "text": "Now can you open up x.com.", "type": "partial"}
+{"at_ms": 23250, "sequence": 3, "take": 4, "text": "Now can you open up x.com?", "type": "partial"}
+{"at_ms": 23740, "take": 4, "text": "Now can you open up x.com?", "type": "final"}
+{"end_ms": 28660, "start_ms": 24090, "take": 5, "type": "take"}
+{"at_ms": 27150, "sequence": 1, "take": 5, "text": "Nice, nice.", "type": "partial"}
+{"at_ms": 27660, "sequence": 2, "take": 5, "text": "Nice, nice. Okay.", "type": "partial"}
+{"at_ms": 28660, "take": 5, "text": "Nice, nice. Okay. Um", "type": "final"}
+{"end_ms": 31540, "start_ms": 29010, "take": 6, "type": "take"}
+{"at_ms": 29520, "sequence": 1, "take": 6, "text": "How can you open it?", "type": "partial"}
+{"at_ms": 30030, "sequence": 2, "take": 6, "text": "How can you open up the", "type": "partial"}
+{"at_ms": 30540, "sequence": 3, "take": 6, "text": "How can you open up the photo booth?", "type": "partial"}
+{"at_ms": 31540, "take": 6, "text": "How can you open up the photo booth?", "type": "final"}
+{"end_ms": 34930, "start_ms": 31890, "take": 7, "type": "take"}
+{"at_ms": 32910, "sequence": 1, "take": 7, "text": "Yeah.", "type": "partial"}
+{"at_ms": 33420, "sequence": 2, "take": 7, "text": "And let's take a look at the", "type": "partial"}
+{"at_ms": 33930, "sequence": 3, "take": 7, "text": "And let's take a picture of me.", "type": "partial"}
+{"at_ms": 34930, "take": 7, "text": "And let's take a picture of me.", "type": "final"}
+{"end_ms": 43420, "start_ms": 35280, "take": 8, "type": "take"}
+{"at_ms": 41400, "sequence": 1, "take": 8, "text": "Awesome.", "type": "partial"}
+{"at_ms": 41910, "sequence": 2, "take": 8, "text": "Cool, awesome. Thank you.", "type": "partial"}
+{"at_ms": 42420, "sequence": 3, "take": 8, "text": "Awesome. Thank you.", "type": "partial"}
+{"at_ms": 42930, "sequence": 4, "take": 8, "text": "Cool. Awesome. Thank you.", "type": "partial"}
+{"at_ms": 43420, "take": 8, "text": "Awesome. Thank you.", "type": "final"}

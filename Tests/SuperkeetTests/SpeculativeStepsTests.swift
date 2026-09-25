@@ -135,6 +135,118 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertEqual(detector.steps.count, 1)
     }
 
+    // MARK: Last clause while still speaking
+
+    private func notesDetector(installed: [String] = []) -> SpeculativeStepDetector {
+        SpeculativeStepDetector(environment: .init(
+            resolveApp: { [notes, safari] name in
+                let normalized = AppResolver.normalizedName(name)
+                if normalized.contains("notes") { return notes }
+                if normalized == "safari" { return safari }
+                return nil
+            },
+            isRunning: { _ in true },
+            allows: { SpeculativeStepDetector.allows($0, policy: .readOnlyAuto) },
+            installedNames: { installed }
+        ))
+    }
+
+    func testLastClauseRunsWhenASecondPartialConfirmsIt() throws {
+        var detector = notesDetector()
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        let results = feed(&detector, ["Open the Notes app and create a new no", "Open the Notes app and create a new note"], launched: notesApp)
+        XCTAssertEqual(results[0], [], "One sighting is not enough while the words are still coming.")
+        XCTAssertEqual(results[1], [SpeculativeStep(index: 1, clause: "create a new note", action: .pressShortcut(app: "Notes", shortcut: commandN), sequence: 2)])
+        XCTAssertNil(detector.trailingDeadline)
+    }
+
+    func testLastClauseRunsOnceItHoldsStillWithoutANewPartial() throws {
+        var detector = notesDetector()
+        let start = Date(timeIntervalSince1970: 100)
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        let first = detector.observe(PartialTranscript(text: "Open the Notes app and create a new note", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(first, [])
+        XCTAssertEqual(detector.trailingDeadline, start.addingTimeInterval(SpeculativeStepDetector.trailingHold))
+        XCTAssertEqual(detector.commitStableTrailing(at: start.addingTimeInterval(0.3)), [])
+        let held = detector.commitStableTrailing(at: start.addingTimeInterval(SpeculativeStepDetector.trailingHold))
+        XCTAssertEqual(held.map(\.action), [.pressShortcut(app: "Notes", shortcut: commandN)])
+        XCTAssertEqual(detector.commitStableTrailing(at: start.addingTimeInterval(5)), [], "Runs once.")
+        XCTAssertEqual(feed(&detector, ["", "Open the Notes app and create a new note and"], launched: notesApp)[1], [], "Not repeated when the clause completes.")
+    }
+
+    func testAChangingLastClauseRestartsTheHold() throws {
+        var detector = notesDetector()
+        let start = Date(timeIntervalSince1970: 100)
+        _ = detector.observe(PartialTranscript(text: "Open Notes and create a new tab", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        let later = start.addingTimeInterval(0.5)
+        let changed = detector.observe(PartialTranscript(text: "Open Notes and create a new tabular note", isFinal: false, sequence: 2), launchedApp: notesApp, at: later)
+        XCTAssertEqual(changed, [], "⌘T then ⌘N: different actions, nothing is confirmed.")
+        XCTAssertEqual(detector.commitStableTrailing(at: start.addingTimeInterval(SpeculativeStepDetector.trailingHold)), [])
+        XCTAssertEqual(detector.trailingDeadline, later.addingTimeInterval(SpeculativeStepDetector.trailingHold))
+    }
+
+    func testTypingAndUnfinishedSearchesNeverRunBeforeTheSpeakerMovesOn() {
+        for text in ["Open Notes and type hello", "Open Notes and type hello.", "Open Notes and google search Norbert"] {
+            var detector = notesDetector()
+            let start = Date(timeIntervalSince1970: 100)
+            XCTAssertEqual(detector.observe(PartialTranscript(text: text, isFinal: false, sequence: 1), launchedApp: notesApp, at: start), [])
+            XCTAssertNil(detector.trailingDeadline, text)
+            XCTAssertEqual(detector.commitStableTrailing(at: start.addingTimeInterval(10)), [], text)
+            XCTAssertEqual(feed(&detector, ["", "\(text) please"], launched: notesApp)[1], [], "\(text): a second sighting doesn't help either")
+        }
+    }
+
+    func testSearchRunsOnceTheRecogniserEndsTheSentence() throws {
+        var detector = notesDetector()
+        let start = Date(timeIntervalSince1970: 100)
+        let search = try XCTUnwrap(NativeOpenAction.webSearchURL(for: "Norbert Wiener"))
+        _ = detector.observe(PartialTranscript(text: "Open Notes and google search Norbert Wiener?", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(detector.commitStableTrailing(at: start.addingTimeInterval(1)).map(\.action), [.openURL(url: search, browser: nil)])
+    }
+
+    func testExplicitWebsiteMayRunWhileSpokenButSearchMayNot() throws {
+        XCTAssertFalse(SpeculativeStepDetector.isOpenEndedSearch(try XCTUnwrap(URL(string: "https://x.com"))))
+        XCTAssertTrue(SpeculativeStepDetector.isOpenEndedSearch(try XCTUnwrap(NativeOpenAction.webSearchURL(for: "Norbert"))))
+    }
+
+    func testTrailingOpenWaitsWhileALongerAppNameIsPossible() {
+        var detector = notesDetector(installed: ["Notes", "Safari", "Safari Technology Preview"])
+        let start = Date(timeIntervalSince1970: 100)
+        _ = detector.observe(PartialTranscript(text: "Open Notes and open Safari", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertNil(detector.trailingDeadline, "\"Safari\" may still become \"Safari Technology Preview\".")
+
+        var plain = notesDetector(installed: ["Notes", "Safari"])
+        _ = plain.observe(PartialTranscript(text: "Open Notes and open Safari", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(plain.commitStableTrailing(at: start.addingTimeInterval(1)).map(\.action), [.openApp(name: "Safari")])
+    }
+
+    func testAPlannerClauseStopIsLiftedWhenTheRecogniserCorrectsIt() throws {
+        var detector = notesDetector()
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        let results = feed(&detector, ["Open Notes and umce and", "Open Notes and create a new note and"], launched: notesApp)
+        XCTAssertEqual(results[0], [])
+        XCTAssertEqual(results[1].map(\.action), [.pressShortcut(app: "Notes", shortcut: commandN)])
+        XCTAssertFalse(detector.blocked)
+    }
+
+    func testARewrittenFinishedClauseStopsEarlyExecution() {
+        var detector = notesDetector()
+        let results = feed(&detector, [
+            "Open Notes and create a new note and",
+            "Open Notes and create a new tab and type hello and"
+        ], launched: notesApp)
+        XCTAssertEqual(results[0].count, 1)
+        XCTAssertEqual(results[1], [], "⌘N already ran for a clause that now means ⌘T; positions can't be trusted.")
+        XCTAssertTrue(detector.diverged)
+    }
+
+    func testDemoTranscriptRunsTheNewNoteDespiteTheGarbledWords() throws {
+        var detector = notesDetector()
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        let ran = feed(&detector, ["Alright, can you open up the notes app for me and umce right there can you create a new note? And um inside this new note, let's make"], launched: notesApp)[0]
+        XCTAssertEqual(ran.map(\.action), [.pressShortcut(app: "Notes", shortcut: commandN)])
+    }
+
     func testAllowsMirrorsTheApprovalPolicy() throws {
         let commandS = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "s"]))
         XCTAssertTrue(SpeculativeStepDetector.allows(.openApp(name: "Notes"), policy: .alwaysAsk))
@@ -236,7 +348,7 @@ final class SpeculativeStepExecutionTests: XCTestCase {
 
         let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
         XCTAssertEqual(executor.executed, [.pressShortcut(app: "Notes", shortcut: commandN), .typeText(app: "Notes", text: "hello")])
-        XCTAssertEqual(launcher.launched, [apps[0]], "Safari is the last clause and waits for the final transcript.")
+        XCTAssertEqual(launcher.launched, [apps[0]], "Safari is the last clause; it waits until it has held still.")
         XCTAssertEqual(awaited, [], "The fake launch reports its window ready, so nothing waits.")
         if case .done(let result)? = coordinator.stepActivity {
             XCTAssertEqual(result.doneDescription, "Typed “hello” in Notes")
@@ -257,6 +369,39 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         XCTAssertEqual(entries.map(\.outcome), ["speculative", "speculative", "speculative"])
         XCTAssertTrue(entries[1].detail?.contains("clause #2") ?? false)
         XCTAssertNotNil(entries[1].sinceCommandMs, "Latency counts from the recording start.")
+    }
+
+    func testCoordinatorRunsAStableLastClauseBeforeTheSpeakerStops() async throws {
+        let directory = URL(fileURLWithPath: "/fixture/Applications")
+        let apps = ["Notes"].map { directory.appendingPathComponent("\($0).app") }
+        let inventory = InstalledAppInventory(
+            makeResolver: { AppResolver(directories: [directory], applicationsInDirectory: { _ in apps }) },
+            bundleLookup: { _ in nil }, runningBundleURLs: { apps }
+        )
+        _ = await inventory.waitUntilReady(timeout: .seconds(5))
+        let auditFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: auditFile) }
+        let source = SpeculativeLaunchCoordinatorTests.FakeSource()
+        let launcher = SpeculativeLaunchCoordinatorTests.FakeLauncher()
+        let executor = FakeExecutor()
+        let coordinator = SpeculativeLaunchCoordinator(
+            settings: .shared, source: source, inventory: inventory, launcher: launcher, executor: executor,
+            awaitWindow: { _ in true }, audit: ActionAuditStore(fileURL: auditFile)
+        )
+        defer { coordinator.end(sessionID: "s1") }
+
+        coordinator.begin(sessionID: "s1")
+        await waitUntil { source.isListening }
+        source.emit("Open the Notes app", sequence: 1)
+        source.emit("Open the Notes app and create a new note", sequence: 2)
+        await waitUntil { launcher.launched.count == 1 }
+        XCTAssertEqual(executor.executed, [], "Nothing else has been said yet, but the last clause hasn't held still.")
+        await waitUntil(timeout: 3) { executor.executed.count == 1 }
+
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        XCTAssertEqual(executor.executed, [.pressShortcut(app: "Notes", shortcut: commandN)], "⌘N ran with no pause and no final transcript.")
+        let handoff = try XCTUnwrap(coordinator.takeHandoff(sessionID: "s1"))
+        XCTAssertEqual(handoff.steps.map(\.step.index), [1])
     }
 
     func testControllerSkipsClausesThatRanEarlyAndRerunsFailedOnes() async throws {

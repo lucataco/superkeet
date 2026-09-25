@@ -90,6 +90,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         var detector: SpeculativeIntentDetector
         var stepDetector: SpeculativeStepDetector
         var listener: Task<Void, Never>?
+        var trailingTimer: Task<Void, Never>?
         var launch: Task<Result<NativeLaunchedApp, Error>, Never>?
         var steps: [RunningStep] = []
 
@@ -109,6 +110,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
     private let carriedApp: @MainActor () -> String?
     private let audit: ActionAuditStore
     private let stabilityThreshold: Int
+    private let now: @MainActor () -> Date
     private var session: Session?
     private var prepared = false
 
@@ -121,8 +123,10 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         awaitWindow: (@MainActor (Int32) async -> Bool)? = nil,
         carriedApp: (@MainActor () -> String?)? = nil,
         audit: ActionAuditStore = .shared,
-        stabilityThreshold: Int = 1
+        stabilityThreshold: Int = 1,
+        now: (@MainActor () -> Date)? = nil
     ) {
+        self.now = now ?? { Date() }
         self.settings = settings
         self.source = source
         self.inventory = inventory
@@ -187,7 +191,8 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         let policy = settings.actionApprovalPolicy
         let stepDetector = SpeculativeStepDetector(environment: .init(
             resolveApp: environment.resolveApp, isRunning: environment.isRunning,
-            allows: { SpeculativeStepDetector.allows($0, policy: policy) }
+            allows: { SpeculativeStepDetector.allows($0, policy: policy) },
+            installedNames: environment.installedNames
         ), currentApp: carriedApp())
         let session = Session(id: sessionID, detector: detector, stepDetector: stepDetector)
         self.session = session
@@ -209,10 +214,12 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
                     if let commit = session.detector.observe(partial) {
                         self.launch(commit, in: session)
                     }
-                    // Clauses after the launch run as soon as the next clause has begun.
-                    for step in session.stepDetector.observe(partial, launchedApp: session.detector.commit?.action.app) {
+                    // Clauses after the launch run as soon as the next clause has begun; a safe
+                    // last clause runs once it has held still.
+                    for step in session.stepDetector.observe(partial, launchedApp: session.detector.commit?.action.app, at: self.now()) {
                         self.run(step, in: session)
                     }
+                    self.scheduleTrailingCommit(in: session)
                 }
             } catch is CancellationError {
                 if self?.session === session { self?.discardSession() }
@@ -235,6 +242,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         self.session = nil
         source?.stop()
         session.listener?.cancel()
+        session.trailingTimer?.cancel()
         activity = nil
         stepActivity = nil
         listening = nil
@@ -249,6 +257,23 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         let launch = take(sessionID: sessionID)
         guard launch != nil || !steps.isEmpty else { return nil }
         return SpeculativeHandoff(launch: launch, steps: steps)
+    }
+
+    /// The engine only sends a partial when the text changes, so a last clause that stays the
+    /// same needs a timer to notice it has held still.
+    private func scheduleTrailingCommit(in session: Session) {
+        session.trailingTimer?.cancel()
+        session.trailingTimer = nil
+        guard let deadline = session.stepDetector.trailingDeadline else { return }
+        let delay = max(0, deadline.timeIntervalSince(now()))
+        session.trailingTimer = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(delay * 1_000) + 5))
+            guard !Task.isCancelled, let self, self.session === session, self.isEnabled else { return }
+            for step in session.stepDetector.commitStableTrailing(at: self.now()) {
+                speculativeLog.info("Last clause held still; running it before the speaker stops")
+                self.run(step, in: session)
+            }
+        }
     }
 
     /// Runs one completed clause. Steps run strictly in order and after the early launch, and a
@@ -365,6 +390,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         self.session = nil
         source?.stop()
         session.listener?.cancel()
+        session.trailingTimer?.cancel()
         activity = nil
         stepActivity = nil
         listening = nil

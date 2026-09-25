@@ -30,7 +30,40 @@ enum NativeClauseRouter {
         return resolved
     }
 
+    /// Tries the clause as spoken, then progressively cleaner readings of it: without lead-ins
+    /// ("can you create a new note"), from a mid-clause request ("umce right there can you create
+    /// a new note", where the recogniser garbled the words before it), and, for opens only,
+    /// without a trailing reaction ("open up x.com Nice"). Each reading must route on its own, so
+    /// a cleanup never invents an action the words don't ask for.
     static func action(for clause: String, context: NativeClauseContext) -> NativeOpenAction? {
+        if let action = directAction(for: clause, context: context) { return action }
+        var tried: Set<String> = [clause]
+        for candidate in fallbackReadings(of: clause) where tried.insert(candidate.text).inserted {
+            guard let action = directAction(for: candidate.text, context: context) else { continue }
+            if candidate.opensOnly, action.actsInsideApp { continue }
+            return action
+        }
+        return nil
+    }
+
+    private static func fallbackReadings(of clause: String) -> [(text: String, opensOnly: Bool)] {
+        var readings: [String] = []
+        let stripped = CommandLeadIn.strip(clause)
+        if !stripped.isEmpty { readings.append(stripped) }
+        if let request = CommandClauses.requestSuffix(clause) {
+            let requestStripped = CommandLeadIn.strip(request)
+            if !requestStripped.isEmpty { readings.append(requestStripped) }
+        }
+        var result = readings.map { (text: $0, opensOnly: false) }
+        // Typing and shortcuts keep every word: "type nice" must still type "nice".
+        for reading in [clause] + readings {
+            let calmer = CommandLeadIn.stripTrailingReactions(reading)
+            if calmer != reading, !calmer.isEmpty { result.append((CommandLeadIn.strip(calmer), true)) }
+        }
+        return result.filter { !$0.text.isEmpty }
+    }
+
+    private static func directAction(for clause: String, context: NativeClauseContext) -> NativeOpenAction? {
         let intent = HeuristicIntentExtractor.intent(for: clause)
         guard intent.scope != .activeTab else { return nil }
         if let action = NativeOpenAction.fastPath(for: intent) {

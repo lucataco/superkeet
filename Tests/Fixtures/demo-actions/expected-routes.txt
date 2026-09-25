@@ -1,14 +1,16 @@
 # engine
-PLAN	can you open up the notes app for me and umce right there can you create a new note
-PLAN	let's make the title say hello
+NAT	can you open up the notes app for me	open_app
+NAT	umce right there can you create a new note	press_shortcut
+NAT	let's make the title say hello	type_text
 NAT	can you open up the Arc browser	open_app
 NAT	can you Google search Norbert Wiener	open_url
-PLAN	Now can you open up x.com Nice
+NAT	Now can you open up x.com Nice	open_url
 NAT	Um now can you open up the photo booth	open_app
 NAT	let's take a picture of me	press_shortcut
 # ideal
 NAT	can you open up the notes app for me	open_app
-PLAN	once you're there can you create a new note and inside this new note let's make the title say hello
+NAT	once you're there can you create a new note	press_shortcut
+NAT	inside this new note let's make the title say hello	type_text
 NAT	can you open up the Arc browser	open_app
 NAT	once you're there can you Google search Norbert Wiener	open_url
 NAT	Now can you open up x.com	open_url

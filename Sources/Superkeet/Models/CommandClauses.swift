@@ -15,7 +15,7 @@ enum CommandClauses {
     /// one step while "open Notes and create a new note" becomes two.
     static let clauseVerbs: [String] = [
         "open", "launch", "pull up", "fire up", "bring up", "start", "show me", "switch to", "switch over to", "activate",
-        "go to", "navigate to", "visit", "search", "google", "look up", "lookup", "find", "click", "tap", "double click",
+        "go to", "go search", "navigate to", "visit", "search", "google", "look up", "lookup", "find", "click", "tap", "double click",
         "double-click", "right click", "right-click", "type", "enter", "press", "hit", "scroll", "swipe", "drag", "read",
         "create", "make", "add", "compose", "write", "new", "save", "close", "quit", "exit", "kill", "undo", "redo", "select",
         "copy", "paste", "cut", "delete", "remove", "clear", "send", "reply", "forward", "play", "pause", "stop", "mute",
@@ -99,6 +99,30 @@ enum CommandClauses {
     /// Whether the text reads as the beginning of a new instruction: a known verb after any
     /// lead-in words, or a web address.
     static func startsClause(_ remainder: String) -> Bool {
+        if startsClauseDirectly(remainder) { return true }
+        // "and umce right there can you create …", "and inside this new note let's make …": a few
+        // garbled or context words, then an explicit request that starts an instruction.
+        guard let request = requestSuffix(remainder) else { return false }
+        return startsClauseDirectly(request)
+    }
+
+    /// A request marker ("can you", "could you", "let's", "please", …) after at most four other
+    /// words. Returns the text from the marker on, or nil when there is none that close.
+    private static let requestMarker = try? NSRegularExpression(
+        pattern: #"\A(?:[^\s]+[,\s]+){1,4}?(?=(?:(?:can|could|would|will)\s+you|let['’]s|lets|please|go\s+ahead\s+and|i\s+(?:want|need)\s+you\s+to)\b)"#,
+        options: .caseInsensitive
+    )
+
+    static func requestSuffix(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let requestMarker,
+              let match = requestMarker.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+              let range = Range(match.range, in: trimmed) else { return nil }
+        let suffix = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return suffix.isEmpty ? nil : suffix
+    }
+
+    private static func startsClauseDirectly(_ remainder: String) -> Bool {
         let stripped = SpokenURL.normalize(CommandLeadIn.strip(remainder))
         guard !stripped.isEmpty else { return false }
         if let clauseStart, clauseStart.firstMatch(in: stripped, range: NSRange(stripped.startIndex..., in: stripped)) != nil {

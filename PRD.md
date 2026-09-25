@@ -212,7 +212,7 @@ Requirement IDs are stable handles for discussion and issue tracking. "Must" is 
 | ENG-3 | The model directory can be overridden; `--model-dir` is always passed so download and serve agree. | Shipped |
 | ENG-4 | Daemon startup waits for readiness instead of a fixed delay; failures surface diagnostics; duplicate starts are prevented; unreachable processes are cleaned up; stubborn processes are killed on timeout. | Shipped |
 | ENG-5 | Crash recovery uses bounded restart backoff; short-lived ready/crash cycles preserve restart history and a sustained healthy run resets it. | Shipped |
-| ENG-6 | The bundled engine version is pinned (currently parakeet-cli v0.1.8, protocol 2) in `install.sh`, the release workflow, and `DevelopmentEngineLocator`. | Shipped |
+| ENG-6 | The bundled engine version is pinned (currently parakeet-cli v0.1.9, protocol 2) in `install.sh`, the release workflow, and `DevelopmentEngineLocator`. | Shipped |
 
 ### 7.10 Actions Mode
 
@@ -228,7 +228,7 @@ Requirement IDs are stable handles for discussion and issue tracking. "Must" is 
 
 | ID | Requirement | Status |
 |---|---|---|
-| LSN-1 | Pressing Run an Action opens a **listening session**: the microphone opens, the HUD pill reads "Go ahead, I'm listening.", and each utterance is dispatched as its own command when interim text has not changed for 1.25 s. The microphone reopens as soon as the engine is idle again. | In progress |
+| LSN-1 | Pressing Run an Action opens a **listening session**: the microphone opens, the HUD pill reads "Go ahead, I'm listening.", and each utterance is dispatched as its own command when the end of the interim text has not moved for 1 s. The microphone reopens as soon as the engine is idle again. | In progress |
 | LSN-2 | Pressing the shortcut again closes the session and runs whatever was being said; Escape closes it and drops the take. Two consecutive failed takes or a stopped engine also close it. | In progress |
 | LSN-3 | The microphone is never open outside a session. Nothing auto-arms listening. | In progress |
 | LSN-4 | The session is a setting ("Keep listening between commands", default on). With it off, the shortcut records one take: press to start, press to run. | In progress |
@@ -370,7 +370,7 @@ Requirement IDs are stable handles for discussion and issue tracking. "Must" is 
 | PERF-3 | App-name resolution must not rescan the disk per lookup. | Memoized inventory; a cold scan measured 0.8 s per open before the fix |
 | PERF-4 | Shortcut handling must not be delayed by UI work. | Event tap on its own thread |
 | PERF-5 | The first recording's overlay must appear without audio-graph setup on the hot path. | Level-meter engine built once after startup |
-| PERF-6 | Pause-to-dispatch latency in a listening session is bounded by the endpoint timer (1.25 s) plus engine finalisation. | `ListeningSessionPolicy.endpointSilence` |
+| PERF-6 | Pause-to-dispatch latency in a listening session is bounded by the endpoint timer (1 s) plus engine finalisation; safe last clauses run before it (`SpeculativeStepDetector.trailingHold`, 0.7 s). | `ListeningSessionPolicy.endpointSilence` |
 | PERF-7 | Every audit entry records `sinceCommandMs` and `durationMs` so latency regressions are visible without instrumentation. | In progress |
 
 ### 8.2 Privacy
@@ -552,7 +552,7 @@ These are **proposed** and unprioritised. Items 1–3 come from gaps the documen
 | Keep listening between commands | On | Actions |
 | Instant App Launch | On | Actions |
 | Keep Action Log | On | Actions |
-| Endpoint silence (session) | 1.25 s | code |
+| Endpoint silence (session) | 1 s | code |
 | Consecutive failed takes before session ends | 2 | code |
 | Step budget | 12 tool calls | Advanced |
 | Per-tool timeout | 120 s | Advanced |

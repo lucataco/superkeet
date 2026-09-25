@@ -64,6 +64,8 @@ enum HeuristicIntentExtractor {
     /// Verb prefixes and the action each one implies; longer phrases first so "open up" wins over "open".
     static let verbs: [(prefix: String, action: ActionIntent.Action)] = [
         ("switch over to ", .switchApp), ("switch to ", .switchApp), ("activate ", .switchApp), ("bring up ", .switchApp),
+        // "go search …" is how people say it, and how the recogniser often hears "Google search".
+        ("go search for ", .webSearch), ("go search ", .webSearch),
         ("go to ", .switchApp),
         ("open up ", .openApp), ("open ", .openApp), ("launch ", .openApp), ("pull up ", .openApp), ("fire up ", .openApp),
         ("start ", .openApp), ("show me ", .openApp),

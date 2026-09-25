@@ -41,6 +41,9 @@ final class ListeningSessionController: ObservableObject {
     private var endpointTimer: Task<Void, Never>?
     private var consecutiveFailures = 0
     private var currentTranscript = ""
+    /// Transcript endings already heard in this take; seeing one again is flicker, not speech.
+    private var seenProgress: Set<String> = []
+    private var endpointGeneration = UUID()
     private var lastOutcomeID: UUID?
 
     init(
@@ -92,6 +95,7 @@ final class ListeningSessionController: ObservableObject {
         HotkeyManager.shared.noteListeningSessionActive(true)
         consecutiveFailures = 0
         currentTranscript = ""
+        seenProgress = []
         dispatchedCommands = 0
         sessionLog.info("Listening session started")
         hooks.playSound(.start)
@@ -112,6 +116,7 @@ final class ListeningSessionController: ObservableObject {
             hasSpeech: ListeningSessionPolicy.shouldArmEndpoint(transcript: currentTranscript), dispatchPending: dispatchPending
         )
         currentTranscript = ""
+        seenProgress = []
         switch action {
         case .stopAndDispatch:
             dispatchedCommands += 1
@@ -144,26 +149,36 @@ final class ListeningSessionController: ObservableObject {
         guard isActive else { return }
         guard let transcript else {
             currentTranscript = ""
+            seenProgress = []
             endpointTimer?.cancel()
             endpointTimer = nil
             return
         }
         guard transcript != currentTranscript else { return }
         currentTranscript = transcript
+        guard ListeningSessionPolicy.shouldArmEndpoint(transcript: transcript) else {
+            endpointTimer?.cancel()
+            endpointTimer = nil
+            return
+        }
+        let isNewSpeech = seenProgress.insert(ListeningSessionPolicy.progressKey(for: transcript)).inserted
+        // A re-decode that only reshuffles words already heard keeps the pause timer running.
+        guard isNewSpeech || endpointTimer == nil else { return }
         endpointTimer?.cancel()
-        endpointTimer = nil
-        guard ListeningSessionPolicy.shouldArmEndpoint(transcript: transcript) else { return }
+        let generation = UUID()
+        endpointGeneration = generation
         let silence = endpointSilence
         endpointTimer = Task { @MainActor [weak self] in
             try? await Task.sleep(for: silence)
             guard !Task.isCancelled, let self else { return }
-            self.endpointReached(transcript)
+            self.endpointReached(generation)
         }
     }
 
-    private func endpointReached(_ transcript: String) {
-        guard isActive, currentTranscript == transcript,
-              ListeningSessionPolicy.shouldDispatch(transcript: transcript, isRecording: hooks.isRecording(), sessionActive: isActive) else { return }
+    private func endpointReached(_ generation: UUID) {
+        guard isActive, endpointGeneration == generation,
+              ListeningSessionPolicy.shouldDispatch(transcript: currentTranscript, isRecording: hooks.isRecording(), sessionActive: isActive) else { return }
+        endpointTimer = nil
         sessionLog.info("Pause detected; dispatching the utterance")
         dispatchedCommands += 1
         hooks.stopRecording()

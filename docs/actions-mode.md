@@ -38,7 +38,7 @@ Run an Action hotkey (default ⌥⇧Space)
 
 1. Press the **Run an Action** shortcut (⌥⇧Space) once to start listening. The
    HUD pill reads **Go ahead, I’m listening.** Speak a command; when you pause
-   for about 1.25 s it runs, and the microphone reopens for the next one. Press
+   for about a second it runs, and the microphone reopens for the next one. Press
    the shortcut again (or Escape) to stop listening; the microphone is off
    whenever the pill is gone. This is the **listening session** (Settings ▸
    Actions ▸ *Keep listening between commands*, on by default). With it off, the
@@ -308,8 +308,10 @@ the runner and the microphone reopens as soon as the engine is idle again, so
 the next command can be spoken while the previous one still runs. Utterances
 queue in arrival order like any other command. `ListeningSessionController`
 owns the session: a pause is interim text unchanged for
-`ListeningSessionPolicy.endpointSilence` (1.25 s; the engine emits a partial
-every 0.5–0.75 s of speech, depending on the engine version, and only when the text changed); the engine returning to
+`ListeningSessionPolicy.endpointSilence` (1 s; the engine emits a partial every
+0.5 s of speech, and on a long take it keeps re-decoding words already heard, so
+only an ending of the transcript not yet seen in the take counts as new speech);
+the engine returning to
 idle reopens the microphone; two failed takes in a row, the engine stopping,
 Escape, or the shortcut end the session. One start sound plays when the session
 opens and one stop sound when it closes; nothing plays per utterance, and the
@@ -422,7 +424,8 @@ use interim text, which Superkeet takes from one of two recognisers behind the
    daemon speaks protocol 2 (parakeet-cli 0.1.7+). A Command Mode recording
    sends `{"command":"start", …, "partials":true}` and the daemon streams
    `{"type":"partial","text":…,"sequence":n,"truncated":…}` events roughly
-   every 0.5 s of captured audio with the updated engine (0.75 s in v0.1.7). One model produces both the interim and the
+   every 0.5 s of captured audio (v0.1.9; 0.75 s in v0.1.7–0.1.8), each with the
+`audio_ms` it covers. One model produces both the interim and the
    final text; there is no second microphone consumer, no second speech model,
    and it works on every macOS version Superkeet supports. Command Mode requests
    partials whenever Actions Mode is enabled and an interim source is available,
@@ -541,10 +544,33 @@ interim text and runs every later clause that `NativeClauseRouter` can carry out
 natively (an app or URL open, a web search, a ⌘N-style shortcut recipe, or a
 `type_text` recipe) as soon as the **next clause has begun**, that is, once a
 separator and a new instruction follow it, or the text ends in “and” / “then”.
-The last clause is still being spoken and waits for the final transcript. Steps
-run strictly in order after the launch; a step inside a freshly launched app
-waits for its window first. The first clause that needs the planner stops early
-execution for the rest of the utterance, since later steps may depend on it.
+Steps run strictly in order after the launch; a step inside a freshly launched
+app waits for its window first.
+
+**The last clause** is still being spoken, so it runs early only when that is
+safe and it has settled: an app open (unless a longer installed name could still
+be coming, as with “Safari” / “Safari Technology Preview”), a URL, a shortcut
+recipe (⌘N, ⌘T, Photo Booth's shutter), or a web search once the recogniser has
+punctuated the end of the sentence. It must map to the same action on two
+partials in a row, or stay unchanged for `SpeculativeStepDetector.trailingHold`
+(0.7 s, longer than the engine's 0.5 s partial cadence) with no newer partial.
+Typing never runs before the speaker moves on, so half-heard words are never
+typed. So “open the Notes app and create a new note” presses ⌘N while the
+speaker is still finishing the sentence, with no pause and no final transcript.
+
+A clause that needs the planner stops early execution at that point, since every
+later step would change the frontmost app or its contents under it. The stop is
+re-evaluated on every partial, so when the recogniser corrects a garbled word the
+detector carries on. Clauses that already ran are re-checked against each new
+partial; if a finished clause now means something else, positions can no longer
+be trusted and early execution stops for the rest of the take.
+
+Routing reads through conversational phrasing and recogniser glitches. A clause
+is tried as spoken, then without lead-ins (“can you create a new note”), then
+from a mid-clause request (“umce right there can you create a new note”), and,
+for opens only, without a glued-on reaction (“open up x.com Nice”). The splitter
+likewise starts a new clause at a request that follows a few context or garbled
+words (“… and inside this new note let's make the title say hello”).
 
 Opens and URLs run early under the same Instant App Launch toggle as the
 launch; shortcuts and typing run early only when the approval policy would not
@@ -556,7 +582,7 @@ clause number.
 For “open the Notes app and create a new note and make the title say hello and
 open Safari”, Notes launches at “and”, ⌘N is pressed when “and make” arrives,
 “hello” is typed when “and open” arrives, and only “open Safari” waits for the
-pause. When the final transcript lands, `SpeculativeHandoff` carries the launch
+pause, or, being an open, until it has held still. When the final transcript lands, `SpeculativeHandoff` carries the launch
 and the steps to `AgentSessionController`, which waits for them, lists what ran
 (“Pressed ⌘N in Notes while you were speaking”), and marks the matching clauses
 **Already done** instead of repeating them: matched by the action the final

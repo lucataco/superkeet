@@ -130,7 +130,8 @@ struct SpeculativeIntentDetector {
     )
     private static let launchVerbs: Set<String> = ["open", "open up", "launch", "pull up", "fire up", "start", "show me"]
     private static let boundary = try? NSRegularExpression(
-        pattern: #"\b(?:and\s+then|and|then|to|so)\b|[,;:\n]|[.?!](?=\s|\z)"#,
+        // "for" ends the name only as politeness still being spoken ("the notes app for", "for me").
+        pattern: #"\b(?:and\s+then|and|then|to|so)\b|\bfor(?=\s*\z|\s+(?:me|us|you)\b)|[,;:\n]|[.?!](?=\s|\z)"#,
         options: .caseInsensitive
     )
 

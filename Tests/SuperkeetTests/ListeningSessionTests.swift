@@ -130,6 +130,30 @@ final class ListeningSessionControllerTests: XCTestCase {
         fixture.controller.end(dispatchPending: false)
     }
 
+    func testProgressKeyIgnoresCasePunctuationAndEarlierRevisions() {
+        XCTAssertEqual(ListeningSessionPolicy.progressKey(for: "? And um inside this new note let's make the title say hello"),
+                       ListeningSessionPolicy.progressKey(for: "And um inside this new note, let's make the title say Hello."))
+        XCTAssertNotEqual(ListeningSessionPolicy.progressKey(for: "make the title say"),
+                          ListeningSessionPolicy.progressKey(for: "make the title say hello"))
+    }
+
+    func testReDecodeFlickerDuringAPauseStillEndsTheTake() async {
+        let fixture = makeFixture(silence: .milliseconds(350))
+        fixture.controller.begin()
+        fixture.transcript.send("can you open up x.com?")
+        await settle(.milliseconds(40))
+        fixture.transcript.send("can you open up x dot com.")
+        // The engine keeps flipping between readings of words already heard.
+        for text in ["can you open up x.com?", "Can you open up x dot com", "can you open up x.com?"] {
+            await settle(.milliseconds(70))
+            fixture.transcript.send(text)
+        }
+        XCTAssertEqual(fixture.recorder.stops, 0)
+        await settle(.milliseconds(250))
+        XCTAssertEqual(fixture.recorder.stops, 1, "Only new words restart the pause timer.")
+        fixture.controller.end(dispatchPending: false)
+    }
+
     func testSilenceFromTheStartKeepsListening() async {
         let fixture = makeFixture()
         fixture.controller.begin()

@@ -83,6 +83,23 @@ enum CommandLeadIn {
         return String(trimmed[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static let trailingReactionPattern = try? NSRegularExpression(
+        pattern: #"(?:[,.;:!?\s]+(?:nice|great|cool|awesome|perfect|sweet|excellent|amazing|wow|thanks|thank\s+you))+[.!?,\s]*\z"#,
+        options: .caseInsensitive
+    )
+
+    /// Removes reactions the recogniser glued onto the end of a command when the speaker didn't
+    /// pause: "open up x.com Nice, nice." becomes "open up x.com". Only for commands that name
+    /// something to open; typed text keeps every word.
+    static func stripTrailingReactions(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trailingReactionPattern,
+              let match = trailingReactionPattern.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+              match.range.length > 0,
+              let range = Range(match.range, in: trimmed) else { return trimmed }
+        return String(trimmed[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Leading and trailing filler removed.
     static func trim(_ text: String) -> String {
         stripTrailing(strip(text))
