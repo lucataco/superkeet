@@ -12,6 +12,20 @@ final class UsageStatsStore: ObservableObject, @unchecked Sendable {
         var words: Int
         var seconds: Double
         var sessions: Int
+
+        init(words: Int, seconds: Double, sessions: Int) {
+            self.words = words
+            self.seconds = seconds
+            self.sessions = sessions
+        }
+
+        /// Missing counters read as zero so a file from another version still loads.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            words = try container.decodeIfPresent(Int.self, forKey: .words) ?? 0
+            seconds = try container.decodeIfPresent(Double.self, forKey: .seconds) ?? 0
+            sessions = try container.decodeIfPresent(Int.self, forKey: .sessions) ?? 0
+        }
     }
 
     @Published private(set) var buckets: [String: DayBucket] = [:]
@@ -127,7 +141,13 @@ final class UsageStatsStore: ObservableObject, @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {
             let data = try Data(contentsOf: fileURL)
-            buckets = try decoder.decode([String: DayBucket].self, from: data)
+            let (loaded, dropped) = try LossyDecoding.dictionary(DayBucket.self, from: data, decoder: decoder)
+            buckets = loaded
+            if dropped > 0 {
+                storeFile.needsRecoveryBackup = true
+                persistenceIssue = "\(dropped) days of usage statistics could not be read. The original file will be preserved before any new statistics are saved."
+                usageStatsLog.error("Skipped \(dropped) unreadable usage-stat days")
+            }
         } catch {
             storeFile.needsRecoveryBackup = true
             persistenceIssue = "Could not load usage statistics. The original file will be preserved before any new statistics are saved. \(error.localizedDescription)"

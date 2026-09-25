@@ -203,7 +203,10 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
 
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
             watchdog.recordActivity()
             for line in lineBuffer.consume(data) {
                 self?.handleLine(line, collector: collector)
@@ -212,7 +215,10 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
 
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
             watchdog.recordActivity()
             collector.appendStderr(data)
         }

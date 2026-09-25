@@ -135,7 +135,7 @@ final class UsageStatsStoreTests: XCTestCase {
         store.flushPendingSave()
         let backup = try XCTUnwrap(store.recoveryBackupURL)
         XCTAssertEqual(try Data(contentsOf: backup), original)
-        XCTAssertEqual(UsageStatsStore(fileURL: path).totalWords, 10)
+        XCTAssertEqual(UsageStatsStore(fileURL: path).totalWords, 52, "The readable day is kept alongside the new words.")
         store.reset()
         store.flushPendingSave()
         XCTAssertEqual(try Data(contentsOf: backup), original)
@@ -207,5 +207,18 @@ final class UsageStatsStoreTests: XCTestCase {
         store.record(wordCount: 5, durationSeconds: 5, on: dayBefore)
 
         XCTAssertEqual(store.currentStreak, 0)
+    }
+
+    func testDayWithMissingCountersLoadsAndBadDayIsSkipped() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("usage.json")
+        try Data(#"{"2026-01-01":{"words":12},"2026-01-02":"garbage"}"#.utf8).write(to: path)
+        let store = UsageStatsStore(fileURL: path)
+        XCTAssertEqual(store.buckets["2026-01-01"]?.words, 12)
+        XCTAssertEqual(store.buckets["2026-01-01"]?.sessions, 0)
+        XCTAssertNil(store.buckets["2026-01-02"])
+        XCTAssertNotNil(store.persistenceIssue)
     }
 }

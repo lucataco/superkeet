@@ -50,7 +50,7 @@ enum LoginShellPath {
             let completion = Completion(continuation: continuation, stdout: stdout, stderr: stderr)
 
             stderr.fileHandleForReading.readabilityHandler = { handle in
-                _ = handle.availableData
+                if handle.availableData.isEmpty { handle.readabilityHandler = nil }
             }
 
             process.terminationHandler = { proc in

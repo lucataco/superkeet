@@ -8,6 +8,10 @@ struct RecordingTabView: View {
     @ObservedObject var parakeetService = ParakeetService.shared
     @State private var availableDevices: [String] = []
     @State private var deviceChangeStatus: String?
+    /// The folder as typed. It only becomes the model folder on Return, focus loss or Browse, so a
+    /// half-typed path never becomes the place the engine downloads ~670 MB into.
+    @State private var modelDirectoryDraft = ""
+    @FocusState private var modelDirectoryFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,15 +48,18 @@ struct RecordingTabView: View {
 
                 Section {
                     HStack {
-                        TextField("Default", text: $settings.modelDirectory)
+                        TextField("Default", text: $modelDirectoryDraft)
                             .textFieldStyle(.roundedBorder)
+                            .focused($modelDirectoryFocused)
+                            .onSubmit(commitModelDirectory)
                         Button("Browse…") {
                             let panel = NSOpenPanel()
                             panel.canChooseDirectories = true
                             panel.canChooseFiles = false
                             panel.allowsMultipleSelection = false
                             if panel.runModal() == .OK, let url = panel.url {
-                                settings.modelDirectory = url.path
+                                modelDirectoryDraft = url.path
+                                commitModelDirectory()
                             }
                         }
                     }
@@ -104,7 +111,13 @@ struct RecordingTabView: View {
             }
             .formStyle(.grouped)
         }
-        .onAppear(perform: refreshDevices)
+        .onAppear {
+            refreshDevices()
+            modelDirectoryDraft = settings.modelDirectory
+        }
+        .onChange(of: modelDirectoryFocused) { _, focused in
+            if !focused { commitModelDirectory() }
+        }
         .onChange(of: settings.modelDirectory) {
             ModelProvisioning.shared.refreshInstalledState()
         }
@@ -121,6 +134,16 @@ struct RecordingTabView: View {
     private func refreshDevices() {
         dispatchPrecondition(condition: .onQueue(.main))
         availableDevices = AudioInputDeviceResolver.availableDeviceNames()
+    }
+
+    private func commitModelDirectory() {
+        let trimmed = modelDirectoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        modelDirectoryDraft = trimmed
+        guard trimmed != settings.modelDirectory else { return }
+        advancedTabLog.info("Model directory changed")
+        settings.modelDirectory = trimmed
+        // The engine loads the model at launch, so it needs a restart to use the new folder.
+        parakeetService.requestEngineRestartForSettingsChange()
     }
 
     /// The engine opens its input device at launch, so a new selection needs a restart. Do it for

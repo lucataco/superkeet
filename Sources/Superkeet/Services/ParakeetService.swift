@@ -249,11 +249,16 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
 
         stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            // Engine diagnostics can quote paths or text, so they stay private in the unified log.
+            let text = String(bytes: data, encoding: .utf8) ?? "[\(data.count) bytes of non-UTF-8 engine output]"
             Task { @MainActor [weak self] in
                 self?.appendStderr(text)
             }
-            parakeetLog.info("parakeet stderr: \(text, privacy: .public)")
+            parakeetLog.debug("parakeet stderr: \(text, privacy: .private)")
         }
 
         process.terminationHandler = { [weak self] proc in
@@ -667,7 +672,14 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 self.resetIdleTimer()
             } else {
                 parakeetLog.warning("Engine state after cancel was \(engineState ?? "unknown", privacy: .public) after \(polls) status probes; restarting")
-                try? await self.restartDaemon()
+                do {
+                    try await self.restartDaemon()
+                } catch is CancellationError {
+                    return
+                } catch {
+                    parakeetLog.error("Engine restart after a stuck cancel failed: \(error.localizedDescription)")
+                    self.settings.runtimeIssue = "The speech engine got stuck and couldn't restart: \(error.localizedDescription)"
+                }
             }
         }
     }

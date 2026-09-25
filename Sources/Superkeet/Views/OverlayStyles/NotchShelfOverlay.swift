@@ -62,6 +62,7 @@ struct NotchShelfOverlay: View {
             maxHeight: 16,
             cornerRadius: 1.5
         )
+        .accessibilityHidden(true)
     }
 
     private var timerLabel: some View {

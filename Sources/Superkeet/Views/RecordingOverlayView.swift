@@ -112,11 +112,7 @@ struct CompactRecordingOverlay: View {
                 Circle()
                     .fill(Color.red.opacity(0.3))
                     .frame(width: 16, height: 16)
-                    .scaleEffect(isRecording ? 1.2 : 1.0)
-                    .animation(
-                        .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                        value: isRecording
-                    )
+                    .recordingPulse(isRecording: isRecording, scale: 1.2)
                 Circle()
                     .fill(Color.red)
                     .frame(width: 8, height: 8)
@@ -124,6 +120,7 @@ struct CompactRecordingOverlay: View {
             .frame(width: 20)
 
             DotEqualizerView(audioMonitor: audioMonitor)
+                .accessibilityHidden(true)
 
             Text(OverlayElapsedClock.formatted(elapsedTime))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -139,6 +136,7 @@ struct CompactRecordingOverlay: View {
                     .clipShape(RoundedRectangle(cornerRadius: 5))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Stop recording")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -174,6 +172,7 @@ struct ExpandedRecordingOverlay: View {
                         .foregroundColor(.secondary.opacity(0.6))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Collapse recording overlay")
                 Spacer()
             }
 
@@ -182,11 +181,7 @@ struct ExpandedRecordingOverlay: View {
                     Circle()
                         .fill(Color.red.opacity(0.3))
                         .frame(width: 22, height: 22)
-                        .scaleEffect(isRecording ? 1.3 : 1.0)
-                        .animation(
-                            .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                            value: isRecording
-                        )
+                        .recordingPulse(isRecording: isRecording, scale: 1.3)
                     Circle()
                         .fill(Color.red)
                         .frame(width: 10, height: 10)
@@ -194,6 +189,7 @@ struct ExpandedRecordingOverlay: View {
 
                 EqualizerView(audioMonitor: audioMonitor)
                     .frame(width: 60)
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recording")
@@ -213,6 +209,7 @@ struct ExpandedRecordingOverlay: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Stop recording")
             }
         }
         .padding(.horizontal, 20)

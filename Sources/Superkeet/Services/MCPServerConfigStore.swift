@@ -128,8 +128,10 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        // Secrets first: if the Keychain refuses them, nothing is saved and the error is shown,
+        // rather than writing a config whose server then starts without its token.
+        try persistSecrets(for: sorted)
         let backup = try storeFile.write(encoder.encode(document))
-        persistSecrets(for: sorted)
         servers = sorted
         recoveryBackupURL = backup
         errorMessage = backup.map { "Earlier MCP servers could not be read. The original file is preserved at \($0.path)." }
@@ -141,13 +143,13 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
         return copy
     }
 
-    private func persistSecrets(for servers: [MCPServerConfiguration]) {
+    private func persistSecrets(for servers: [MCPServerConfiguration]) throws {
         for server in servers {
             let sensitive = server.env.filter { SensitiveDataPolicy.isSensitiveKey($0.key) }
             if sensitive.isEmpty {
                 secrets.removeSecretEnvironment(for: server.trimmedName)
             } else {
-                secrets.setSecretEnvironment(sensitive, for: server.trimmedName)
+                try secrets.setSecretEnvironment(sensitive, for: server.trimmedName)
             }
         }
     }

@@ -63,7 +63,14 @@ final class HistoryStore: ObservableObject, @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {
             let data = try Data(contentsOf: fileURL)
-            records = try decoder.decode([TranscriptionRecord].self, from: data)
+            let (loaded, dropped) = try LossyDecoding.array(TranscriptionRecord.self, from: data, decoder: decoder)
+            records = loaded
+            if dropped > 0 {
+                // Keep the original file: the next save would otherwise drop the unreadable records.
+                storeFile.needsRecoveryBackup = true
+                persistenceIssue = "\(dropped) history \(dropped == 1 ? "entry" : "entries") could not be read and \(dropped == 1 ? "is" : "are") hidden. The original file will be preserved before any new history is saved."
+                historyLog.error("Skipped \(dropped) unreadable history records")
+            }
             if records.count > Self.maxRecords {
                 records = Array(records.prefix(Self.maxRecords))
                 saveRecords()

@@ -3,12 +3,14 @@ import XCTest
 
 final class InMemoryMCPSecretStore: MCPSecretStoring {
     private(set) var secrets: [String: [String: String]] = [:]
+    var failure: Error?
 
     func secretEnvironment(for name: String) -> [String: String] {
         secrets[name] ?? [:]
     }
 
-    func setSecretEnvironment(_ environment: [String: String], for name: String) {
+    func setSecretEnvironment(_ environment: [String: String], for name: String) throws {
+        if let failure { throw failure }
         secrets[name] = environment
     }
 
@@ -233,5 +235,17 @@ final class MCPServerConfigStoreTests: XCTestCase {
         let backup = try XCTUnwrap(store.recoveryBackupURL)
         XCTAssertEqual(try Data(contentsOf: backup), original, "Unreadable file must be preserved byte-for-byte.")
         XCTAssertEqual(makeStore(fileURL: url).servers.map(\.trimmedName), ["browser"])
+    }
+
+    func testKeychainFailureSavesNothingAndIsReported() throws {
+        let url = makeURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let secrets = InMemoryMCPSecretStore()
+        let store = makeStore(fileURL: url, secrets: secrets)
+        secrets.failure = MCPSecretStoreError.keychain(errSecInteractionNotAllowed)
+        store.add(MCPServerConfiguration(name: "custom", command: "npx", env: ["API_TOKEN": "secret"]))
+        XCTAssertTrue(store.errorMessage?.contains("Keychain") ?? false, store.errorMessage ?? "no error")
+        XCTAssertFalse(store.servers.contains { $0.name == "custom" })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "The config isn't written without its secrets.")
     }
 }

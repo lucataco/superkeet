@@ -68,6 +68,7 @@ struct HistoryView: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
             }
             .cardStyle(padding: 8, cornerRadius: 8)

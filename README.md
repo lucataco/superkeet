@@ -335,3 +335,8 @@ Check:
 ## License
 
 MIT
+
+The speech model is not part of this repository. Superkeet downloads
+[NVIDIA's Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+in the [ONNX conversion by istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx),
+licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

@@ -140,6 +140,32 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: backup), original)
     }
 
+    func testOneUnreadableRecordDoesNotHideTheRest() throws {
+        let (dir, _) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let valid = try XCTUnwrap(String(data: encoder.encode(makeRecord("kept")), encoding: .utf8))
+        try Data("[\(valid), {\"malformed\": true}]".utf8).write(to: path)
+        let store = HistoryStore(fileURL: path)
+        XCTAssertEqual(store.records.map(\.text), ["kept"])
+        XCTAssertTrue(store.persistenceIssue?.contains("1 history entry") ?? false)
+    }
+
+    func testRecordWithMissingFieldsStillLoads() throws {
+        let (dir, _) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("history.json")
+        try Data(#"[{"text":"hello there world","timestamp":"2026-01-02T03:04:05Z"}]"#.utf8).write(to: path)
+        let store = HistoryStore(fileURL: path)
+        let record = try XCTUnwrap(store.records.first)
+        XCTAssertEqual(record.text, "hello there world")
+        XCTAssertEqual(record.wordCount, 3, "Derived from the text when missing.")
+        XCTAssertEqual(record.activeAppName, "")
+        XCTAssertNil(store.persistenceIssue)
+    }
+
     func testBackupFailureLeavesOriginalUntouched() throws {
         let (dir, _) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

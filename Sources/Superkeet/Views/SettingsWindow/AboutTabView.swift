@@ -2,6 +2,9 @@ import SwiftUI
 
 struct AboutTabView: View {
     private let websiteURL = URL(string: "https://catacolabs.com")
+    private let modelURL = URL(string: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3")
+    private let onnxModelURL = URL(string: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx")
+    private let licenseURL = URL(string: "https://creativecommons.org/licenses/by/4.0/")
 
     var body: some View {
         VStack(spacing: 24) {
@@ -18,7 +21,7 @@ struct AboutTabView: View {
                     .foregroundColor(.secondary)
             }
 
-            Text("Voice-to-text powered by Parakeet — a fully local, offline speech recognition engine using NVIDIA's Parakeet TDT 0.6B model.")
+            Text("Voice-to-text powered by Parakeet — an on-device speech recognition engine using NVIDIA's Parakeet TDT 0.6B model.")
                 .font(.body)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
@@ -38,21 +41,25 @@ struct AboutTabView: View {
                     creditRow("Inference", "ONNX Runtime")
                     creditRow("Framework", "SwiftUI + AppKit")
                 }
+
+                modelAttribution
             }
 
             Divider()
                 .padding(.horizontal, 60)
 
             VStack(spacing: 8) {
-                Text("All audio is processed locally on your Mac. Nothing is sent to the cloud.")
+                Text("Your audio and transcripts are processed on your Mac and never sent to the cloud. Superkeet goes online only to download the speech model, and to run any MCP servers you enable in Actions Mode.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
 
                 HStack(spacing: 16) {
                     Image(systemName: "lock.shield.fill")
                         .foregroundColor(.green)
-                    Text("100% Private & Offline")
+                        .accessibilityHidden(true)
+                    Text("On-device speech recognition")
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundColor(.green)
@@ -75,6 +82,26 @@ struct AboutTabView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
+    }
+
+    /// The Parakeet model is licensed CC BY 4.0, which requires attribution.
+    @ViewBuilder
+    private var modelAttribution: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 4) {
+                Text("Model:")
+                if let modelURL { Link("Parakeet TDT 0.6B v3", destination: modelURL) }
+                Text("by NVIDIA,")
+                if let licenseURL { Link("CC BY 4.0", destination: licenseURL) }
+            }
+            HStack(spacing: 4) {
+                Text("Converted to ONNX by")
+                if let onnxModelURL { Link("istupakov", destination: onnxModelURL) }
+            }
+        }
+        .font(.system(size: 10))
+        .foregroundColor(.secondary)
+        .padding(.top, 4)
     }
 
     private func creditRow(_ label: String, _ value: String) -> some View {

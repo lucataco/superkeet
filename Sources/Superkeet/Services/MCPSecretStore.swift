@@ -4,8 +4,21 @@ import os.log
 
 protocol MCPSecretStoring: AnyObject {
     func secretEnvironment(for name: String) -> [String: String]
-    func setSecretEnvironment(_ environment: [String: String], for name: String)
+    /// Throws when the secret could not be stored, so the caller never reports it as saved.
+    func setSecretEnvironment(_ environment: [String: String], for name: String) throws
     func removeSecretEnvironment(for name: String)
+}
+
+enum MCPSecretStoreError: LocalizedError {
+    case keychain(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .keychain(let status):
+            let detail = (SecCopyErrorMessageString(status, nil) as String?) ?? "error \(status)"
+            return "Couldn't save the server's secrets to the Keychain (\(detail)). The server was not saved."
+        }
+    }
 }
 
 final class KeychainMCPSecretStore: MCPSecretStoring {
@@ -36,8 +49,8 @@ final class KeychainMCPSecretStore: MCPSecretStoring {
         return decoded
     }
 
-    func setSecretEnvironment(_ environment: [String: String], for name: String) {
-        guard let data = try? JSONEncoder().encode(environment) else { return }
+    func setSecretEnvironment(_ environment: [String: String], for name: String) throws {
+        let data = try JSONEncoder().encode(environment)
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -53,9 +66,11 @@ final class KeychainMCPSecretStore: MCPSecretStoring {
             let addStatus = SecItemAdd(addition as CFDictionary, nil)
             if addStatus != errSecSuccess {
                 log.error("Failed to store MCP secrets for \(name, privacy: .public): \(addStatus)")
+                throw MCPSecretStoreError.keychain(addStatus)
             }
         } else if updateStatus != errSecSuccess {
             log.error("Failed to update MCP secrets for \(name, privacy: .public): \(updateStatus)")
+            throw MCPSecretStoreError.keychain(updateStatus)
         }
     }
 
@@ -65,6 +80,9 @@ final class KeychainMCPSecretStore: MCPSecretStoring {
             kSecAttrService as String: service,
             kSecAttrAccount as String: name
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            log.error("Failed to remove MCP secrets for \(name, privacy: .public): \(status)")
+        }
     }
 }

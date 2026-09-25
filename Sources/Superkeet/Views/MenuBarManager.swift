@@ -236,7 +236,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     @objc private func startRecording() {
-        guard parakeetService.daemonState != .transcribing, let requestID = recordingStart.begin() else { return }
+        guard parakeetService.daemonState != .transcribing else {
+            // Say why nothing happened instead of silently ignoring the shortcut.
+            menuBarLog.info("Recording requested while the previous take is still transcribing")
+            NSSound.beep()
+            parakeetService.sessionStatus = "Still transcribing the last recording…"
+            return
+        }
+        guard let requestID = recordingStart.begin() else { return }
         updateMenuBarIcon(recording: false)
 
         Task { @MainActor in

@@ -11,11 +11,7 @@ struct CursorWaveformOverlay: View {
             Circle()
                 .fill(Color.red)
                 .frame(width: 7, height: 7)
-                .scaleEffect(isRecording ? 1.2 : 1.0)
-                .animation(
-                    .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                    value: isRecording
-                )
+                .recordingPulse(isRecording: isRecording, scale: 1.2)
 
             EqualizerView(
                 audioMonitor: audioMonitor,
@@ -25,6 +21,7 @@ struct CursorWaveformOverlay: View {
                 maxHeight: 16,
                 cornerRadius: 1.5
             )
+            .accessibilityHidden(true)
 
             Text(OverlayElapsedClock.formatted(elapsedTime))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -40,6 +37,7 @@ struct CursorWaveformOverlay: View {
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Stop recording")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

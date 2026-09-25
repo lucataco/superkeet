@@ -157,13 +157,13 @@ struct OnboardingView: View {
                 featureRow(icon: "mic.fill", text: "Press a hotkey to start recording")
                 featureRow(icon: "text.cursor", text: "Your speech is transcribed locally")
                 featureRow(icon: "clipboard", text: "Text is copied or pasted automatically")
-                featureRow(icon: "lock.shield.fill", text: "Nothing leaves your Mac")
+                featureRow(icon: "lock.shield.fill", text: "Your audio never leaves your Mac")
             }
             .padding(.horizontal, 40)
 
             Spacer()
 
-            Text("Superkeet is downloading its on-device speech model (about 670 MB) in the background. After that it runs completely offline.")
+            Text("Superkeet is downloading its on-device speech model (about 670 MB) in the background. After that, speech recognition runs entirely on your Mac.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)

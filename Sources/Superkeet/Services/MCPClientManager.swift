@@ -297,8 +297,11 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
 
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            connection.appendStderr(text)
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            connection.appendStderr(String(bytes: data, encoding: .utf8) ?? "[\(data.count) bytes of non-UTF-8 output]")
         }
 
         process.terminationHandler = { [weak self] proc in

@@ -37,7 +37,7 @@ final class MCPServerConfigMigrationTests: XCTestCase {
         let file = try file(document: ["metadata": ["keep": "me"], "mcpServers": ["chrome-devtools": legacyEntry(), "custom": custom]])
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let secrets = InMemoryMCPSecretStore()
-        secrets.setSecretEnvironment(["API_TOKEN": "fixture-secret"], for: "custom")
+        try? secrets.setSecretEnvironment(["API_TOKEN": "fixture-secret"], for: "custom")
         var writes = 0
         let store = MCPServerConfigStore(fileURL: file, secrets: secrets, migrationWriter: { data, url in
             writes += 1
@@ -100,7 +100,7 @@ final class MCPServerConfigMigrationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let original = try Data(contentsOf: file)
         let secrets = InMemoryMCPSecretStore()
-        secrets.setSecretEnvironment(["API_TOKEN": "fixture-secret"], for: "chrome-devtools")
+        try? secrets.setSecretEnvironment(["API_TOKEN": "fixture-secret"], for: "chrome-devtools")
         let store = MCPServerConfigStore(fileURL: file, secrets: secrets)
         XCTAssertEqual(store.servers.first?.args, legacyArgs)
         XCTAssertEqual(store.servers.first?.env, ["API_TOKEN": "fixture-secret"])
