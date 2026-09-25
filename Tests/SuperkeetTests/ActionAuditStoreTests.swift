@@ -55,9 +55,34 @@ final class ActionAuditStoreTests: XCTestCase {
         )
         for index in 0..<6 {
             store.record(serverName: "a", toolName: "tool\(index)", risk: .readOnly, argumentsJSON: "{}", outcome: "succeeded")
+            XCTAssertLessThanOrEqual(store.entries().count, 3, "never exceeds the limit")
         }
 
-        XCTAssertEqual(store.entries().map(\.toolName), ["tool3", "tool4", "tool5"])
+        // Pruning keeps a contiguous run of the newest entries.
+        let names = store.entries().map(\.toolName)
+        XCTAssertEqual(names.last, "tool5")
+        XCTAssertEqual(names, (6 - names.count..<6).map { "tool\($0)" })
+    }
+
+    func testPruningLeavesHeadroomSoTheNextAppendDoesNotRewrite() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("action-audit.log")
+
+        let store = ActionAuditStore(fileURL: url, maxEntries: 100, maxBytes: 10_000_000)
+        for index in 0...100 {
+            store.record(serverName: "a", toolName: "tool\(index)", risk: .readOnly, argumentsJSON: "{}", outcome: "succeeded")
+        }
+        XCTAssertEqual(store.entries().count, ActionAuditStore.pruneTarget(for: 100))
+
+        // A pruning rewrite replaces the file atomically (new inode); a plain append does not.
+        let inodeBefore = try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int
+        store.record(serverName: "a", toolName: "next", risk: .readOnly, argumentsJSON: "{}", outcome: "succeeded")
+        let inodeAfter = try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int
+        XCTAssertEqual(inodeBefore, inodeAfter)
+        XCTAssertEqual(store.entries().last?.toolName, "next")
     }
 
     func testPrunesToMaximumBytesKeepingNewest() {

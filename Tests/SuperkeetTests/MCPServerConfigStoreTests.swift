@@ -217,4 +217,21 @@ final class MCPServerConfigStoreTests: XCTestCase {
         store.remove(id: server.id)
         XCTAssertFalse(store.servers.contains { $0.id == server.id })
     }
+
+    func testUnreadableFileIsPreservedBeforeFirstSave() throws {
+        let url = makeURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let original = Data(#"{"mcpServers": ["#.utf8)
+        try original.write(to: url)
+
+        let store = makeStore(fileURL: url)
+        XCTAssertTrue(store.servers.isEmpty)
+        XCTAssertNotNil(store.errorMessage)
+
+        store.add(MCPServerConfiguration(name: "browser", command: "npx"))
+
+        let backup = try XCTUnwrap(store.recoveryBackupURL)
+        XCTAssertEqual(try Data(contentsOf: backup), original, "Unreadable file must be preserved byte-for-byte.")
+        XCTAssertEqual(makeStore(fileURL: url).servers.map(\.trimmedName), ["browser"])
+    }
 }

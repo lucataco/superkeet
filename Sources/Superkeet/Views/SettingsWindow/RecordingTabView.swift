@@ -111,6 +111,11 @@ struct RecordingTabView: View {
         .onChange(of: settings.audioInputDevice) {
             applyMicrophoneChange()
         }
+        .onChange(of: parakeetService.daemonState) { _, state in
+            // Clear the restart notice once the engine is back and nothing is still pending.
+            guard state == .idle, !parakeetService.hasPendingEngineRestart else { return }
+            deviceChangeStatus = nil
+        }
     }
 
     private func refreshDevices() {
@@ -121,20 +126,15 @@ struct RecordingTabView: View {
     /// The engine opens its input device at launch, so a new selection needs a restart. Do it for
     /// the user instead of telling them to, but never interrupt a take in progress.
     private func applyMicrophoneChange() {
-        guard settings.isDaemonRunning else { return }
-        guard parakeetService.daemonState == .idle else {
-            deviceChangeStatus = "The new microphone will be used after the current recording finishes and the engine restarts."
-            return
-        }
-        deviceChangeStatus = "Restarting the speech engine with the new microphone…"
-        Task {
-            do {
-                try await parakeetService.restartDaemon()
-                deviceChangeStatus = nil
-            } catch {
-                advancedTabLog.error("Failed to restart engine after microphone change: \(error.localizedDescription)")
-                deviceChangeStatus = "Couldn't restart the speech engine: \(error.localizedDescription)"
-            }
+        switch parakeetService.requestEngineRestartForSettingsChange() {
+        case .notNeeded:
+            deviceChangeStatus = nil
+        case .restarting:
+            advancedTabLog.info("Restarting engine for microphone change")
+            deviceChangeStatus = "Restarting the speech engine with the new microphone…"
+        case .deferredUntilIdle:
+            advancedTabLog.info("Microphone change deferred until the current take finishes")
+            deviceChangeStatus = "The new microphone will be used as soon as the current recording finishes."
         }
     }
 }

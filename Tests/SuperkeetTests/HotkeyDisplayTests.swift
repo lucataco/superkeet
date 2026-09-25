@@ -104,4 +104,29 @@ final class HotkeyDisplayTests: XCTestCase {
             secondModifiers: Int(CGEventFlags.maskControl.rawValue)
         ))
     }
+
+    func testPlainTypingKeysAreRejectedAsHotkeys() {
+        for keyCode in [0, 49, 36, 48, 51, 123] { // A, Space, Return, Tab, Delete, Left
+            XCTAssertFalse(hotkeyIsSafeToAssign(keyCode: keyCode, modifiers: 0), "keyCode \(keyCode)")
+        }
+    }
+
+    func testShiftAloneIsNotEnough() {
+        XCTAssertFalse(hotkeyIsSafeToAssign(keyCode: 0, modifiers: Int(CGEventFlags.maskShift.rawValue)))
+        XCTAssertFalse(hotkeyIsSafeToAssign(keyCode: 49, modifiers: Int(CGEventFlags.maskShift.rawValue)))
+    }
+
+    func testCommandOptionOrControlMakesAnyKeySafe() {
+        for mask in [CGEventFlags.maskCommand, .maskAlternate, .maskControl] {
+            XCTAssertTrue(hotkeyIsSafeToAssign(keyCode: 49, modifiers: Int(mask.rawValue)))
+        }
+        let shiftOption = CGEventFlags.maskShift.rawValue | CGEventFlags.maskAlternate.rawValue
+        XCTAssertTrue(hotkeyIsSafeToAssign(keyCode: 0, modifiers: Int(shiftOption)))
+    }
+
+    func testFnAndFunctionKeysAreAllowedWithoutModifiers() {
+        for keyCode in [63, 122, 111, 105, 90] { // fn, F1, F12, F13, F20
+            XCTAssertTrue(hotkeyIsSafeToAssign(keyCode: keyCode, modifiers: 0), "keyCode \(keyCode)")
+        }
+    }
 }

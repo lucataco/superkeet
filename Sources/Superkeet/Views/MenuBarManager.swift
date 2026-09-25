@@ -18,6 +18,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var settingsWindowController: NSWindowController?
     private var historyWindowController: NSWindowController?
     private let recordingStart = RecordingStartCoordinator()
+    private var didShowMicrophoneDeniedAlert = false
     private var recordingRequested: Bool { recordingStart.requestID != nil }
     private var pttSessionActive: Bool = false
     private var recordingStateCancellable: AnyCancellable?
@@ -245,6 +246,16 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     private func startRecordingFlow(requestID: UUID) async {
+        guard await MicrophoneAccess.ensureAccess() else {
+            menuBarLog.error("Recording blocked: microphone access denied")
+            parakeetService.disarmCommandMode()
+            guard recordingStart.isCurrent(requestID) else { return }
+            teardownRecordingUI(hideOverlay: true)
+            reportMicrophoneDenied()
+            return
+        }
+        guard recordingStart.isCurrent(requestID) else { return }
+
         let started: Bool
         do {
             started = try await recordingStart.run(requestID, prepare: {
@@ -283,6 +294,27 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         if style.showsOverlay {
             AudioLevelMonitor.shared.startMonitoring()
             RecordingOverlayWindowController.shared.show()
+        }
+    }
+
+    /// Surfaces a denied microphone permission. The status/issue is updated every time; the alert
+    /// with a link to System Settings is shown once per launch so repeated hotkey presses don't nag.
+    @MainActor
+    private func reportMicrophoneDenied() {
+        parakeetService.sessionStatus = "Microphone access needed"
+        settings.runtimeIssue = MicrophoneAccess.deniedMessage
+        guard !didShowMicrophoneDeniedAlert else { return }
+        didShowMicrophoneDeniedAlert = true
+
+        let alert = NSAlert()
+        alert.messageText = "Microphone Access Needed"
+        alert.informativeText = MicrophoneAccess.deniedMessage
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Microphone Settings")
+        alert.addButton(withTitle: "Not Now")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            SystemSettingsLinks.openMicrophone()
         }
     }
 

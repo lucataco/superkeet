@@ -16,6 +16,7 @@ final class PasteServiceTests: XCTestCase {
         var pasted: [String] = []
         var issues: [String] = []
         var scheduled: [() -> Void] = []
+        var delays: [TimeInterval] = []
 
         lazy var service = PasteService(pasteboard: pasteboard, environment: .init(
             accessibilityTrusted: { [unowned self] in trusted },
@@ -25,7 +26,10 @@ final class PasteServiceTests: XCTestCase {
                 pasted.append(pasteboard.string(forType: .string) ?? "")
                 return true
             },
-            schedule: { [unowned self] _, action in scheduled.append(action) },
+            schedule: { [unowned self] delay, action in
+                delays.append(delay)
+                scheduled.append(action)
+            },
             reportIssue: { [unowned self] in issues.append($0) }
         ))
 
@@ -141,5 +145,42 @@ final class PasteServiceTests: XCTestCase {
         clipboardChanged.service.copyToClipboard("something else")
         clipboardChanged.advance()
         XCTAssertEqual(clipboardChanged.deliveries.values, [.pasteFailed])
+    }
+
+    func testTemporaryTranscriptIsMarkedTransientForClipboardManagers() {
+        let harness = Harness()
+        harness.deliver()
+        let types = harness.pasteboard.types ?? []
+        for marker in PasteService.transientTypes {
+            XCTAssertTrue(types.contains(marker), "missing \(marker.rawValue)")
+        }
+    }
+
+    func testCopiedTranscriptIsNotMarkedTransient() {
+        let harness = Harness()
+        harness.deliver(autoPaste: false)
+        let types = harness.pasteboard.types ?? []
+        XCTAssertFalse(PasteService.transientTypes.contains { types.contains($0) })
+    }
+
+    func testClipboardRestoreWaitsLongEnoughForLazyPasteReaders() {
+        let harness = Harness()
+        harness.deliver()
+        harness.advance()
+        XCTAssertEqual(harness.delays.last, PasteService.clipboardRestoreDelay)
+        XCTAssertGreaterThanOrEqual(PasteService.clipboardRestoreDelay, 0.5)
+    }
+
+    func testRestoreKeepsEveryRestorableTypeOfTheOriginalItem() {
+        let harness = Harness()
+        let html = NSPasteboard.PasteboardType.html
+        harness.pasteboard.clearContents()
+        harness.pasteboard.setString("plain", forType: .string)
+        harness.pasteboard.setString("<b>rich</b>", forType: html)
+        harness.deliver()
+        harness.advance()
+        harness.advance()
+        XCTAssertEqual(harness.pasteboard.string(forType: .string), "plain")
+        XCTAssertEqual(harness.pasteboard.string(forType: html), "<b>rich</b>")
     }
 }

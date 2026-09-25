@@ -1,5 +1,8 @@
 import Foundation
 import Combine
+import os.log
+
+private let downloadLog = Logger(subsystem: "com.superkeet.app", category: "ModelProvisioning")
 
 final class ModelProvisioning: ObservableObject, @unchecked Sendable {
     static let shared = ModelProvisioning()
@@ -195,10 +198,13 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
 
         let lineBuffer = NDJSONLineBuffer()
         let collector = DownloadCollector()
+        let watchdog = DownloadStallWatchdog()
+        let cancellationState = DownloadCancellationState()
 
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
+            watchdog.recordActivity()
             for line in lineBuffer.consume(data) {
                 self?.handleLine(line, collector: collector)
             }
@@ -207,14 +213,25 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
+            watchdog.recordActivity()
             collector.appendStderr(data)
         }
 
-        let cancellationState = DownloadCancellationState()
+        let stallTimer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        stallTimer.schedule(deadline: .now() + 5, repeating: 5)
+        stallTimer.setEventHandler {
+            guard watchdog.checkForStall() else { return }
+            downloadLog.error("Model download stalled for \(Int(watchdog.stallTimeout))s; terminating downloader")
+            cancellationState.cancel(process)
+        }
+        // Resume immediately: a dispatch source must never be released while suspended. Every
+        // exit path below cancels it.
+        stallTimer.resume()
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak self] proc in
+                    stallTimer.cancel()
                     stdoutPipe.fileHandleForReading.readabilityHandler = nil
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
 
@@ -230,7 +247,9 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
 
                     let exitCode = proc.terminationStatus
                     let message: String?
-                    if let reported = collector.errorMessage {
+                    if watchdog.didStall {
+                        message = watchdog.stallMessage
+                    } else if let reported = collector.errorMessage {
                         message = reported
                     } else if exitCode != 0 {
                         message = collector.stderrExcerpt()
@@ -239,17 +258,23 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
                         message = nil
                     }
 
-                    continuation.resume(returning: DownloadOutcome(exitCode: exitCode, errorMessage: message))
+                    // A stall kill can exit 0 on some signal paths; never report it as success.
+                    let reportedExit = watchdog.didStall && exitCode == 0 ? 1 : exitCode
+                    continuation.resume(returning: DownloadOutcome(exitCode: reportedExit, errorMessage: message))
                 }
 
                 do {
                     let didRun = try cancellationState.runUnlessCancelled(process)
-                    if !didRun {
+                    if didRun {
+                        watchdog.recordActivity()
+                    } else {
+                        stallTimer.cancel()
                         stdoutPipe.fileHandleForReading.readabilityHandler = nil
                         stderrPipe.fileHandleForReading.readabilityHandler = nil
                         continuation.resume(throwing: CancellationError())
                     }
                 } catch {
+                    stallTimer.cancel()
                     stdoutPipe.fileHandleForReading.readabilityHandler = nil
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
                     continuation.resume(throwing: error)
@@ -486,6 +511,48 @@ final class NDJSONLineBuffer: @unchecked Sendable {
     }
 }
 
+/// Detects a model download that has stopped making progress. parakeet-cli's HTTP client has no
+/// read timeout, so a dead connection would otherwise leave the download (and engine start)
+/// waiting forever. Any output from the downloader counts as activity.
+final class DownloadStallWatchdog: @unchecked Sendable {
+    static let defaultStallTimeout: TimeInterval = 90
+
+    let stallTimeout: TimeInterval
+    private let lock = NSLock()
+    private var lastActivity: Date
+    private var _didStall = false
+
+    init(stallTimeout: TimeInterval = DownloadStallWatchdog.defaultStallTimeout, now: Date = Date()) {
+        self.stallTimeout = stallTimeout
+        self.lastActivity = now
+    }
+
+    func recordActivity(at now: Date = Date()) {
+        lock.lock()
+        lastActivity = now
+        lock.unlock()
+    }
+
+    /// Returns true exactly once, the first time the download is seen stalled.
+    func checkForStall(at now: Date = Date()) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !_didStall, now.timeIntervalSince(lastActivity) >= stallTimeout else { return false }
+        _didStall = true
+        return true
+    }
+
+    var didStall: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _didStall
+    }
+
+    var stallMessage: String {
+        "The speech model download stopped making progress for \(Int(stallTimeout)) seconds. Check your internet connection and try again."
+    }
+}
+
 final class DownloadCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var _errorMessage: String?
@@ -533,8 +600,17 @@ private final class DownloadCancellationState: @unchecked Sendable {
         let shouldTerminate = process.isRunning
         lock.unlock()
 
-        if shouldTerminate {
-            process.terminate()
+        guard shouldTerminate else { return }
+        process.terminate()
+
+        // Escalate to SIGKILL if the downloader ignores SIGTERM (e.g. blocked in network I/O),
+        // so cancellation — and therefore app quit — can never hang on it.
+        let pid = process.processIdentifier
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.killGracePeriod) {
+            guard process.isRunning, process.processIdentifier == pid else { return }
+            kill(pid, SIGKILL)
         }
     }
+
+    static let killGracePeriod: TimeInterval = 2.0
 }

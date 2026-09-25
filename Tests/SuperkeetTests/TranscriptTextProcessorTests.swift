@@ -68,4 +68,40 @@ final class TranscriptTextProcessorTests: XCTestCase {
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(PhraseReplacementStore(fileURL: url).rules, rules)
     }
+
+    func testPhraseStorePreservesUnreadableFileBeforeOverwriting() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("rules.json")
+        let original = Data("{ not valid json".utf8)
+        try original.write(to: url)
+
+        let store = PhraseReplacementStore(fileURL: url)
+        XCTAssertTrue(store.rules.isEmpty)
+        XCTAssertNotNil(store.errorMessage)
+
+        let rules = [PhraseReplacement(phrase: "a", replacement: "b")]
+        store.save(rules)
+
+        let backup = try XCTUnwrap(store.recoveryBackupURL)
+        XCTAssertEqual(try Data(contentsOf: backup), original, "Unreadable file must be preserved byte-for-byte.")
+        XCTAssertEqual(PhraseReplacementStore(fileURL: url).rules, rules)
+    }
+
+    func testPhraseReplacementDecodesWithMissingOptionalFields() throws {
+        let json = Data(#"[{"phrase":"teh","replacement":"the"}]"#.utf8)
+        let decoded = try JSONDecoder().decode([PhraseReplacement].self, from: json)
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded.first?.phrase, "teh")
+        XCTAssertEqual(decoded.first?.replacement, "the")
+        XCTAssertEqual(decoded.first?.bundleID, "")
+    }
+
+    func testPhraseReplacementDecodingIgnoresUnknownFields() throws {
+        let id = UUID()
+        let json = Data(#"[{"id":"\#(id.uuidString)","phrase":"x","replacement":"y","bundleID":"app","futureField":true}]"#.utf8)
+        let decoded = try JSONDecoder().decode([PhraseReplacement].self, from: json)
+        XCTAssertEqual(decoded, [PhraseReplacement(id: id, phrase: "x", replacement: "y", bundleID: "app")])
+    }
 }

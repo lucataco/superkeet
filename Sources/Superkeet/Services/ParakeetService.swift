@@ -10,7 +10,13 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private static let startupPollIntervalNanoseconds: UInt64 = 100_000_000
     private static let startupTimeoutNanoseconds: UInt64 = 20_000_000_000
 
-    @Published var daemonState: DaemonState = .stopped
+    @Published var daemonState: DaemonState = .stopped {
+        didSet { applyPendingEngineRestartIfIdle() }
+    }
+    /// Set when a setting that the engine reads at launch (e.g. the input device) changed while a
+    /// take was in progress. Applied on the next transition to idle. Main-thread only.
+    private var pendingEngineRestart = false
+    var hasPendingEngineRestart: Bool { pendingEngineRestart }
     @Published var lastTranscription: String = ""
     @Published var lastRawTranscription: String = ""
     @Published var sessionStatus: String = "Ready"
@@ -48,12 +54,19 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private var outputGate = TranscriptSessionGate()
     private var recordingDuration: TimeInterval = 0
     private var completionTimeout: DispatchWorkItem?
+    /// Auto-stops a take that was left running (e.g. a forgotten toggle) so the mic isn't held
+    /// open indefinitely and the take stays within the engine's transcription limits.
+    static let maxRecordingDuration: TimeInterval = 15 * 60
+    private var maxDurationStop: DispatchWorkItem?
     private var startRequestPending = false
     private var commandModeArmed = false
     private var idleShutdownTask: DispatchWorkItem?
     private let lifecycleLock = NSLock()
     private var startTask: Task<Void, Error>?
     private var stopTask: Task<Void, Never>?
+    /// Set once the app begins quitting; guarded by `lifecycleLock`. Prevents a hotkey press or
+    /// auto-restart during shutdown from launching an engine the exiting app would orphan.
+    private var isShuttingDown = false
     private var autoRestartTask: Task<Void, Never>?
     private var autoRestartPolicy = AutoRestartPolicy()
     @MainActor var speculativeLaunchingOverride: (any SpeculativeLaunching)?
@@ -94,12 +107,14 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     }
 
     func startDaemon() async throws {
-        let pendingStop = lifecycleLock.withLock { stopTask }
+        let (pendingStop, shuttingDown) = lifecycleLock.withLock { (stopTask, isShuttingDown) }
+        if shuttingDown { throw CancellationError() }
         if let pendingStop {
             await pendingStop.value
         }
 
-        let (task, createdTask) = lifecycleLock.withLock { () -> (Task<Void, Error>?, Bool) in
+        let (task, createdTask) = try lifecycleLock.withLock { () throws -> (Task<Void, Error>?, Bool) in
+            if isShuttingDown { throw CancellationError() }
             if let startTask {
                 return (startTask, false)
             }
@@ -420,6 +435,69 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         }
     }
 
+    enum EngineRestartRequest: Equatable {
+        /// The engine isn't running; the new setting is picked up at the next start.
+        case notNeeded
+        case restarting
+        case deferredUntilIdle
+    }
+
+    /// Restarts the engine so it picks up a launch-time setting, without interrupting a take: if
+    /// the engine is busy the restart runs as soon as it returns to idle.
+    @MainActor
+    @discardableResult
+    func requestEngineRestartForSettingsChange() -> EngineRestartRequest {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard settings.isDaemonRunning else {
+            pendingEngineRestart = false
+            return .notNeeded
+        }
+        guard daemonState == .idle else {
+            pendingEngineRestart = true
+            return .deferredUntilIdle
+        }
+        pendingEngineRestart = false
+        performSettingsRestart()
+        return .restarting
+    }
+
+    private func applyPendingEngineRestartIfIdle() {
+        guard pendingEngineRestart else { return }
+        switch daemonState {
+        case .stopped:
+            // A stopped engine reads the new setting on its next start.
+            pendingEngineRestart = false
+        case .idle:
+            pendingEngineRestart = false
+            // Defer out of the property observer so the state change finishes publishing first.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.daemonState == .idle else {
+                    self?.pendingEngineRestart = true
+                    return
+                }
+                parakeetLog.info("Applying deferred engine restart for a settings change")
+                self.performSettingsRestart()
+            }
+        default:
+            break
+        }
+    }
+
+    private func performSettingsRestart() {
+        Task {
+            do {
+                try await self.restartDaemon()
+            } catch is CancellationError {
+                return
+            } catch {
+                parakeetLog.error("Engine restart after settings change failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    self.settings.runtimeIssue = "Couldn't restart the speech engine with the new settings: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     func restartDaemon() async throws {
         await stopDaemonAndWait()
         try await startDaemon()
@@ -501,11 +579,30 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         lastUserFacingError = nil
         settings.runtimeIssue = nil
         if commandModeArmed { speculation.begin(sessionID: sessionID) }
+        armMaxDurationStop(sessionID: sessionID)
         return true
     }
 
     @MainActor
+    private func armMaxDurationStop(sessionID: String) {
+        maxDurationStop?.cancel()
+        let limit = Self.maxRecordingDuration
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.daemonState == .recording, self.outputGate.sessionID == sessionID else { return }
+            let minutes = Int(limit / 60)
+            parakeetLog.warning("Recording reached the \(minutes)-minute limit; stopping automatically")
+            self.stopRecording()
+            CaptureSoundPlayer.play(.stop)
+            self.settings.runtimeIssue = "Recording stopped automatically after \(minutes) minutes. The audio so far is being transcribed."
+        }
+        maxDurationStop = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + limit, execute: work)
+    }
+
+    @MainActor
     func stopRecording() {
+        maxDurationStop?.cancel()
+        maxDurationStop = nil
         guard daemonState == .recording, let sessionID = outputGate.sessionID else { return }
         recordingDuration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         daemonState = .transcribing
@@ -529,6 +626,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
 
     @MainActor
     func cancelRecording() {
+        maxDurationStop?.cancel()
+        maxDurationStop = nil
         guard let sessionID = outputGate.sessionID else { return }
         commandModeArmed = false
         speculation.end(sessionID: sessionID)
@@ -959,10 +1058,28 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         sessionStatus = "Original transcript restored and copied"
     }
 
+    /// Blocks any further engine starts for the rest of the process lifetime. Call as the first
+    /// step of app shutdown.
+    func beginShutdown() {
+        lifecycleLock.withLock { isShuttingDown = true }
+    }
+
+    /// Final shutdown: blocks any further engine starts, then stops the engine.
     func cleanupAndWait() async {
+        beginShutdown()
         await stopDaemonAndWait()
         try? FileManager.default.removeItem(atPath: settings.socketPath)
         try? FileManager.default.removeItem(atPath: settings.pidFilePath)
+    }
+
+    /// Last resort when graceful shutdown overran its deadline: SIGKILL the engine synchronously so
+    /// it cannot outlive the app. Safe to call more than once.
+    func forceKillDaemonForExit() {
+        beginShutdown()
+        guard let process = lifecycleLock.withLock({ daemonProcess }), process.isRunning else { return }
+        let pid = process.processIdentifier
+        parakeetLog.error("Shutdown deadline exceeded; force-killing speech engine pid \(pid)")
+        kill(pid, SIGKILL)
     }
 
     private func ensureRuntimeDirectory() throws {

@@ -12,6 +12,19 @@ struct PhraseReplacement: Identifiable, Codable, Equatable {
     }
 }
 
+extension PhraseReplacement {
+    /// Lenient decoding: missing fields fall back to defaults so files written by older (or newer)
+    /// versions still load instead of failing the whole list. Declared in an extension so the
+    /// memberwise initializer is kept.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        phrase = try container.decodeIfPresent(String.self, forKey: .phrase) ?? ""
+        replacement = try container.decodeIfPresent(String.self, forKey: .replacement) ?? ""
+        bundleID = try container.decodeIfPresent(String.self, forKey: .bundleID) ?? ""
+    }
+}
+
 enum TranscriptTextProcessor {
     static func process(
         _ raw: String, removeFillers: Bool, replacements: [PhraseReplacement],

@@ -146,6 +146,13 @@ final class ActionAuditStore: @unchecked Sendable {
         pruneIfNeededLocked()
     }
 
+    /// Fraction of a limit to keep after pruning, leaving headroom before the next rewrite.
+    static let pruneRetainFraction = 0.75
+
+    static func pruneTarget(for limit: Int) -> Int {
+        max(1, Int(Double(limit) * pruneRetainFraction))
+    }
+
     private func pruneIfNeededLocked() {
         let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
         let size = (attributes?[.size] as? Int) ?? 0
@@ -157,9 +164,13 @@ final class ActionAuditStore: @unchecked Sendable {
             .map(String.init)
         entryCount = lines.count
 
+        // Trim to below the limits, not just under them. Stopping right at the limit made every
+        // following append go over again and rewrite the whole (~1 MB) file.
+        let targetEntries = Self.pruneTarget(for: maxEntries)
+        let targetBytes = Self.pruneTarget(for: maxBytes)
         var totalBytes = lines.reduce(0) { $0 + $1.utf8.count + 1 }
         var start = 0
-        while lines.count - start > 1, totalBytes > maxBytes || lines.count - start > maxEntries {
+        while lines.count - start > 1, totalBytes > targetBytes || lines.count - start > targetEntries {
             totalBytes -= lines[start].utf8.count + 1
             start += 1
         }

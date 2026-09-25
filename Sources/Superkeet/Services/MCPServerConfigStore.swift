@@ -6,8 +6,10 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
 
     @Published private(set) var servers: [MCPServerConfiguration] = []
     @Published private(set) var errorMessage: String?
+    @Published private(set) var recoveryBackupURL: URL?
 
     private let fileURL: URL
+    private let storeFile: RecoverableStoreFile
     private let secrets: MCPSecretStoring
     private let migrationWriter: (Data, URL) throws -> Void
     private let log = Logger(subsystem: "com.superkeet.app", category: "MCPServerConfigStore")
@@ -18,6 +20,7 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
         migrationWriter: @escaping (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .atomic) }
     ) {
         self.fileURL = fileURL
+        self.storeFile = RecoverableStoreFile(url: fileURL)
         self.secrets = secrets
         self.migrationWriter = migrationWriter
         load()
@@ -48,6 +51,7 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
         do {
             let data = try Data(contentsOf: fileURL)
             let document = try JSONDecoder().decode(MCPServersDocument.self, from: data)
+            storeFile.needsRecoveryBackup = false
             var loaded = document.configurations().map(mergingSecrets)
             if let index = loaded.firstIndex(where: MCPDefaultServers.needsChromeAutoConnectMigration) {
                 do {
@@ -67,7 +71,9 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
             errorMessage = nil
         } catch {
             servers = []
-            errorMessage = "Could not read MCP servers: \(error.localizedDescription)"
+            // Never let the next save silently replace a file we couldn't read: back it up first.
+            storeFile.needsRecoveryBackup = true
+            errorMessage = "Could not read MCP servers. The original file will be preserved before any changes are saved. \(error.localizedDescription)"
             log.error("Failed to load MCP servers: \(error.localizedDescription)")
         }
     }
@@ -122,11 +128,11 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try encoder.encode(document).write(to: fileURL, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        let backup = try storeFile.write(encoder.encode(document))
         persistSecrets(for: sorted)
         servers = sorted
-        errorMessage = nil
+        recoveryBackupURL = backup
+        errorMessage = backup.map { "Earlier MCP servers could not be read. The original file is preserved at \($0.path)." }
     }
 
     static func withoutSecrets(_ server: MCPServerConfiguration) -> MCPServerConfiguration {

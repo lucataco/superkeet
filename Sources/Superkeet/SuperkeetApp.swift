@@ -13,9 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sigtermSource: DispatchSourceSignal?
     private var didFinishOnboarding: Bool = false
     private var isTerminating: Bool = false
+    private var shutdownTask: Task<Void, Never>?
+    /// Upper bound on quit cleanup. Engine stop is ≤ ~4 s in the worst case (1 s graceful + 2 s
+    /// SIGTERM + 1 s SIGKILL), so this leaves headroom before forcing exit.
+    private static let shutdownDeadlineSeconds: Double = 6
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        MainMenu.install()
 
         installSignalHandlers()
 
@@ -82,16 +87,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showOnboardingWindow() {
-        SetupWindowSession.shared.present { [weak self] in
-            self?.completeOnboarding()
-        }
+        SetupWindowSession.shared.present(
+            onComplete: { [weak self] in
+                self?.completeOnboarding()
+            },
+            onClose: { [weak self] in
+                // Closing Setup without finishing counts as "skip": start services anyway so the
+                // menu bar app is fully functional. Setup can be re-run from the menu.
+                appLog.info("Setup window closed before completion — skipping setup")
+                self?.completeOnboarding(closeWindow: false)
+            }
+        )
     }
 
-    private func completeOnboarding() {
+    private func completeOnboarding(closeWindow: Bool = true) {
         guard !didFinishOnboarding else { return }
         didFinishOnboarding = true
         settings.hasCompletedOnboarding = true
-        SetupWindowSession.shared.close()
+        if closeWindow {
+            SetupWindowSession.shared.close()
+        }
         NSApp.setActivationPolicy(.accessory)
         activatePostOnboardingServices()
         startDaemonWithErrorHandling()
@@ -120,9 +135,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 appLog.info("Starting Parakeet daemon...")
                 try await parakeetService.startDaemon()
                 appLog.info("Parakeet daemon started successfully")
+            } catch is CancellationError {
+                appLog.info("Parakeet daemon start cancelled")
             } catch {
                 appLog.error("Failed to start daemon: \(error.localizedDescription)")
                 await MainActor.run {
+                    // Don't block quit with a modal, and don't report a failure caused by quitting.
+                    guard !self.isTerminating else { return }
                     let alert = NSAlert()
                     alert.messageText = "Failed to start Parakeet"
                     let diagnosticMessage = parakeetService.lastUserFacingError ?? error.localizedDescription
@@ -132,6 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     alert.addButton(withTitle: "Quit")
                     alert.addButton(withTitle: "Continue Without Daemon")
 
+                    // Accessory apps aren't frontmost; without this the alert can open behind other windows.
+                    NSApp.activate(ignoringOtherApps: true)
                     let response = alert.runModal()
                     switch response {
                     case .alertFirstButtonReturn:
@@ -151,48 +172,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isTerminating = true
 
         Task { [weak self] in
-            await self?.performShutdownCleanup()
-            await MainActor.run {
-                sender.reply(toApplicationShouldTerminate: true)
-            }
+            await self?.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
         }
 
         return .terminateLater
     }
 
     private func installSignalHandlers() {
-        signal(SIGINT, SIG_IGN)
-        signal(SIGTERM, SIG_IGN)
+        // A no-op handler (rather than SIG_IGN) keeps the default "terminate" action from firing
+        // while still letting the DispatchSources below observe the signal. Unlike SIG_IGN, a
+        // caught signal is reset to SIG_DFL on exec, so child processes (speech engine, model
+        // download, MCP servers) still respond to SIGTERM/SIGINT.
+        installNoOpSignalHandler(SIGINT)
+        installNoOpSignalHandler(SIGTERM)
 
-        let sigintSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        sigintSrc.setEventHandler { [weak self] in
-            appLog.info("Received SIGINT, cleaning up...")
+        sigintSource = makeShutdownSignalSource(SIGINT, name: "SIGINT")
+        sigtermSource = makeShutdownSignalSource(SIGTERM, name: "SIGTERM")
+    }
+
+    private func makeShutdownSignalSource(_ signalNumber: Int32, name: String) -> DispatchSourceSignal {
+        let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+        source.setEventHandler { [weak self] in
+            appLog.info("Received \(name, privacy: .public), cleaning up...")
             Task { @MainActor [weak self] in
-                await self?.performShutdownCleanup()
+                self?.isTerminating = true
+                await self?.shutdown()
                 exit(0)
             }
         }
-        sigintSrc.resume()
-        self.sigintSource = sigintSrc
+        source.resume()
+        return source
+    }
 
-        let sigtermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        sigtermSrc.setEventHandler { [weak self] in
-            appLog.info("Received SIGTERM, cleaning up...")
-            Task { @MainActor [weak self] in
-                await self?.performShutdownCleanup()
-                exit(0)
+    /// Runs shutdown cleanup once, no matter how many quit paths (menu, SIGINT, SIGTERM) request it.
+    private func shutdown() async {
+        if let shutdownTask {
+            await shutdownTask.value
+            return
+        }
+        let task = Task { await self.performShutdownCleanupWithDeadline() }
+        shutdownTask = task
+        await task.value
+    }
+
+    /// Races cleanup against a hard deadline so quitting can never hang (e.g. on a stuck model
+    /// download or an unresponsive engine). On timeout the engine is SIGKILLed so it isn't orphaned.
+    private func performShutdownCleanupWithDeadline() async {
+        let gate = ShutdownGate()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                await self.performShutdownCleanup()
+                if gate.claim() { continuation.resume() }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.shutdownDeadlineSeconds))
+                guard gate.claim() else { return }
+                appLog.error("Shutdown cleanup exceeded \(Self.shutdownDeadlineSeconds)s; forcing exit")
+                self.parakeetService.forceKillDaemonForExit()
+                continuation.resume()
             }
         }
-        sigtermSrc.resume()
-        self.sigtermSource = sigtermSrc
     }
 
     private func performShutdownCleanup() async {
+        // Stop input first so a hotkey press during shutdown can't start a new recording or
+        // relaunch the engine after it has been stopped.
+        hotkeyManager.stopListening()
+        parakeetService.beginShutdown()
         AgentSessionController.shared.cancel()
         HistoryStore.shared.flushPendingSave()
         UsageStatsStore.shared.flushPendingSave()
-        await parakeetService.cleanupAndWait()
-        hotkeyManager.stopListening()
+        async let engineStopped: Void = parakeetService.cleanupAndWait()
+        async let mcpDisconnected: Void = MCPClientManager.shared.disconnectAll()
+        _ = await (engineStopped, mcpDisconnected)
         AudioLevelMonitor.shared.stopMonitoring()
+    }
+}
+
+/// One-shot flag used to resume the shutdown continuation exactly once. Main-actor isolated, so
+/// no locking is needed.
+@MainActor
+private final class ShutdownGate {
+    private var claimed = false
+
+    func claim() -> Bool {
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
+}
+
+private func installNoOpSignalHandler(_ signalNumber: Int32) {
+    var action = sigaction()
+    action.__sigaction_u = __sigaction_u(__sa_handler: { _ in })
+    action.sa_mask = 0
+    action.sa_flags = SA_RESTART
+    if sigaction(signalNumber, &action, nil) != 0 {
+        appLog.error("Failed to install handler for signal \(signalNumber): errno \(errno)")
     }
 }

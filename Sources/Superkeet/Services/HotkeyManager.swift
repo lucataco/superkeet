@@ -28,6 +28,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
 
     private let settings = AppSettings.shared
     private var retryTimer: Timer?
+    private var permissionHealthTimer: Timer?
     private var retainedSelf: Unmanaged<HotkeyManager>?
     private var tapThread: EventTapThread?
     private var configObservers: Set<AnyCancellable> = []
@@ -120,11 +121,45 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         hotkeyLog.info("Event tap listening on its own thread. Toggle=\(self.settings.toggleHotkeyDisplayName), PTT=\(self.settings.pttHotkeyDisplayName)")
 
         self.isListening = true
+        startPermissionHealthCheck()
+    }
+
+    /// How often to confirm Accessibility is still granted while listening. Revoking it silently
+    /// kills the event tap, so without this check shortcuts just stop working with no feedback.
+    static let permissionHealthCheckInterval: TimeInterval = 30
+    static let accessibilityRevokedMessage = "Accessibility access was turned off, so keyboard shortcuts stopped working. Turn it back on in System Settings → Privacy & Security → Accessibility."
+
+    private func startPermissionHealthCheck() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard permissionHealthTimer == nil else { return }
+        let timer = Timer(timeInterval: Self.permissionHealthCheckInterval, repeats: true) { [weak self] _ in
+            self?.checkPermissionHealth()
+        }
+        // .common so the check still runs while a menu is open.
+        RunLoop.main.add(timer, forMode: .common)
+        permissionHealthTimer = timer
+    }
+
+    private func stopPermissionHealthCheck() {
+        permissionHealthTimer?.invalidate()
+        permissionHealthTimer = nil
+    }
+
+    private func checkPermissionHealth() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isListening, !checkAccessibilitySilently() else { return }
+        hotkeyLog.error("Accessibility permission was revoked while listening; tearing down event tap")
+        stopListening()
+        accessibilityGranted = false
+        settings.runtimeIssue = Self.accessibilityRevokedMessage
+        // Resume automatically once the user grants access again.
+        startRetryTimer()
     }
 
     func stopListening() {
         dispatchPrecondition(condition: .onQueue(.main))
         stopRetryTimer()
+        stopPermissionHealthCheck()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             tapThread?.stop()
@@ -153,6 +188,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
     }
 
     func startRetryTimer() {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard retryTimer == nil else { return }
         hotkeyLog.info("Starting accessibility retry timer (every 3s)")
         retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
@@ -168,6 +204,9 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
                 self.startListening()
                 if self.isListening {
                     self.stopRetryTimer()
+                    if self.settings.runtimeIssue == Self.accessibilityRevokedMessage {
+                        self.settings.runtimeIssue = nil
+                    }
                 }
             }
         }
@@ -474,6 +513,25 @@ func keyCodeName(_ keyCode: Int) -> String {
     case 126: return "Up"
     default: return "Key\(keyCode)"
     }
+}
+
+/// Keys that are safe to use with no modifier: fn and the function keys F1–F20. They don't type
+/// text, so consuming them system-wide doesn't break typing in other apps.
+let standaloneHotkeyKeyCodes: Set<Int> = [
+    63, // fn
+    122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, // F1–F12
+    105, 107, 113, 106, 64, 79, 80, 90 // F13–F20
+]
+
+/// The event tap consumes a matching hotkey in every app, so a shortcut must not be a key the user
+/// types. Requires ⌘, ⌥ or ⌃ unless the key is fn or a function key. Shift alone is not enough:
+/// ⇧A or ⇧Space would still swallow ordinary typing.
+func hotkeyIsSafeToAssign(keyCode: Int, modifiers: Int) -> Bool {
+    let requiredMask = CGEventFlags.maskCommand.rawValue
+        | CGEventFlags.maskAlternate.rawValue
+        | CGEventFlags.maskControl.rawValue
+    if UInt64(truncatingIfNeeded: modifiers) & requiredMask != 0 { return true }
+    return standaloneHotkeyKeyCodes.contains(keyCode)
 }
 
 func hotkeyAssignmentsConflict(

@@ -7,18 +7,21 @@ final class SetupWindowSession: NSObject {
     static let shared = SetupWindowSession()
 
     private var windowController: NSWindowController?
+    /// Called when the user closes the window without finishing setup (treated as "skip").
+    private var onClose: (() -> Void)?
 
     private override init() {
         super.init()
     }
 
-    func present(onComplete: @escaping () -> Void) {
+    func present(onComplete: @escaping () -> Void, onClose: (() -> Void)? = nil) {
         dispatchPrecondition(condition: .onQueue(.main))
         if let existing = windowController?.window, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        self.onClose = onClose
 
         let hostingController = NSHostingController(rootView: OnboardingView(onComplete: onComplete))
         let window = NSWindow(contentViewController: hostingController)
@@ -41,6 +44,8 @@ final class SetupWindowSession: NSObject {
 
     func close() {
         dispatchPrecondition(condition: .onQueue(.main))
+        // Programmatic close (setup finished) must not fire the user-close "skip" callback.
+        onClose = nil
         windowController?.window?.close()
         windowController = nil
     }
@@ -48,6 +53,9 @@ final class SetupWindowSession: NSObject {
     @objc private func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === windowController?.window else { return }
         NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
+        let closeHandler = onClose
+        onClose = nil
+        closeHandler?()
         DispatchQueue.main.async { [weak self, weak window] in
             guard let self, let window, self.windowController?.window === window else { return }
             self.windowController = nil

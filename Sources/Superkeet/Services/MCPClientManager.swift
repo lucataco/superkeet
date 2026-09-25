@@ -424,8 +424,14 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
         func cleanup() {
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
-            if process.isRunning {
-                process.terminate()
+            guard process.isRunning else { return }
+            process.terminate()
+            // Escalate if the server ignores SIGTERM so it can't outlive Superkeet.
+            let process = process
+            let pid = process.processIdentifier
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) {
+                guard process.isRunning, process.processIdentifier == pid else { return }
+                kill(pid, SIGKILL)
             }
         }
     }

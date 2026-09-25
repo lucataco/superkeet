@@ -614,6 +614,11 @@ struct HomeTabView: View {
     }
 
     private func validateShortcut(keyCode: Int, modifiers: Int, excluding slot: HotkeySlot) -> Bool {
+        guard hotkeyIsSafeToAssign(keyCode: keyCode, modifiers: modifiers) else {
+            shortcutError = "Add ⌘, ⌥ or ⌃ to this shortcut. A plain key would stop working for typing in every app."
+            editingHotkey = nil
+            return false
+        }
         let conflict = assignedShortcuts(excluding: slot).contains { assigned in
             hotkeyAssignmentsConflict(
                 firstKeyCode: keyCode,
