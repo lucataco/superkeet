@@ -20,6 +20,7 @@ struct HomeTabView: View {
     @State private var shortcutError: String?
     @State private var showAllChecks = false
     @State private var diagnosticsCopied = false
+    @State private var logExportError: String?
     @State private var confirmRedownload = false
 
     enum EditingHotkey {
@@ -297,6 +298,11 @@ struct HomeTabView: View {
                     }
                 }
 
+                Button("Export Logs…") {
+                    logExportError = LogExporter.exportWithSavePanel()
+                }
+                .help("Save diagnostics and Superkeet's log since launch to a text file for a bug report")
+
                 Button(settings.isDaemonRunning ? "Restart Speech Engine" : "Start Speech Engine") {
                     runSetupVerification()
                 }
@@ -306,6 +312,12 @@ struct HomeTabView: View {
 
             if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
                 Text(issue)
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+
+            if let logExportError {
+                Text(logExportError)
                     .font(.caption)
                     .foregroundColor(.orange)
             }

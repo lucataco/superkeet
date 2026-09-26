@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct AboutTabView: View {
+    @State private var updateStatus: UpdateChecker.Result?
+    @State private var checkingForUpdates = false
     private let websiteURL = URL(string: "https://catacolabs.com")
     private let modelURL = URL(string: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3")
     private let onnxModelURL = URL(string: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx")
@@ -20,6 +22,8 @@ struct AboutTabView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
+
+            updateSection
 
             Text("Voice-to-text powered by Parakeet — an on-device speech recognition engine using NVIDIA's Parakeet TDT 0.6B model.")
                 .font(.body)
@@ -82,6 +86,38 @@ struct AboutTabView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
+    }
+
+    @ViewBuilder
+    private var updateSection: some View {
+        VStack(spacing: 4) {
+            Button(checkingForUpdates ? "Checking…" : "Check for Updates") {
+                checkingForUpdates = true
+                Task {
+                    updateStatus = await UpdateChecker.check()
+                    checkingForUpdates = false
+                }
+            }
+            .disabled(checkingForUpdates)
+            .controlSize(.small)
+
+            switch updateStatus {
+            case .upToDate(let current):
+                Text("Superkeet \(current) is the latest version.")
+                    .font(.caption).foregroundColor(.secondary)
+            case .available(let version, let url):
+                HStack(spacing: 4) {
+                    Text("Superkeet \(version) is available.")
+                    Link("Download", destination: url)
+                    Text("or run `brew upgrade --cask superkeet`.")
+                }
+                .font(.caption)
+            case .failed(let message):
+                Text(message).font(.caption).foregroundColor(.orange)
+            case nil:
+                EmptyView()
+            }
+        }
     }
 
     /// The Parakeet model is licensed CC BY 4.0, which requires attribution.

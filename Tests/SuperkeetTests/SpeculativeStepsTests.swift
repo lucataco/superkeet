@@ -356,7 +356,11 @@ final class SpeculativeStepExecutionTests: XCTestCase {
             XCTFail("Expected the last step to be reported done, got \(String(describing: coordinator.stepActivity))")
         }
 
+        XCTAssertEqual(coordinator.stepActivities.map(\.step.index), [1, 2], "Every early step stays listed, not just the last.")
+        XCTAssertTrue(coordinator.stepActivities.allSatisfy { if case .done = $0 { return true } else { return false } })
+
         let handoff = try XCTUnwrap(coordinator.takeHandoff(sessionID: "s1"))
+        XCTAssertTrue(coordinator.stepActivities.isEmpty)
         XCTAssertNotNil(handoff.launch)
         XCTAssertEqual(handoff.steps.map(\.step.index), [1, 2])
         XCTAssertNil(coordinator.stepActivity)

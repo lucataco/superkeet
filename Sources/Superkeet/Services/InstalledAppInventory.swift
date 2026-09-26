@@ -67,6 +67,13 @@ final class InstalledAppInventory: ObservableObject {
         return resolver?.resolve(name, bundleLookup: bundleLookup)
     }
 
+    /// What the live-speech detectors resolve with: an exact name, or else a single installed app
+    /// whose name is spelled almost the same (the recogniser mishearing a word).
+    func resolveWhileSpeaking(_ name: String) -> URL? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return resolve(name) ?? resolver?.uniqueNearMatch(name)
+    }
+
     func installedNames() -> [String] {
         dispatchPrecondition(condition: .onQueue(.main))
         return resolver?.installedApplicationNames() ?? []
@@ -80,7 +87,7 @@ final class InstalledAppInventory: ObservableObject {
 
     var detectorEnvironment: SpeculativeIntentDetector.Environment {
         .init(
-            resolveApp: { [weak self] name in MainActor.assumeIsolated { self?.resolve(name) } },
+            resolveApp: { [weak self] name in MainActor.assumeIsolated { self?.resolveWhileSpeaking(name) } },
             installedNames: { [weak self] in MainActor.assumeIsolated { self?.installedNames() ?? [] } },
             isRunning: { [weak self] url in MainActor.assumeIsolated { self?.isRunning(url) ?? false } }
         )

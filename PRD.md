@@ -75,7 +75,7 @@ Superkeet's opportunity is to be the private, self-contained voice layer for mac
 1. **Local by construction.** Speech, planning, history, stats, secrets, and audit all stay on the Mac. Any proposal that adds a network dependency to the core loop is out.
 2. **Clipboard is the floor.** Auto-paste and history are additive. No combination of settings can lose a transcript.
 3. **Deterministic before generative.** If a spoken clause can be handled by string matching against installed apps, a shortcut table, or a typing recipe, it never reaches the model. The model is the fallback, not the default.
-4. **Act while speaking, but never on a guess.** Early actions require an exact, unambiguous match to an installed app. Sound-alike matching is only used after the final transcript.
+4. **Act while speaking, but never on a guess.** Early actions require an unambiguous match to an installed app: an exact name, or a near-identical spelling of a longer name when exactly one installed app is that close ("phone booth" → Photo Booth; short names such as "nodes" never qualify). Sound-alike (Soundex) matching is only used after the final transcript.
 5. **Explicit sessions, visible microphone.** One shortcut opens a listening session; the same shortcut or Escape closes it. The HUD pill is the indicator. The microphone is off whenever the pill is gone.
 6. **Approval scales with risk, and destructive always asks.** Read-only runs, "changes state" asks by default, destructive asks under every policy.
 7. **Don't repeat what already happened.** Early launches and early steps are recognised as done by the final command instead of being executed twice.

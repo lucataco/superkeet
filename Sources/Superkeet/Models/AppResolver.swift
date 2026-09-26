@@ -105,6 +105,41 @@ struct AppResolver: Sendable {
         return best?.url
     }
 
+    /// A misheard installed-app name for use while the user is still speaking ("phone booth" for
+    /// Photo Booth). Stricter than `fuzzyResolve` in one way and looser in another: it ignores
+    /// Soundex (which splits "phone"/"photo") but needs a near-identical spelling of a longer
+    /// name (one edit from 6 letters, two from 10; shorter names are never guessed, so "nodes"
+    /// still does nothing until the final transcript), exactly one app that close, and the
+    /// next-closest app at least two edits further away. Aliases and bundle lookups are ignored.
+    func uniqueNearMatch(_ name: String) -> URL? {
+        let target = Self.matchKey(name)
+        let allowed = Self.allowedNearMatchDistance(forLength: target.count)
+        guard allowed > 0 else { return nil }
+        var candidates: [(distance: Int, url: URL)] = []
+        for directory in directories {
+            for url in applicationsInDirectory(directory) where url.isFileURL && url.pathExtension.lowercased() == "app" {
+                let key = Self.matchKey(url.deletingPathExtension().lastPathComponent)
+                guard abs(key.count - target.count) <= allowed + 2 else { continue }
+                candidates.append((Self.editDistance(target, key), url))
+            }
+        }
+        let sorted = candidates.sorted { $0.distance < $1.distance }
+        guard let best = sorted.first, best.distance <= allowed else { return nil }
+        if let runnerUp = sorted.dropFirst().first(where: { $0.url.standardizedFileURL != best.url.standardizedFileURL }),
+           runnerUp.distance < best.distance + 2 {
+            return nil
+        }
+        return best.url
+    }
+
+    static func allowedNearMatchDistance(forLength length: Int) -> Int {
+        switch length {
+        case 10...: return 2
+        case 6...: return 1
+        default: return 0
+        }
+    }
+
     /// Classic Soundex over ASCII letters: first letter, then consonant classes with vowels
     /// dropped and adjacent duplicates collapsed, padded to four characters.
     static func soundex(_ text: String) -> String {

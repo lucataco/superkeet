@@ -74,10 +74,21 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         case running(SpeculativeStep)
         case done(SpeculativeStepResult)
         case failed(SpeculativeStepResult)
+
+        var step: SpeculativeStep {
+            switch self {
+            case .running(let step): return step
+            case .done(let result), .failed(let result): return result.step
+            }
+        }
     }
 
     @Published private(set) var activity: Activity?
+    /// The most recent early step, kept for callers that only show one line.
     @Published private(set) var stepActivity: StepActivity?
+    /// Every step run while the user is speaking, in order, so the HUD can show what already
+    /// happened rather than only the latest step.
+    @Published private(set) var stepActivities: [StepActivity] = []
     @Published private(set) var listening: Listening?
 
     private final class Session {
@@ -245,6 +256,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         session.trailingTimer?.cancel()
         activity = nil
         stepActivity = nil
+        stepActivities = []
         listening = nil
         guard let commit = session.detector.commit, let launch = session.launch else { return nil }
         return SpeculativeLaunch(commit: commit, disagreement: session.detector.disagreement, outcome: launch)
@@ -257,6 +269,15 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         let launch = take(sessionID: sessionID)
         guard launch != nil || !steps.isEmpty else { return nil }
         return SpeculativeHandoff(launch: launch, steps: steps)
+    }
+
+    private func setStepActivity(_ activity: StepActivity) {
+        stepActivity = activity
+        if let index = stepActivities.firstIndex(where: { $0.step == activity.step }) {
+            stepActivities[index] = activity
+        } else {
+            stepActivities.append(activity)
+        }
     }
 
     /// The engine only sends a partial when the text changes, so a last clause that stays the
@@ -283,7 +304,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         let launch = session.launch
         let executor = self.executor
         let awaitWindow = self.awaitWindow
-        stepActivity = .running(step)
+        setStepActivity(.running(step))
         speculativeLog.info("Speculative \(step.action.toolName, privacy: .public) for clause #\(step.index + 1) (partial #\(step.sequence))")
         let task = Task { @MainActor [weak self] in
             var launched: NativeLaunchedApp?
@@ -309,13 +330,20 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         case .success(let output):
             let result = SpeculativeStepResult(step: step, output: output, failure: nil)
             recordStep(step, outcome: "speculative", detail: output)
-            if self.session === session { stepActivity = .done(result) }
+            if self.session === session { setStepActivity(.done(result)) }
         case .failure(let error):
             let cancelled = ActionErrorHandling.isCancellation(error)
             let message = ActionErrorHandling.userFacingMessage(for: error)
             let result = SpeculativeStepResult(step: step, output: nil, failure: cancelled ? "cancelled" : message)
             recordStep(step, outcome: cancelled ? "cancelled" : "failed", detail: cancelled ? nil : message)
-            if self.session === session { stepActivity = cancelled ? nil : .failed(result) }
+            if self.session === session {
+                if cancelled {
+                    stepActivity = nil
+                    stepActivities.removeAll { $0.step == step }
+                } else {
+                    setStepActivity(.failed(result))
+                }
+            }
         }
     }
 
@@ -393,6 +421,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         session.trailingTimer?.cancel()
         activity = nil
         stepActivity = nil
+        stepActivities = []
         listening = nil
     }
 }
