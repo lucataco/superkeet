@@ -14,7 +14,7 @@ PARAKEET_OVERRIDE="${PARAKEET_CLI_PATH:-}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
 AUTO_IDENTITY=0
 PARAKEET_REPOSITORY_URL="https://github.com/lucataco/parakeet-cli.git"
-PARAKEET_REF="${PARAKEET_REF:-v0.1.9}"
+PARAKEET_REF="${PARAKEET_REF:-v0.1.10}"
 LOCAL_PARAKEET_SOURCE_DIR="${SCRIPT_DIR}/.build/parakeet-cli-${PARAKEET_REF}"
 
 if [[ -z "$PARAKEET_SOURCE_DIR" && -f "${SCRIPT_DIR}/../../Formulae/parakeet-cli/Cargo.toml" ]]; then

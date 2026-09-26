@@ -14,7 +14,7 @@ enum DevelopmentEngineSelection: Equatable {
 
 enum DevelopmentEngineLocator {
     static let repositoryURL = "https://github.com/lucataco/parakeet-cli.git"
-    static let repositoryRef = "v0.1.9"
+    static let repositoryRef = "v0.1.10"
 
     static func select(
         environment: [String: String] = ProcessInfo.processInfo.environment,

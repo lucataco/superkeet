@@ -57,7 +57,7 @@ cd superkeet
 open ~/Applications/Superkeet.app
 ```
 
-`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications` (set `INSTALL_DIR=/Applications` to install system-wide). It requires a protocol-1 or protocol-2 engine (v0.1.6 or later; v0.1.7 adds the interim text used by instant app launch, v0.1.8 keeps the last word of a short take, v0.1.9 streams interim text every 0.5 s). If no local engine is found, it clones the pinned tag into `.build/parakeet-cli-v0.1.9` and builds it with Cargo. Source installs therefore require `git` and Rust/Cargo. To use an existing engine checkout, set `PARAKEET_SOURCE_DIR=/path/to/parakeet-cli`.
+`install.sh` builds the app, bundles `parakeet` into `Superkeet.app`, signs the bundle locally, and installs it into `~/Applications` (set `INSTALL_DIR=/Applications` to install system-wide). It requires a protocol-1 or protocol-2 engine (v0.1.6 or later; v0.1.7 adds the interim text used by instant app launch, v0.1.8 keeps the last word of a short take, v0.1.9 streams interim text every 0.5 s, v0.1.10 keeps the microphone warm between takes and exits when the app does). If no local engine is found, it clones the pinned tag into `.build/parakeet-cli-v0.1.10` and builds it with Cargo. Source installs therefore require `git` and Rust/Cargo. To use an existing engine checkout, set `PARAKEET_SOURCE_DIR=/path/to/parakeet-cli`.
 
 By default, local installs are ad-hoc signed. To keep the same macOS privacy identity across local installs, pass a Developer ID identity:
 
@@ -109,7 +109,7 @@ If you use `swift run` during development, make sure the active developer direct
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-`swift run` also needs a `parakeet` engine (protocol 1 or 2) because the release app bundle is not assembled. It builds `PARAKEET_SOURCE_DIR`, an adjacent Formulae/sibling checkout, or the version-specific `.build/parakeet-cli-v0.1.9` checkout using Cargo with `--locked`. Explicit binary overrides skip the build. Existing source checkouts are not reset.
+`swift run` also needs a `parakeet` engine (protocol 1 or 2) because the release app bundle is not assembled. It builds `PARAKEET_SOURCE_DIR`, an adjacent Formulae/sibling checkout, or the version-specific `.build/parakeet-cli-v0.1.10` checkout using Cargo with `--locked`. Explicit binary overrides skip the build. Existing source checkouts are not reset.
 
 If you already have a local engine, you can still point Superkeet at it directly:
 
