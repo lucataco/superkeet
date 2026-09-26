@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Carbon
 import Combine
 import os
 
@@ -29,6 +30,8 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
     private let settings = AppSettings.shared
     private var retryTimer: Timer?
     private var permissionHealthTimer: Timer?
+    private var pushToTalkWatchdogTimer: Timer?
+    private var pushToTalkWatchdog = PushToTalkReleaseWatchdog()
     private var retainedSelf: Unmanaged<HotkeyManager>?
     private var tapThread: EventTapThread?
     private var configObservers: Set<AnyCancellable> = []
@@ -156,10 +159,52 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         startRetryTimer()
     }
 
+    // MARK: Push-to-talk release watchdog
+
+    /// While a push-to-talk key is held, confirm it really is. Secure Event Input (password
+    /// fields, 1Password, Terminal's Secure Keyboard Entry) hides key events from the tap, so the
+    /// release can be missed and the recording would never stop. The physical key state is still
+    /// readable, so poll it.
+    static let pushToTalkWatchdogInterval: TimeInterval = 0.25
+
+    private func startPushToTalkWatchdog() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        pushToTalkWatchdog = PushToTalkReleaseWatchdog()
+        guard pushToTalkWatchdogTimer == nil else { return }
+        let timer = Timer(timeInterval: Self.pushToTalkWatchdogInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkPushToTalkKeys() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pushToTalkWatchdogTimer = timer
+    }
+
+    private func stopPushToTalkWatchdog() {
+        pushToTalkWatchdogTimer?.invalidate()
+        pushToTalkWatchdogTimer = nil
+    }
+
+    private func checkPushToTalkKeys() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let (pttDown, commandDown) = decider.withLock { ($0.pttKeyDown, $0.commandPTTKeyDown) }
+        guard pttDown || commandDown else {
+            stopPushToTalkWatchdog()
+            return
+        }
+        let snapshot = config.withLock { $0 }
+        let held = (pttDown && PushToTalkReleaseWatchdog.isPhysicallyHeld(keyCode: snapshot.pttKeyCode))
+            || (commandDown && PushToTalkReleaseWatchdog.isPhysicallyHeld(keyCode: snapshot.commandPTTKeyCode))
+        guard pushToTalkWatchdog.observe(held: held) else { return }
+        hotkeyLog.warning("Push-to-talk key is no longer held but its release was never seen (Secure Input: \(IsSecureEventInputEnabled())); stopping")
+        stopPushToTalkWatchdog()
+        let actions = decider.withLock { $0.releasePushToTalk() }
+        MainActor.assumeIsolated { actions.forEach(perform) }
+    }
+
     func stopListening() {
         dispatchPrecondition(condition: .onQueue(.main))
         stopRetryTimer()
         stopPermissionHealthCheck()
+        stopPushToTalkWatchdog()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             tapThread?.stop()
@@ -337,6 +382,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         case .pushToTalkStart:
             hotkeyLog.info("PTT key pressed — starting recording")
             onPushToTalkStarted?()
+            startPushToTalkWatchdog()
         case .pushToTalkEnd:
             hotkeyLog.info("PTT key released — stopping recording")
             onPushToTalkEnded?()
@@ -346,6 +392,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         case .commandPushToTalkStart:
             hotkeyLog.info("Command PTT key pressed — starting command recording")
             onCommandPushToTalkStarted?()
+            startPushToTalkWatchdog()
         case .commandPushToTalkEnd:
             hotkeyLog.info("Command PTT key released — stopping command recording")
             onCommandPushToTalkEnded?()
@@ -532,6 +579,26 @@ func hotkeyIsSafeToAssign(keyCode: Int, modifiers: Int) -> Bool {
         | CGEventFlags.maskControl.rawValue
     if UInt64(truncatingIfNeeded: modifiers) & requiredMask != 0 { return true }
     return standaloneHotkeyKeyCodes.contains(keyCode)
+}
+
+/// Decides when a held push-to-talk key has really been let go: two consecutive readings of
+/// "not held", so a single stale reading can't cut a recording short.
+struct PushToTalkReleaseWatchdog {
+    static let requiredMisses = 2
+    private(set) var misses = 0
+
+    mutating func observe(held: Bool) -> Bool {
+        misses = held ? 0 : misses + 1
+        return misses >= Self.requiredMisses
+    }
+
+    static func isPhysicallyHeld(keyCode: Int) -> Bool {
+        guard keyCode >= 0 else { return false }
+        if keyCode == HotkeyConfig.fnKeyCode {
+            return CGEventSource.flagsState(.combinedSessionState).contains(.maskSecondaryFn)
+        }
+        return CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(keyCode))
+    }
 }
 
 func hotkeyAssignmentsConflict(

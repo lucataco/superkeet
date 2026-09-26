@@ -26,7 +26,11 @@ final class ActionAuditStore: @unchecked Sendable {
     private let maxEntries: Int
     private let maxBytes: Int
     private let log = Logger(subsystem: "com.superkeet.app", category: "ActionAuditStore")
+    /// Guards `timelineStart`, which callers read synchronously.
     private let lock = NSLock()
+    /// All file I/O runs here, in order, so recording an entry never blocks the main thread.
+    /// Reads go through the same queue and therefore see every entry recorded before them.
+    private let io = DispatchQueue(label: "com.superkeet.action-audit", qos: .utility)
     /// Counted lazily on the first append so creating the store (which happens at app launch even
     /// with Actions Mode off) never reads the log file.
     private var entryCount: Int?
@@ -45,10 +49,15 @@ final class ActionAuditStore: @unchecked Sendable {
     var logFileURL: URL { fileURL }
 
     func clear() {
-        lock.lock()
-        defer { lock.unlock() }
-        try? FileManager.default.removeItem(at: fileURL)
-        entryCount = 0
+        io.sync {
+            try? FileManager.default.removeItem(at: fileURL)
+            entryCount = 0
+        }
+    }
+
+    /// Blocks until every recorded entry is on disk. Call before the app exits.
+    func flush() {
+        io.sync {}
     }
 
     private static func lineCount(at url: URL) -> Int {
@@ -99,8 +108,10 @@ final class ActionAuditStore: @unchecked Sendable {
     }
 
     func entries() -> [ActionAuditEntry] {
-        lock.lock()
-        defer { lock.unlock() }
+        io.sync { readEntries() }
+    }
+
+    private func readEntries() -> [ActionAuditEntry] {
         guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -117,9 +128,11 @@ final class ActionAuditStore: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         guard var line = try? encoder.encode(entry) else { return }
         line.append(0x0A)
+        io.async { [self] in write(line) }
+    }
 
-        lock.lock()
-        defer { lock.unlock() }
+    private func write(_ line: Data) {
+        dispatchPrecondition(condition: .onQueue(io))
         do {
             if FileManager.default.fileExists(atPath: fileURL.path) {
                 let handle = try FileHandle(forWritingTo: fileURL)
@@ -143,7 +156,7 @@ final class ActionAuditStore: @unchecked Sendable {
         } catch {
             log.error("Failed to append action audit entry: \(error.localizedDescription)")
         }
-        pruneIfNeededLocked()
+        pruneIfNeeded()
     }
 
     /// Fraction of a limit to keep after pruning, leaving headroom before the next rewrite.
@@ -153,7 +166,7 @@ final class ActionAuditStore: @unchecked Sendable {
         max(1, Int(Double(limit) * pruneRetainFraction))
     }
 
-    private func pruneIfNeededLocked() {
+    private func pruneIfNeeded() {
         let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
         let size = (attributes?[.size] as? Int) ?? 0
         guard (entryCount ?? 0) > maxEntries || size > maxBytes else { return }

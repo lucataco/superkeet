@@ -48,6 +48,7 @@ final class ListeningSessionControllerTests: XCTestCase {
     private final class Recorder {
         var starts = 0
         var stops = 0
+        var warmStops = 0
         var cancels = 0
         var sounds: [CaptureSoundPlayer.Event] = []
         var recording = false
@@ -84,6 +85,7 @@ final class ListeningSessionControllerTests: XCTestCase {
         let hooks = ListeningSessionController.Hooks(
             startRecording: { recorder.starts += 1; recorder.recording = true },
             stopRecording: { recorder.stops += 1; recorder.recording = false },
+            stopForNextTake: { recorder.stops += 1; recorder.warmStops += 1; recorder.recording = false },
             cancelRecording: { recorder.cancels += 1; recorder.recording = false },
             isRecording: { recorder.recording },
             isStartPending: { recorder.startPending },
@@ -125,6 +127,7 @@ final class ListeningSessionControllerTests: XCTestCase {
         XCTAssertEqual(fixture.recorder.stops, 0, "Text still changing; no dispatch yet.")
         await settle(.milliseconds(300))
         XCTAssertEqual(fixture.recorder.stops, 1, "Unchanged text for the pause length ends the take.")
+        XCTAssertEqual(fixture.recorder.warmStops, 1, "A pause keeps the microphone warm for the next take.")
         XCTAssertEqual(fixture.controller.dispatchedCommands, 1)
         XCTAssertTrue(fixture.controller.isActive, "The session outlives the utterance.")
         fixture.controller.end(dispatchPending: false)
@@ -190,6 +193,7 @@ final class ListeningSessionControllerTests: XCTestCase {
         fixture.controller.toggle()
         XCTAssertFalse(fixture.controller.isActive)
         XCTAssertEqual(fixture.recorder.stops, 1)
+        XCTAssertEqual(fixture.recorder.warmStops, 0, "Closing the session releases the microphone.")
         XCTAssertEqual(fixture.recorder.cancels, 0)
         await settle(.milliseconds(120))
         XCTAssertEqual(fixture.recorder.stops, 1, "The pause timer died with the session.")

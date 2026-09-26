@@ -312,7 +312,10 @@ owns the session: a pause is interim text unchanged for
 0.5 s of speech, and on a long take it keeps re-decoding words already heard, so
 only an ending of the transcript not yet seen in the take counts as new speech);
 the engine returning to
-idle reopens the microphone; two failed takes in a row, the engine stopping,
+idle reopens the microphone. The `stop` that ends each utterance asks the engine
+to keep the microphone warm (`"keep_warm": true`, parakeet-cli 0.1.10+), so
+words spoken while the take finishes become the start of the next one instead
+of being lost; closing the session releases the microphone; two failed takes in a row, the engine stopping,
 Escape, or the shortcut end the session. One start sound plays when the session
 opens and one stop sound when it closes; nothing plays per utterance, and the
 recording overlay stays hidden because the HUD pill is the indicator.
@@ -482,7 +485,11 @@ for “open the notes app and create a new note”.
   stopped app is left to the real command.
 - Nothing commits when the clause contains a web address (that is a URL open),
   when the command carries an active/current-tab scope, or when the name does
-  not resolve to an installed app. A misheard name therefore does nothing.
+  not resolve to an installed app. While speaking, a name resolves exactly, or
+  to the one installed app spelled almost the same when the name is long enough
+  (one edit from 6 letters, two from 10, with no other app nearly as close):
+  “the phone booth” opens Photo Booth, but a short misheard name such as
+  “nodes” does nothing until the final transcript.
 - The decision is never undone. If later text names a different app, or the
   finalized text no longer names the committed one, `disagreement` is recorded
   so the result can say the app was opened early.

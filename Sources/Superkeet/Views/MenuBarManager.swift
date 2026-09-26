@@ -155,6 +155,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             menu.addItem(autoApproveItem)
         }
 
+        // People who set up before Actions Mode existed never saw it offered in Setup.
+        if AppleIntelligenceAvailability.osSupportsActionsMode, !settings.actionsEnabled {
+            let tryActions = NSMenuItem(title: "Try Actions Mode…", action: #selector(openActionsSettings), keyEquivalent: "")
+            tryActions.target = self
+            tryActions.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "Actions Mode")
+            menu.addItem(tryActions)
+        }
+
         let historyItem = NSMenuItem(title: "History", action: #selector(openHistory), keyEquivalent: "h")
         historyItem.target = self
         historyItem.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
@@ -340,7 +348,12 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     @objc private func stopRecording() {
-        parakeetService.stopRecording()
+        stopTake(keepMicWarm: false)
+    }
+
+    @MainActor
+    private func stopTake(keepMicWarm: Bool) {
+        parakeetService.stopRecording(keepMicWarm: keepMicWarm)
         if !listeningSession.isActive { CaptureSoundPlayer.play(.stop) }
         // If the engine did not actually enter transcribing (nothing was recording), there is no
         // completion coming to dismiss the overlay, so hide it now.
@@ -390,6 +403,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             guard let self, let window, self.historyWindowController?.window === window else { return }
             self.historyWindowController = nil
         }
+    }
+
+    @objc private func openActionsSettings() {
+        SettingsNavigation.shared.requestedTab = .actions
+        openSettings()
     }
 
     @objc func openSettings() {
@@ -524,9 +542,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @MainActor
-    func stopRecordingOnly() {
+    func stopRecordingOnly(keepMicWarm: Bool = false) {
         guard settings.isRecording || recordingRequested else { return }
-        stopRecording()
+        stopTake(keepMicWarm: keepMicWarm)
     }
 
     @MainActor

@@ -243,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentSessionController.shared.cancel()
         HistoryStore.shared.flushPendingSave()
         UsageStatsStore.shared.flushPendingSave()
+        ActionAuditStore.shared.flush()
         async let engineStopped: Void = parakeetService.cleanupAndWait()
         async let mcpDisconnected: Void = MCPClientManager.shared.disconnectAll()
         _ = await (engineStopped, mcpDisconnected)

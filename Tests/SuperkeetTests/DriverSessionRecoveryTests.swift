@@ -3,6 +3,22 @@ import XCTest
 
 @MainActor
 final class DriverSessionRecoveryTests: XCTestCase {
+    private var savedPolicy: ActionApprovalPolicy?
+
+    // These calls are read-only and must run without an approval card. Pin the policy: a test
+    // process killed mid-run can leave "Ask Before Every Tool" persisted in the test defaults,
+    // and then every call here waits forever for an approval nobody gives.
+    override func setUp() async throws {
+        try await super.setUp()
+        savedPolicy = AppSettings.shared.actionApprovalPolicy
+        AppSettings.shared.actionApprovalPolicy = .readOnlyAuto
+    }
+
+    override func tearDown() async throws {
+        if let savedPolicy { AppSettings.shared.actionApprovalPolicy = savedPolicy }
+        try await super.tearDown()
+    }
+
     private func spec(_ name: String = "get_window_state") -> ActionToolSpec {
         ActionToolSpec(descriptor: MCPToolDescriptor(serverID: UUID(), serverName: "cua-driver", name: name,
             title: nil, description: nil, risk: .readOnly, inputSchemaJSON: #"{"properties":{"session":{"type":"string"}}}"#))

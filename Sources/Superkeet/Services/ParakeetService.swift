@@ -208,6 +208,11 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binaryPath)
+        // parakeet-cli 0.1.10+ exits when this process dies (crash, force quit), releasing the
+        // model and the microphone. Older engines ignore the variable.
+        var environment = ProcessInfo.processInfo.environment
+        environment["PARAKEET_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        process.environment = environment
 
         var args = [
             "serve",
@@ -419,12 +424,13 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     }
 
     private func cleanupFailedStartup(_ process: Process) async {
-        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
-        stderrPipe?.fileHandleForReading.readabilityHandler = nil
-        stdoutPipe = nil
-        stderrPipe = nil
-
+        // The pipes are owned by the main thread (the termination handler and stop path touch
+        // them there too), so tear them down there rather than from this background task.
         await MainActor.run {
+            self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+            self.stderrPipe?.fileHandleForReading.readabilityHandler = nil
+            self.stdoutPipe = nil
+            self.stderrPipe = nil
             self.outputStream = TranscriptEventStream()
             self.daemonState = .stopped
             self.settings.isDaemonRunning = false
@@ -604,8 +610,10 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + limit, execute: work)
     }
 
+    /// `keepMicWarm` is for a listening session about to start its next take: the engine keeps
+    /// the microphone open, so words spoken while this take finishes land in the next one.
     @MainActor
-    func stopRecording() {
+    func stopRecording(keepMicWarm: Bool = false) {
         maxDurationStop?.cancel()
         maxDurationStop = nil
         guard daemonState == .recording, let sessionID = outputGate.sessionID else { return }
@@ -614,7 +622,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         sessionStatus = "Transcribing…"
         settings.isRecording = false
         armCompletionTimeout(sessionID: sessionID)
-        sendSocketCommand("stop", sessionID: sessionID) { [weak self] response in
+        sendSocketCommand("stop", sessionID: sessionID, keepWarm: keepMicWarm) { [weak self] response in
             DispatchQueue.main.async {
                 guard let self, self.outputGate.sessionID == sessionID else { return }
                 guard let envelope = self.decodeSocketResponse(response),
@@ -711,6 +719,9 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         let command: String
         var session_id: String?
         var partials: Bool?
+        /// parakeet-cli 0.1.10+: keep the microphone open after `stop` and give what is heard
+        /// until the next `start` to that session. Older engines ignore it.
+        var keep_warm: Bool?
     }
 
     private struct SocketCommandResult: Sendable {
@@ -736,14 +747,16 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         return try? JSONDecoder().decode(SocketResponseEnvelope.self, from: data)
     }
 
-    private func sendSocketCommand(_ command: String, sessionID: String? = nil, completion: (@Sendable (String) -> Void)? = nil) {
+    private func sendSocketCommand(
+        _ command: String, sessionID: String? = nil, keepWarm: Bool = false, completion: (@Sendable (String) -> Void)? = nil
+    ) {
         Task { [weak self] in
-            let response = await self?.sendSocketCommandAsync(command, sessionID: sessionID)
+            let response = await self?.sendSocketCommandAsync(command, sessionID: sessionID, keepWarm: keepWarm)
             completion?(response ?? "")
         }
     }
 
-    private func sendSocketCommandAsync(_ command: String, sessionID: String? = nil, partials: Bool = false) async -> String? {
+    private func sendSocketCommandAsync(_ command: String, sessionID: String? = nil, partials: Bool = false, keepWarm: Bool = false) async -> String? {
         let socketPath = settings.socketPath
         let result = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -753,7 +766,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     socketPath: socketPath,
                     timeout: timeout,
                     sessionID: sessionID,
-                    partials: partials
+                    partials: partials,
+                    keepWarm: keepWarm
                 )
                 continuation.resume(returning: result)
             }
@@ -769,7 +783,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         socketPath: String,
         timeout requestedTimeout: timeval,
         sessionID: String? = nil,
-        partials: Bool = false
+        partials: Bool = false,
+        keepWarm: Bool = false
     ) -> SocketCommandResult {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
@@ -806,7 +821,9 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             return SocketCommandResult(response: nil, runtimeIssue: "Superkeet could not reach the speech engine. Try relaunching the app.")
         }
 
-        let request = SocketCommand(command: command, session_id: sessionID, partials: partials ? true : nil)
+        let request = SocketCommand(
+            command: command, session_id: sessionID, partials: partials ? true : nil, keep_warm: keepWarm ? true : nil
+        )
         guard let jsonData = try? JSONEncoder().encode(request),
               var json = String(data: jsonData, encoding: .utf8) else {
             parakeetLog.error("Failed to encode socket command")
@@ -1274,9 +1291,12 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
 
     private func isExpectedParakeetProcess(pid: pid_t) -> Bool {
         guard let executablePath = processExecutablePath(pid: pid) else { return false }
-        let normalizedExecutable = URL(fileURLWithPath: executablePath).standardizedFileURL.path
-        let normalizedExpected = URL(fileURLWithPath: settings.parakeetBinaryPath).standardizedFileURL.path
-        return normalizedExecutable == normalizedExpected
+        return StaleEngineMatcher.isOurEngine(
+            executablePath: executablePath,
+            arguments: ProcessArguments.arguments(of: pid) ?? [],
+            expectedBinary: settings.parakeetBinaryPath,
+            socketPath: settings.socketPath
+        )
     }
 
     private func processExecutablePath(pid: pid_t) -> String? {

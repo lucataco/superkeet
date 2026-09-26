@@ -1,7 +1,15 @@
 import SwiftUI
 
+/// Lets other parts of the app open Settings on a particular tab.
+@MainActor
+final class SettingsNavigation: ObservableObject {
+    static let shared = SettingsNavigation()
+    @Published var requestedTab: SettingsView.SettingsTab?
+}
+
 struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .home
+    @ObservedObject private var navigation = SettingsNavigation.shared
 
     enum SettingsTab: String, CaseIterable, Identifiable {
         case home = "General"
@@ -42,7 +50,15 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
+        .onAppear(perform: applyRequestedTab)
+        .onChange(of: navigation.requestedTab) { applyRequestedTab() }
         .frame(minWidth: 720, idealWidth: 800, minHeight: 540, idealHeight: 620)
+    }
+
+    private func applyRequestedTab() {
+        guard let tab = navigation.requestedTab else { return }
+        if visibleTabs.contains(tab) { selectedTab = tab }
+        navigation.requestedTab = nil
     }
 
     @ViewBuilder

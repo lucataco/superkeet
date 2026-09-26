@@ -130,3 +130,18 @@ final class HotkeyDisplayTests: XCTestCase {
         }
     }
 }
+
+final class PushToTalkReleaseWatchdogTests: XCTestCase {
+    func testReleasesOnlyAfterTwoConsecutiveMisses() {
+        var watchdog = PushToTalkReleaseWatchdog()
+        XCTAssertFalse(watchdog.observe(held: true))
+        XCTAssertFalse(watchdog.observe(held: false), "One stale reading is not enough.")
+        XCTAssertFalse(watchdog.observe(held: true), "Held again resets the count.")
+        XCTAssertFalse(watchdog.observe(held: false))
+        XCTAssertTrue(watchdog.observe(held: false))
+    }
+
+    func testUnassignedKeyIsNeverHeld() {
+        XCTAssertFalse(PushToTalkReleaseWatchdog.isPhysicallyHeld(keyCode: -1))
+    }
+}

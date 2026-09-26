@@ -15,6 +15,9 @@ final class ListeningSessionController: ObservableObject {
     struct Hooks {
         var startRecording: @MainActor () -> Void
         var stopRecording: @MainActor () -> Void
+        /// Ends a take the session will follow with another; the engine keeps the microphone
+        /// open so nothing said while this take finishes is lost.
+        var stopForNextTake: (@MainActor () -> Void)?
         var cancelRecording: @MainActor () -> Void
         var isRecording: @MainActor () -> Bool
         var isStartPending: @MainActor () -> Bool
@@ -62,6 +65,7 @@ final class ListeningSessionController: ObservableObject {
         Hooks(
             startRecording: { MenuBarManager.shared.startCommandRecording() },
             stopRecording: { MenuBarManager.shared.stopRecordingOnly() },
+            stopForNextTake: { MenuBarManager.shared.stopRecordingOnly(keepMicWarm: true) },
             cancelRecording: { MenuBarManager.shared.cancelRecordingOnly() },
             isRecording: { AppSettings.shared.isRecording },
             isStartPending: { MenuBarManager.shared.isRecordingStartPending },
@@ -181,7 +185,7 @@ final class ListeningSessionController: ObservableObject {
         endpointTimer = nil
         sessionLog.info("Pause detected; dispatching the utterance")
         dispatchedCommands += 1
-        hooks.stopRecording()
+        (hooks.stopForNextTake ?? hooks.stopRecording)()
     }
 
     private func daemonStateChanged(_ state: ParakeetService.DaemonState) {
