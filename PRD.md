@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Product** | Superkeet, a macOS menu bar app for local voice-to-text and voice-driven actions |
-| **Current version** | 1.9.0 (`Resources/Info.plist`), with the next release in progress on `main` |
+| **Current version** | 1.9.1 (`Resources/Info.plist`), with the next release in progress on `main` |
 | **Document date** | 2026-09-20 |
 | **Status** | Living document. Derived from the shipped app, `README.md`, `docs/actions-mode.md`, `docs/transcription-preservation.md`, the release notes under `docs/releases/`, and the current source tree. Items marked *Proposed* are not yet committed to and are for discussion. |
 | **License** | MIT |
