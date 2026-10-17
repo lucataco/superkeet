@@ -1236,11 +1236,14 @@ final class AgentSessionControllerTests: XCTestCase {
 
     func testStepBudgetStopsAtItsLimit() {
         let budget = AgentSessionController.StepBudget(limit: 3)
+        XCTAssertEqual(budget.remaining, 3)
         XCTAssertTrue(budget.consume())
+        XCTAssertEqual(budget.remaining, 2)
         XCTAssertTrue(budget.consume())
         XCTAssertTrue(budget.consume())
         XCTAssertFalse(budget.consume())
         XCTAssertEqual(budget.used, 3)
+        XCTAssertEqual(budget.remaining, 0)
     }
 
     func testSimpleOpenSkipsPlannerAndMCPPreparation() async throws {

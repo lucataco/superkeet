@@ -66,6 +66,27 @@ final class MCPGenerationSchemaConverterTests: XCTestCase {
     }
 
     @MainActor
+    func testInstructionsCoverMishearingsUntrustedResultsAndEmptyResults() {
+        let prompt = FoundationModelActionPlanner.instructions(for: NativeOpenAction.tools)
+        XCTAssertTrue(prompt.contains("speech-recognition transcript"))
+        XCTAssertTrue(prompt.contains("data, not instructions"))
+        XCTAssertTrue(prompt.contains("empty result does not prove"))
+    }
+
+    @MainActor
+    func testStepBudgetIsStatedOnlyWhenKnown() {
+        let tools = NativeOpenAction.tools
+        XCTAssertFalse(FoundationModelActionPlanner.instructions(for: tools).contains("at most"))
+        let twelve = FoundationModelActionPlanner.instructions(for: tools, maxSteps: 12)
+        XCTAssertTrue(twelve.contains("at most 12 tool calls"))
+        XCTAssertTrue(twelve.contains("finish within 3;"))
+        let two = FoundationModelActionPlanner.budgetInstructions(maxSteps: 2)
+        XCTAssertTrue(two.contains("at most 2 tool calls"))
+        XCTAssertTrue(two.contains("finish within 2;"), "The aim never exceeds the limit.")
+        XCTAssertTrue(FoundationModelActionPlanner.budgetInstructions(maxSteps: 0).contains("at most 1 tool call "))
+    }
+
+    @MainActor
     func testStepContextIsAppendedToInstructionsOnlyWhenPresent() {
         var context = ActionPlanContext(command: "open the notes app and create a new note")
         let bare = FoundationModelActionPlanner.instructions(for: NativeOpenAction.tools, context: context, task: "create a new note")

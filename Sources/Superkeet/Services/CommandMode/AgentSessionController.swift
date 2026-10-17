@@ -507,7 +507,7 @@ final class AgentSessionController: ObservableObject {
         let openedBefore = run.openedApps
         let output = try await planner.run(
             step: ActionPlanStep(task: clause.text, context: execution.context),
-            tools: execution.tools, maxSteps: run.budget.limit, execute: execute
+            tools: execution.tools, maxSteps: run.budget.remaining, execute: execute
         ) { [weak self] event in
             Task { @MainActor in self?.apply(event, run: run) }
         }
@@ -802,6 +802,8 @@ final class AgentSessionController: ObservableObject {
         init(limit: Int) {
             self.limit = limit
         }
+
+        var remaining: Int { max(0, limit - used) }
 
         func consume() -> Bool {
             guard used < limit else { return false }

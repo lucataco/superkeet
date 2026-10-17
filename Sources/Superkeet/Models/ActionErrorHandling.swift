@@ -26,6 +26,35 @@ enum ActionErrorHandling {
         return cause.localizedDescription
     }
 
+    /// The result the planner hands the model when a tool fails, so it can retry, pick another tool or explain.
+    /// Returns nil for failures that must end the run: cancellation, a denied approval and run-wide limits.
+    static func modelResult(for error: Error, mutating: Bool) -> String? {
+        if isCancellation(error) { return nil }
+        let cause = causes(of: error).last ?? error
+        let code: String
+        let message: String
+        if let action = cause as? ActionExecutionError {
+            switch action {
+            case .timedOut:
+                code = "timed_out"
+                // A change that timed out may still have happened; retrying it could do it twice.
+                message = mutating
+                    ? "The tool timed out. Its result is unknown: the change may or may not have happened. "
+                        + "Do not repeat it. Check the current state first if a tool can; otherwise tell the user."
+                    : "The tool timed out. Its result is unknown."
+            case .argumentsTooLarge:
+                code = "arguments_too_large"
+                message = action.localizedDescription
+            default:
+                return nil
+            }
+        } else {
+            code = "tool_failed"
+            message = ActionResultText.truncate(cause.localizedDescription, limit: ActionResultText.modelLimit)
+        }
+        return (try? ActionJSON.encode(["status": "error", "code": code, "error": message])) ?? message
+    }
+
     private static func causes(of error: Error) -> [Error] {
         var causes: [Error] = []
         var current = error
