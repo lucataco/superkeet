@@ -248,10 +248,7 @@ struct SpeculativeStepDetector {
     }
 
     static func allows(_ action: NativeOpenAction, policy: ActionApprovalPolicy) -> Bool {
-        switch action {
-        case .openApp, .openURL: return true
-        case .pressShortcut, .typeText: return !policy.requiresApproval(for: action.spec)
-        }
+        !policy.requiresApproval(for: action.spec)
     }
 }
 

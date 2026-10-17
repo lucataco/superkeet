@@ -292,13 +292,7 @@ final class SystemShortcutPresser: NativeShortcutPressing {
     }
 
     nonisolated static func post(_ shortcut: KeyboardShortcut) -> Bool {
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: shortcut.keyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: shortcut.keyCode, keyDown: false) else { return false }
-        keyDown.flags = shortcut.flags
-        keyUp.flags = shortcut.flags
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-        return true
+        SyntheticKeyEvents.post(virtualKey: shortcut.keyCode, flags: shortcut.flags)
     }
 }
 
@@ -371,15 +365,6 @@ final class SystemTextTyper: NativeTextTyping {
     }
 
     nonisolated static func post(_ chunk: String) -> Bool {
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else { return false }
-        let units = Array(chunk.utf16)
-        units.withUnsafeBufferPointer { buffer in
-            keyDown.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
-            keyUp.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
-        }
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-        return true
+        SyntheticKeyEvents.post(virtualKey: 0, text: chunk)
     }
 }

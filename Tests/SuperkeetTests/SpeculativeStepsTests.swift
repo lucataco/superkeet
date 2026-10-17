@@ -247,7 +247,11 @@ final class SpeculativeStepDetectorTests: XCTestCase {
 
     func testAllowsMirrorsTheApprovalPolicy() throws {
         let commandS = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "s"]))
-        XCTAssertTrue(SpeculativeStepDetector.allows(.openApp(name: "Notes"), policy: .alwaysAsk))
+        let search = try XCTUnwrap(URL(string: "https://example.com"))
+        XCTAssertFalse(SpeculativeStepDetector.allows(.openApp(name: "Notes"), policy: .alwaysAsk), "Ask Before Every Tool means nothing runs unasked.")
+        XCTAssertFalse(SpeculativeStepDetector.allows(.openURL(url: search, browser: nil), policy: .alwaysAsk))
+        XCTAssertTrue(SpeculativeStepDetector.allows(.openApp(name: "Notes"), policy: .readOnlyAuto))
+        XCTAssertTrue(SpeculativeStepDetector.allows(.openURL(url: search, browser: nil), policy: .readOnlyAuto))
         XCTAssertTrue(SpeculativeStepDetector.allows(.typeText(app: "Notes", text: "x"), policy: .readOnlyAuto))
         XCTAssertFalse(SpeculativeStepDetector.allows(.pressShortcut(app: "Notes", shortcut: commandS), policy: .readOnlyAuto))
         XCTAssertTrue(SpeculativeStepDetector.allows(.pressShortcut(app: "Notes", shortcut: commandS), policy: .autoApprove))
@@ -442,6 +446,113 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         XCTAssertEqual(executor.completed, [], "Escape must stop a step that hasn't finished.")
         XCTAssertEqual(audit.entries().first { $0.toolName == "press_shortcut" }?.outcome, "cancelled")
         XCTAssertEqual(launcher.launched, [apps[0]], "The app open had already reached macOS and is left alone.")
+    }
+
+    private func notesCoordinator(
+        source: SpeculativeLaunchCoordinatorTests.FakeSource, launcher: SpeculativeLaunchCoordinatorTests.FakeLauncher,
+        executor: FakeExecutor, audit: ActionAuditStore,
+        runIsActive: @escaping @MainActor () -> Bool, carriedApp: @escaping @MainActor () -> String? = { nil }
+    ) async -> SpeculativeLaunchCoordinator {
+        let directory = URL(fileURLWithPath: "/fixture/Applications")
+        let apps = ["Notes", "Safari"].map { directory.appendingPathComponent("\($0).app") }
+        let inventory = InstalledAppInventory(
+            makeResolver: { AppResolver(directories: [directory], applicationsInDirectory: { _ in apps }) },
+            bundleLookup: { _ in nil }, runningBundleURLs: { apps }
+        )
+        _ = await inventory.waitUntilReady(timeout: .seconds(5))
+        return SpeculativeLaunchCoordinator(
+            settings: .shared, source: source, inventory: inventory, launcher: launcher, executor: executor,
+            awaitWindow: { _ in true }, carriedApp: carriedApp, runIsActive: runIsActive, audit: audit
+        )
+    }
+
+    private func settle(_ coordinator: SpeculativeLaunchCoordinator, heard text: String) async {
+        await waitUntil { coordinator.listening?.transcript == text }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+
+    func testEarlyStepsWaitForTheActiveRunThenStartFromTheAppItLeft() async throws {
+        let auditFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: auditFile) }
+        let source = SpeculativeLaunchCoordinatorTests.FakeSource()
+        let launcher = SpeculativeLaunchCoordinatorTests.FakeLauncher()
+        let executor = FakeExecutor()
+        let busy = OSAllocatedUnfairLockBox(true)
+        let carried = OSAllocatedUnfairLockBox<String?>(nil)
+        let coordinator = await notesCoordinator(source: source, launcher: launcher, executor: executor,
+                                                 audit: ActionAuditStore(fileURL: auditFile),
+                                                 runIsActive: { busy.value }, carriedApp: { carried.value })
+        defer { coordinator.end(sessionID: "s1") }
+
+        coordinator.begin(sessionID: "s1")
+        await waitUntil { source.isListening }
+        source.emit("Create a new note and", sequence: 1)
+        await settle(coordinator, heard: "Create a new note and")
+        XCTAssertEqual(executor.executed, [], "The previous command is still typing; ⌘N would land under it.")
+
+        carried.mutate { $0 = "Notes" }
+        busy.mutate { $0 = false }
+        source.emit("Create a new note and type", sequence: 2)
+        await waitUntil { executor.executed.count == 1 }
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        XCTAssertEqual(executor.executed, [.pressShortcut(app: "Notes", shortcut: commandN)], "Detection restarts in the app the run left open.")
+        XCTAssertEqual(launcher.launched, [])
+    }
+
+    func testARunStartingMidUtteranceStopsEarlyStepsAndLeavesTheRestForTheCommand() async throws {
+        let auditFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: auditFile) }
+        let audit = ActionAuditStore(fileURL: auditFile)
+        let source = SpeculativeLaunchCoordinatorTests.FakeSource()
+        let launcher = SpeculativeLaunchCoordinatorTests.FakeLauncher()
+        let executor = FakeExecutor()
+        executor.delay = .seconds(30)
+        let busy = OSAllocatedUnfairLockBox(false)
+        let coordinator = await notesCoordinator(source: source, launcher: launcher, executor: executor, audit: audit,
+                                                 runIsActive: { busy.value })
+        defer { coordinator.end(sessionID: "s1") }
+
+        coordinator.begin(sessionID: "s1")
+        await waitUntil { source.isListening }
+        source.emit("Open the Notes app", sequence: 1)
+        source.emit("Open the Notes app and create a new note and", sequence: 2)
+        await waitUntil { executor.executed.count == 1 }
+
+        busy.mutate { $0 = true }
+        source.emit("Open the Notes app and create a new note and open Safari and", sequence: 3)
+        await waitUntil { audit.entries().contains { $0.toolName == "press_shortcut" } }
+        busy.mutate { $0 = false }
+        source.emit("Open the Notes app and create a new note and open Safari and type hello and", sequence: 4)
+        await settle(coordinator, heard: "Open the Notes app and create a new note and open Safari and type hello and")
+
+        XCTAssertEqual(executor.executed.count, 1, "Nothing more runs early once another run has started.")
+        XCTAssertEqual(executor.completed, [], "The ⌘N still waiting is stopped.")
+        let handoff = try XCTUnwrap(coordinator.takeHandoff(sessionID: "s1"))
+        var failures: [String?] = []
+        for run in handoff.steps { failures.append(await run.result().failure) }
+        XCTAssertEqual(failures, ["cancelled"], "The final command redoes what was stopped.")
+    }
+
+    func testAskBeforeEveryToolOpensNothingEarly() async {
+        AppSettings.shared.actionApprovalPolicy = .alwaysAsk
+        let auditFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: auditFile) }
+        let source = SpeculativeLaunchCoordinatorTests.FakeSource()
+        let launcher = SpeculativeLaunchCoordinatorTests.FakeLauncher()
+        let executor = FakeExecutor()
+        let coordinator = await notesCoordinator(source: source, launcher: launcher, executor: executor,
+                                                 audit: ActionAuditStore(fileURL: auditFile), runIsActive: { false })
+        defer { coordinator.end(sessionID: "s1") }
+
+        coordinator.begin(sessionID: "s1")
+        await waitUntil { source.isListening }
+        source.emit("Open the Notes app", sequence: 1)
+        source.emit("Open the Notes app and go to example.com and", sequence: 2)
+        await settle(coordinator, heard: "Open the Notes app and go to example.com and")
+
+        XCTAssertEqual(launcher.launched, [])
+        XCTAssertEqual(executor.executed, [])
+        XCTAssertNil(coordinator.takeHandoff(sessionID: "s1"))
     }
 
     func testCancellingTheRunStopsAdoptedAndQueuedEarlySteps() async throws {

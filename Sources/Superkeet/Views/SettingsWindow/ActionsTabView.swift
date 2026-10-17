@@ -88,7 +88,7 @@ struct ActionsTabView: View {
 
                 Section {
                     Toggle(isOn: $settings.actionAuditEnabled) {
-                        rowLabel("Keep Action Log", "Record tool calls locally for review")
+                        rowLabel("Keep Action Log", "Record tool calls locally for review. Reads are logged by size, not content")
                     }
                 } header: {
                     Text("Safety")

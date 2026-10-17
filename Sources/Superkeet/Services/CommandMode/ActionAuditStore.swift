@@ -117,8 +117,8 @@ final class ActionAuditStore: @unchecked Sendable {
     private func append(_ entry: ActionAuditEntry) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard var line = try? encoder.encode(entry) else { return }
-        line.append(0x0A)
+        guard let encoded = try? encoder.encode(entry) else { return }
+        let line = encoded + Data([0x0A])
         io.async { [self] in write(line) }
     }
 

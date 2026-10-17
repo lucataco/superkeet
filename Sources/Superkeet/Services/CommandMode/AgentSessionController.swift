@@ -136,6 +136,8 @@ final class AgentSessionController: ObservableObject {
         return nil
     }
 
+    var isRunning: Bool { activeRun != nil || phase.isActive }
+
     func handleCommand(_ text: String, speculative: SpeculativeLaunch? = nil) {
         handleCommand(text, handoff: speculative.map { SpeculativeHandoff(launch: $0) })
     }
@@ -145,7 +147,7 @@ final class AgentSessionController: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let handoff = handoff?.isEmpty == false ? handoff : nil
-        if activeRun != nil || phase.isActive {
+        if isRunning {
             guard queue.count < Self.maximumQueuedCommands else {
                 activityLog.append("Command queue full (\(Self.maximumQueuedCommands) waiting); skipped “\(trimmed)”")
                 return

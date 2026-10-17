@@ -131,7 +131,8 @@ final class ActionToolRouter: ActionRouting {
                     return try await callTool(spec.serverID, spec.toolName, finalArguments, structured)
                 }
             }
-            record(spec, argumentsJSON, outcome: successOutcome, detail: structured ? nil : output,
+            record(spec, argumentsJSON, outcome: successOutcome,
+                   detail: ActionObservationPolicy.auditDetail(for: spec, output: output, structured: structured),
                    durationMs: Self.milliseconds(started.duration(to: clock.now)))
             if structured { return output }
             return ActionResultText.truncate(output, limit: ActionResultText.modelLimit)

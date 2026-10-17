@@ -444,6 +444,9 @@ private func hotkeyCallback(
         manager.handleTapDisabled()
         return Unmanaged.passUnretained(event)
     }
+    if SyntheticKeyEvents.isSynthetic(event) {
+        return Unmanaged.passUnretained(event)
+    }
 
     let keyboard = HotkeyEvent(type: event.type, keyCode: event.getIntegerValueField(.keyboardEventKeycode),
                                flags: event.flags, isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
