@@ -400,11 +400,16 @@ extension ActionPlanning {
 protocol ActionRouting: AnyObject, Sendable {
     func prepareTools() async throws -> [ActionToolSpec]
     func execute(spec: ActionToolSpec, argumentsJSON: String) async throws -> String
+    /// `dictated` means the arguments came straight from the user's words rather than the model.
+    func execute(spec: ActionToolSpec, argumentsJSON: String, dictated: Bool) async throws -> String
     func requestPlanApproval(_ plan: ActionPlanApprovalRequest) async -> ActionPlanApprovalDecision
     func cancelPendingApprovals()
 }
 
 extension ActionRouting {
+    func execute(spec: ActionToolSpec, argumentsJSON: String, dictated: Bool) async throws -> String {
+        try await execute(spec: spec, argumentsJSON: argumentsJSON)
+    }
     func requestPlanApproval(_ plan: ActionPlanApprovalRequest) async -> ActionPlanApprovalDecision { .stepByStep }
     func cancelPendingApprovals() {}
 }

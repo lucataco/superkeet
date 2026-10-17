@@ -628,6 +628,12 @@ struct HomeTabView: View {
             editingHotkey = nil
             return false
         }
+        if let reserved = reservedShortcutName(keyCode: keyCode, modifiers: modifiers) {
+            let name = displayNameForHotkey(keyCode: keyCode, modifierFlags: modifiers)
+            shortcutError = "\(name) is the standard shortcut for \(reserved). Superkeet would take it over in every app; pick another."
+            editingHotkey = nil
+            return false
+        }
         let conflict = assignedShortcuts(excluding: slot).contains { assigned in
             hotkeyAssignmentsConflict(
                 firstKeyCode: keyCode,
@@ -653,7 +659,7 @@ struct HomeTabView: View {
             }
             loginItemError = nil
         } catch {
-            homeTabLog.error("Failed to update login item: \(error.localizedDescription)")
+            homeTabLog.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
             loginItemError = "Failed to update login item. Make sure you're running the installed .app bundle."
         }
     }
@@ -667,7 +673,7 @@ struct HomeTabView: View {
                     try await parakeetService.startDaemon()
                 }
             } catch {
-                homeTabLog.error("Failed to verify setup: \(error.localizedDescription)")
+                homeTabLog.error("Failed to verify setup: \(error.localizedDescription, privacy: .public)")
             }
             refreshReadiness()
         }

@@ -272,10 +272,14 @@ final class SpeculativeStepDetectorTests: XCTestCase {
 final class SpeculativeStepExecutionTests: XCTestCase {
     final class FakeExecutor: NativeActionExecuting {
         private(set) var executed: [NativeOpenAction] = []
+        private(set) var completed: [NativeOpenAction] = []
         var failure: Error?
+        var delay: Duration = .zero
         func execute(_ action: NativeOpenAction) async throws -> String {
             executed.append(action)
+            if delay > .zero { try await Task.sleep(for: delay) }
             if let failure { throw failure }
+            completed.append(action)
             switch action {
             case .pressShortcut(let app, let shortcut): return "Pressed \(shortcut.displayName) in \(app) (pid 4242)."
             case .typeText(let app, let text): return "Typed “\(text)” in \(app) (pid 4242)."
@@ -404,6 +408,71 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         XCTAssertEqual(executor.executed, [.pressShortcut(app: "Notes", shortcut: commandN)], "⌘N ran with no pause and no final transcript.")
         let handoff = try XCTUnwrap(coordinator.takeHandoff(sessionID: "s1"))
         XCTAssertEqual(handoff.steps.map(\.step.index), [1])
+    }
+
+    func testEndingTheSessionCancelsEarlyStepsStillRunning() async throws {
+        let directory = URL(fileURLWithPath: "/fixture/Applications")
+        let apps = ["Notes"].map { directory.appendingPathComponent("\($0).app") }
+        let inventory = InstalledAppInventory(
+            makeResolver: { AppResolver(directories: [directory], applicationsInDirectory: { _ in apps }) },
+            bundleLookup: { _ in nil }, runningBundleURLs: { apps }
+        )
+        _ = await inventory.waitUntilReady(timeout: .seconds(5))
+        let auditFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: auditFile) }
+        let audit = ActionAuditStore(fileURL: auditFile)
+        let source = SpeculativeLaunchCoordinatorTests.FakeSource()
+        let launcher = SpeculativeLaunchCoordinatorTests.FakeLauncher()
+        let executor = FakeExecutor()
+        executor.delay = .seconds(30)
+        let coordinator = SpeculativeLaunchCoordinator(
+            settings: .shared, source: source, inventory: inventory, launcher: launcher, executor: executor,
+            awaitWindow: { _ in true }, audit: audit
+        )
+
+        coordinator.begin(sessionID: "s1")
+        await waitUntil { source.isListening }
+        source.emit("Open the Notes app", sequence: 1)
+        source.emit("Open the Notes app and create a new note", sequence: 2)
+        await waitUntil(timeout: 3) { executor.executed.count == 1 }
+        XCTAssertEqual(executor.executed.count, 1)
+
+        coordinator.end(sessionID: "s1")
+        await waitUntil { audit.entries().contains { $0.toolName == "press_shortcut" } }
+        XCTAssertEqual(executor.completed, [], "Escape must stop a step that hasn't finished.")
+        XCTAssertEqual(audit.entries().first { $0.toolName == "press_shortcut" }?.outcome, "cancelled")
+        XCTAssertEqual(launcher.launched, [apps[0]], "The app open had already reached macOS and is left alone.")
+    }
+
+    func testCancellingTheRunStopsAdoptedAndQueuedEarlySteps() async throws {
+        func pendingStep(_ index: Int) -> SpeculativeStepRun {
+            let step = SpeculativeStep(index: index, clause: "type hello", action: .typeText(app: "Notes", text: "hello"), sequence: 2)
+            return SpeculativeStepRun(step: step, outcome: Task {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                    return .success("Typed “hello” in Notes (pid 77).")
+                } catch {
+                    return .failure(error)
+                }
+            })
+        }
+        let router = AgentSessionControllerTests.FakeRouter(specs: [])
+        let controller = AgentSessionController(
+            settings: .shared, router: router, plannerFactory: { nil },
+            resolveApp: { _ in nil }, isAppRunning: { _ in true }, frontmostApp: { nil }
+        )
+        let adopted = pendingStep(0)
+        let queued = pendingStep(1)
+        controller.handleCommand("type hello", handoff: SpeculativeHandoff(steps: [adopted]))
+        controller.handleCommand("type hello again", handoff: SpeculativeHandoff(steps: [queued]))
+        XCTAssertEqual(controller.queuedCommands.count, 1)
+
+        controller.cancel()
+        let adoptedResult = await adopted.result()
+        let queuedResult = await queued.result()
+        XCTAssertEqual(adoptedResult.failure, "cancelled")
+        XCTAssertEqual(queuedResult.failure, "cancelled")
+        XCTAssertEqual(router.executed, [])
     }
 
     func testControllerSkipsClausesThatRanEarlyAndRerunsFailedOnes() async throws {

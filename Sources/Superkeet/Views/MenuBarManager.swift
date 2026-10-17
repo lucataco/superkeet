@@ -86,7 +86,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         } else if !hotkeyManager.isListening {
             statusText = "Hotkeys not active — grant Accessibility"
         } else if !settings.isDaemonRunning {
-            statusText = "Daemon not running"
+            statusText = EngineStatusText.whileStopped(
+                daemonState: parakeetService.daemonState, model: ModelProvisioning.shared.state, runtimeIssue: settings.runtimeIssue
+            )
         } else {
             statusText = parakeetService.sessionStatus
         }
@@ -277,7 +279,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 await self.parakeetService.startRecording()
             })
         } catch {
-            menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription)")
+            menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription, privacy: .public)")
             parakeetService.disarmCommandMode()
             guard recordingStart.isCurrent(requestID) else { return }
             teardownRecordingUI(hideOverlay: true)

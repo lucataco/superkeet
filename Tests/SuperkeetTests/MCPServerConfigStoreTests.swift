@@ -4,9 +4,11 @@ import XCTest
 final class InMemoryMCPSecretStore: MCPSecretStoring {
     private(set) var secrets: [String: [String: String]] = [:]
     var failure: Error?
+    var readFailure: Error?
 
-    func secretEnvironment(for name: String) -> [String: String] {
-        secrets[name] ?? [:]
+    func secretEnvironment(for name: String) throws -> [String: String] {
+        if let readFailure, secrets[name] != nil { throw readFailure }
+        return secrets[name] ?? [:]
     }
 
     func setSecretEnvironment(_ environment: [String: String], for name: String) throws {
@@ -247,5 +249,28 @@ final class MCPServerConfigStoreTests: XCTestCase {
         XCTAssertTrue(store.errorMessage?.contains("Keychain") ?? false, store.errorMessage ?? "no error")
         XCTAssertFalse(store.servers.contains { $0.name == "custom" })
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "The config isn't written without its secrets.")
+    }
+
+    func testUnreadableKeychainSecretsSurviveLaterSaves() throws {
+        let url = makeURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let secrets = InMemoryMCPSecretStore()
+        makeStore(fileURL: url, secrets: secrets)
+            .add(MCPServerConfiguration(name: "custom", command: "npx", env: ["API_TOKEN": "secret"]))
+        XCTAssertEqual(secrets.secrets["custom"], ["API_TOKEN": "secret"])
+
+        secrets.readFailure = MCPSecretStoreError.unreadable(errSecInteractionNotAllowed)
+        let store = makeStore(fileURL: url, secrets: secrets)
+        XCTAssertTrue(store.errorMessage?.contains("custom") ?? false, store.errorMessage ?? "no warning")
+        let custom = try XCTUnwrap(store.servers.first { $0.name == "custom" })
+        XCTAssertNil(custom.env["API_TOKEN"])
+
+        store.setEnabled(false, for: custom.id)
+        store.update(MCPServerConfiguration(id: custom.id, name: "renamed", command: "npx", enabled: false))
+        XCTAssertEqual(secrets.secrets["custom"], ["API_TOKEN": "secret"], "A secret that couldn't be read is never deleted by a save.")
+
+        let replaced = try XCTUnwrap(store.servers.first { $0.name == "renamed" })
+        store.update(MCPServerConfiguration(id: replaced.id, name: "custom", command: "npx", env: ["API_TOKEN": "new"], enabled: false))
+        XCTAssertEqual(secrets.secrets["custom"], ["API_TOKEN": "new"], "Entering the secret again replaces it.")
     }
 }

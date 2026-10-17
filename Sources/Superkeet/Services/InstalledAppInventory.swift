@@ -39,7 +39,7 @@ final class InstalledAppInventory: ObservableObject {
             let started = ContinuousClock.now
             let resolver = makeResolver().memoized()
             let count = resolver.installedApplicationNames().count
-            inventoryLog.info("Scanned \(count) installed apps in \(started.duration(to: .now))")
+            inventoryLog.info("Scanned \(count) installed apps in \(started.duration(to: .now), privacy: .public)")
             await self?.finishRefresh(with: resolver)
         }
     }

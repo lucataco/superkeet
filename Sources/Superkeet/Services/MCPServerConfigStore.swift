@@ -12,6 +12,8 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
     private let storeFile: RecoverableStoreFile
     private let secrets: MCPSecretStoring
     private let migrationWriter: (Data, URL) throws -> Void
+    /// Servers whose Keychain secrets exist but couldn't be read. Saving must never delete them.
+    private var unreadableSecrets: Set<String> = []
     private let log = Logger(subsystem: "com.superkeet.app", category: "MCPServerConfigStore")
 
     init(
@@ -43,6 +45,7 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
     }
 
     func load() {
+        unreadableSecrets = []
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             servers = MCPDefaultServers.all
             errorMessage = nil
@@ -63,18 +66,18 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
                 } catch {
                     servers = loaded
                     errorMessage = "Could not update the default Chrome connection: \(error.localizedDescription)"
-                    log.error("Chrome connection migration failed: \(error.localizedDescription)")
+                    log.error("Chrome connection migration failed: \(error.localizedDescription, privacy: .public)")
                     return
                 }
             }
             servers = loaded
-            errorMessage = nil
+            errorMessage = unreadableSecretsMessage
         } catch {
             servers = []
             // Never let the next save silently replace a file we couldn't read: back it up first.
             storeFile.needsRecoveryBackup = true
             errorMessage = "Could not read MCP servers. The original file will be preserved before any changes are saved. \(error.localizedDescription)"
-            log.error("Failed to load MCP servers: \(error.localizedDescription)")
+            log.error("Failed to load MCP servers: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -91,11 +94,25 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
     }
 
     private func mergingSecrets(_ server: MCPServerConfiguration) -> MCPServerConfiguration {
-        let stored = secrets.secretEnvironment(for: server.trimmedName)
+        let stored: [String: String]
+        do {
+            stored = try secrets.secretEnvironment(for: server.trimmedName)
+        } catch {
+            unreadableSecrets.insert(server.trimmedName)
+            log.error("Secrets for \(server.trimmedName, privacy: .public) are unreadable: \(error.localizedDescription, privacy: .public)")
+            return server
+        }
         guard !stored.isEmpty else { return server }
         var merged = server
         merged.env.merge(stored) { _, secret in secret }
         return merged
+    }
+
+    private var unreadableSecretsMessage: String? {
+        guard !unreadableSecrets.isEmpty else { return nil }
+        let names = unreadableSecrets.sorted().joined(separator: ", ")
+        return "Couldn't read the saved secrets for \(names) from the Keychain. They are kept as they are, "
+            + "but those servers may fail to sign in until Superkeet can read them again."
     }
 
     var missingDefaultServerCount: Int {
@@ -135,6 +152,7 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
         servers = sorted
         recoveryBackupURL = backup
         errorMessage = backup.map { "Earlier MCP servers could not be read. The original file is preserved at \($0.path)." }
+            ?? unreadableSecretsMessage
     }
 
     static func withoutSecrets(_ server: MCPServerConfiguration) -> MCPServerConfiguration {
@@ -145,11 +163,14 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
 
     private func persistSecrets(for servers: [MCPServerConfiguration]) throws {
         for server in servers {
+            let name = server.trimmedName
             let sensitive = server.env.filter { SensitiveDataPolicy.isSensitiveKey($0.key) }
             if sensitive.isEmpty {
-                secrets.removeSecretEnvironment(for: server.trimmedName)
+                guard !unreadableSecrets.contains(name) else { continue }
+                secrets.removeSecretEnvironment(for: name)
             } else {
-                try secrets.setSecretEnvironment(sensitive, for: server.trimmedName)
+                try secrets.setSecretEnvironment(sensitive, for: name)
+                unreadableSecrets.remove(name)
             }
         }
     }
@@ -166,7 +187,7 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
         let oldName = servers.first(where: { $0.id == server.id })?.trimmedName
         do {
             try save(servers.map { $0.id == server.id ? server : $0 })
-            if let oldName, oldName != server.trimmedName {
+            if let oldName, oldName != server.trimmedName, !unreadableSecrets.contains(oldName) {
                 secrets.removeSecretEnvironment(for: oldName)
             }
         } catch {
@@ -197,6 +218,6 @@ final class MCPServerConfigStore: ObservableObject, @unchecked Sendable {
 
     private func record(_ error: Error) {
         errorMessage = error.localizedDescription
-        log.error("Failed to save MCP servers: \(error.localizedDescription)")
+        log.error("Failed to save MCP servers: \(error.localizedDescription, privacy: .public)")
     }
 }

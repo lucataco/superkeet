@@ -57,6 +57,10 @@ struct SpeculativeHandoff: Sendable {
     var steps: [SpeculativeStepRun] = []
 
     var isEmpty: Bool { launch == nil && steps.isEmpty }
+
+    func cancelSteps() {
+        steps.forEach { $0.outcome.cancel() }
+    }
 }
 
 /// Reads the running interim text and decides which clauses can already run.

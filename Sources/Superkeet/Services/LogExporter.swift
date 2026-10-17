@@ -29,7 +29,7 @@ enum LogExporter {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let body = lines.map { "\(formatter.string(from: $0.date)) [\($0.level)] \($0.category): \($0.message)" }
-        return ([header, "", "Log (\(lines.count) entries since launch)", String(repeating: "-", count: 40)] + body)
+        return ([header, "", "Log (\(lines.count) entries since launch, up to 24 hours)", String(repeating: "-", count: 40)] + body)
             .joined(separator: "\n") + "\n"
     }
 
@@ -58,7 +58,7 @@ enum LogExporter {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             return nil
         } catch {
-            exportLog.error("Log export failed: \(error.localizedDescription)")
+            exportLog.error("Log export failed: \(error.localizedDescription, privacy: .public)")
             return "Couldn't export logs: \(error.localizedDescription)"
         }
     }

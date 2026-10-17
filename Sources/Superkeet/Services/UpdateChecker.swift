@@ -43,7 +43,7 @@ enum UpdateChecker {
             let release = try JSONDecoder().decode(Release.self, from: try await fetch(url))
             return evaluate(release: release, currentVersion: currentVersion)
         } catch {
-            updateLog.error("Update check failed: \(error.localizedDescription)")
+            updateLog.error("Update check failed: \(error.localizedDescription, privacy: .public)")
             return .failed("Couldn't check for updates. \(error.localizedDescription)")
         }
     }

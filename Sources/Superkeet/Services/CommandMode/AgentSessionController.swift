@@ -71,9 +71,11 @@ final class AgentSessionController: ObservableObject {
         struct CachedResult {
             let output: String
             let mutating: Bool
+            let idempotent: Bool
         }
 
         let budget: StepBudget
+        var handoff: SpeculativeHandoff?
         var toolResults: [String: CachedResult] = [:]
         var cancelOperations: [UUID: @Sendable () -> Void] = [:]
         var speculative: SpeculativeLaunchResult?
@@ -94,6 +96,11 @@ final class AgentSessionController: ObservableObject {
 
         func invalidateObservations() {
             toolResults = toolResults.filter { $0.value.mutating }
+        }
+
+        /// A change repeated in a later step ("new note… new note") is a new request, not a retry.
+        func beginStep() {
+            toolResults = toolResults.filter { $0.value.idempotent }
         }
     }
 
@@ -153,6 +160,7 @@ final class AgentSessionController: ObservableObject {
     private func startCommand(_ text: String, handoff: SpeculativeHandoff?) {
         dispatchPrecondition(condition: .onQueue(.main))
         let run = RunContext(limit: max(1, settings.actionMaxSteps))
+        run.handoff = handoff
         activeRun = run
         commandText = text
         liveMessage = ""
@@ -179,6 +187,7 @@ final class AgentSessionController: ObservableObject {
 
     func cancel() {
         dispatchPrecondition(condition: .onQueue(.main))
+        queue.forEach { $0.handoff?.cancelSteps() }
         queue.removeAll()
         guard let run = activeRun else { return }
         finish(.cancelled, run: run)
@@ -292,7 +301,7 @@ final class AgentSessionController: ObservableObject {
             if let action = nativeOpen(for: intent, context: execution.context) {
                 apply(.planning, run: run)
                 do {
-                    let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+                    let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
                     run.lastApp = NativeLaunchedApp(summary: output) ?? execution.context.currentApp
                     finish(.finished(output.isEmpty ? "Done." : output), run: run)
                     return
@@ -318,6 +327,7 @@ final class AgentSessionController: ObservableObject {
 
             for clause in plan.clauses {
                 try requireCurrent(run)
+                run.beginStep()
                 execution.context.stepNumber = clause.index + 1
                 run.focusTerms = clause.focusTerms
                 if plan.isCompound {
@@ -461,7 +471,7 @@ final class AgentSessionController: ObservableObject {
         case .native(let action):
             apply(.planning, run: run)
             do {
-                let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+                let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
                 if let launched = NativeLaunchedApp(summary: output) { execution.context.recordOpened(launched) }
                 return output
             } catch let error as NativeOpenActionError {
@@ -519,7 +529,7 @@ final class AgentSessionController: ObservableObject {
         checklist.addNote(note)
         apply(.planning, run: run)
         let action = NativeOpenAction.pressShortcut(app: target, shortcut: recipe.shortcut)
-        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
     }
 
     private func preparePlanner(_ execution: CommandExecution, run: RunContext) async throws -> any ActionPlanning {
@@ -591,7 +601,7 @@ final class AgentSessionController: ObservableObject {
         checklist.addNote(note)
         apply(.planning, run: run)
         let action = NativeOpenAction.typeText(app: target.name, text: target.text)
-        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
     }
 
     private struct TypeTarget: Equatable {
@@ -625,7 +635,7 @@ final class AgentSessionController: ObservableObject {
     }
 
     @MainActor
-    private func performStep(spec: ActionToolSpec, argumentsJSON: String, run: RunContext) async throws -> String {
+    private func performStep(spec: ActionToolSpec, argumentsJSON: String, dictated: Bool = false, run: RunContext) async throws -> String {
         dispatchPrecondition(condition: .onQueue(.main))
         try requireCurrent(run)
 
@@ -647,7 +657,7 @@ final class AgentSessionController: ObservableObject {
         apply(.toolStarted(spec), run: run)
         do {
             var output = try await ownedOperation(run: run) { [router] in
-                try await router.execute(spec: spec, argumentsJSON: argumentsJSON)
+                try await router.execute(spec: spec, argumentsJSON: argumentsJSON, dictated: dictated)
             }
             try requireCurrent(run)
             if spec.compactObservation {
@@ -656,7 +666,11 @@ final class AgentSessionController: ObservableObject {
                     ?? ActionResultText.truncate(output, limit: ActionResultText.modelLimit)
             }
             if spec.risk.meansChange { run.invalidateObservations() }
-            if cacheable { run.toolResults[cacheKey] = .init(output: output, mutating: spec.risk.meansChange) }
+            if cacheable {
+                let reopensApp = spec.serverID == NativeOpenAction.serverID && spec.toolName == "open_app"
+                run.toolResults[cacheKey] = .init(output: output, mutating: spec.risk.meansChange,
+                                                  idempotent: !spec.risk.meansChange || reopensApp)
+            }
             if spec.serverID == NativeOpenAction.serverID, spec.toolName == "open_app", let launched = NativeLaunchedApp(summary: output) {
                 run.openedApps.removeAll { $0.processIdentifier == launched.processIdentifier }
                 run.openedApps.append(launched)
@@ -746,6 +760,7 @@ final class AgentSessionController: ObservableObject {
         runTask = nil
         deadlineTask?.cancel()
         deadlineTask = nil
+        run.handoff?.cancelSteps()
         let cancellations = Array(run.cancelOperations.values)
         run.cancelOperations.removeAll()
         for cancel in cancellations { cancel() }

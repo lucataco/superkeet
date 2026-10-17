@@ -3,20 +3,26 @@ import Security
 import os.log
 
 protocol MCPSecretStoring: AnyObject {
-    func secretEnvironment(for name: String) -> [String: String]
+    func secretEnvironment(for name: String) throws -> [String: String]
     func setSecretEnvironment(_ environment: [String: String], for name: String) throws
     func removeSecretEnvironment(for name: String)
 }
 
 enum MCPSecretStoreError: LocalizedError {
     case keychain(OSStatus)
+    case unreadable(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .keychain(let status):
-            let detail = (SecCopyErrorMessageString(status, nil) as String?) ?? "error \(status)"
-            return "Couldn't save the server's secrets to the Keychain (\(detail)). The server was not saved."
+            return "Couldn't save the server's secrets to the Keychain (\(Self.detail(status))). The server was not saved."
+        case .unreadable(let status):
+            return "Couldn't read the server's secrets from the Keychain (\(Self.detail(status)))."
         }
+    }
+
+    private static func detail(_ status: OSStatus) -> String {
+        (SecCopyErrorMessageString(status, nil) as String?) ?? "error \(status)"
     }
 }
 
@@ -30,7 +36,7 @@ final class KeychainMCPSecretStore: MCPSecretStoring {
         self.service = service
     }
 
-    func secretEnvironment(for name: String) -> [String: String] {
+    func secretEnvironment(for name: String) throws -> [String: String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -40,10 +46,12 @@ final class KeychainMCPSecretStore: MCPSecretStoring {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return [:] }
         guard status == errSecSuccess,
               let data = item as? Data,
               let decoded = try? JSONDecoder().decode([String: String].self, from: data) else {
-            return [:]
+            log.error("Failed to read MCP secrets for \(name, privacy: .public): \(status)")
+            throw MCPSecretStoreError.unreadable(status == errSecSuccess ? errSecDecode : status)
         }
         return decoded
     }

@@ -82,7 +82,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         }
 
         let accessible = checkAccessibilitySilently()
-        hotkeyLog.info("Accessibility check: \(accessible ? "granted" : "NOT granted")")
+        hotkeyLog.info("Accessibility check: \(accessible ? "granted" : "NOT granted", privacy: .public)")
         guard accessible else {
             hotkeyLog.warning("Cannot create event tap without Accessibility permission")
             return
@@ -121,7 +121,7 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         thread.waitUntilRunning()
         self.tapThread = thread
 
-        hotkeyLog.info("Event tap listening on its own thread. Toggle=\(self.settings.toggleHotkeyDisplayName), PTT=\(self.settings.pttHotkeyDisplayName)")
+        hotkeyLog.info("Event tap listening on its own thread. Toggle=\(self.settings.toggleHotkeyDisplayName, privacy: .public), PTT=\(self.settings.pttHotkeyDisplayName, privacy: .public)")
 
         self.isListening = true
         startPermissionHealthCheck()
@@ -560,6 +560,25 @@ func hotkeyIsSafeToAssign(keyCode: Int, modifiers: Int) -> Bool {
         | CGEventFlags.maskControl.rawValue
     if UInt64(truncatingIfNeeded: modifiers) & requiredMask != 0 { return true }
     return standaloneHotkeyKeyCodes.contains(keyCode)
+}
+
+private let reservedShortcuts: [(keyCode: Int, modifiers: CGEventFlags, name: String)] = [
+    (0, .maskCommand, "Select All"), (1, .maskCommand, "Save"), (3, .maskCommand, "Find"),
+    (4, .maskCommand, "Hide"), (6, .maskCommand, "Undo"), (6, [.maskCommand, .maskShift], "Redo"),
+    (7, .maskCommand, "Cut"), (8, .maskCommand, "Copy"), (9, .maskCommand, "Paste"),
+    (12, .maskCommand, "Quit"), (13, .maskCommand, "Close Window"), (46, .maskCommand, "Minimize"),
+    (48, .maskCommand, "App Switcher"), (50, .maskCommand, "Cycle Windows"),
+    (49, .maskCommand, "Spotlight"), (49, .maskControl, "Switch Input Source"),
+    (49, [.maskControl, .maskCommand], "Emoji & Symbols"),
+    (20, [.maskCommand, .maskShift], "Screenshot"), (21, [.maskCommand, .maskShift], "Screenshot"),
+    (23, [.maskCommand, .maskShift], "Screenshot")
+]
+
+/// Standard editing and system shortcuts that the event tap would take away from every app.
+func reservedShortcutName(keyCode: Int, modifiers: Int) -> String? {
+    let relevant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+    let pressed = UInt64(truncatingIfNeeded: modifiers) & relevant.rawValue
+    return reservedShortcuts.first { $0.keyCode == keyCode && $0.modifiers.rawValue == pressed }?.name
 }
 
 struct PushToTalkReleaseWatchdog {

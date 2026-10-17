@@ -407,6 +407,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         source?.stop()
         session.listener?.cancel()
         session.trailingTimer?.cancel()
+        session.steps.forEach { $0.task.cancel() }
         activity = nil
         stepActivity = nil
         stepActivities = []

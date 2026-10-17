@@ -398,7 +398,7 @@ struct MCPServerDraft {
         self.id = server.id
         self.name = server.name
         self.command = server.command
-        self.argsText = server.args.joined(separator: " ")
+        self.argsText = MCPArgumentParser.join(server.args)
         self.envText = server.env
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value)" }
@@ -412,7 +412,7 @@ struct MCPServerDraft {
             id: id ?? UUID(),
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             command: command.trimmingCharacters(in: .whitespacesAndNewlines),
-            args: argsText.split(whereSeparator: \.isWhitespace).map(String.init),
+            args: MCPArgumentParser.split(argsText),
             env: MCPEnvironmentParser.parse(envText),
             enabled: enabled,
             transport: transport

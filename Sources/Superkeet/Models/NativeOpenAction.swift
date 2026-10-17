@@ -71,6 +71,13 @@ enum NativeOpenAction: Equatable, Sendable {
         }
     }
 
+    /// The model can be steered by a web page or tool result, so the typing, keys and URLs it
+    /// picks itself always ask; only opening an installed app stays free.
+    var isApprovalExemptWhenChosenByModel: Bool {
+        if case .openApp = self { return true }
+        return false
+    }
+
     var toolName: String {
         switch self {
         case .openApp: return "open_app"

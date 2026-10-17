@@ -124,6 +124,25 @@ final class HotkeyDisplayTests: XCTestCase {
         XCTAssertTrue(hotkeyIsSafeToAssign(keyCode: 0, modifiers: Int(shiftOption)))
     }
 
+    func testStandardEditingAndSystemShortcutsAreReserved() {
+        let command = Int(CGEventFlags.maskCommand.rawValue)
+        XCTAssertEqual(reservedShortcutName(keyCode: 9, modifiers: command), "Paste")
+        XCTAssertEqual(reservedShortcutName(keyCode: 8, modifiers: command), "Copy")
+        XCTAssertEqual(reservedShortcutName(keyCode: 6, modifiers: command), "Undo")
+        XCTAssertEqual(reservedShortcutName(keyCode: 6, modifiers: command | Int(CGEventFlags.maskShift.rawValue)), "Redo")
+        XCTAssertEqual(reservedShortcutName(keyCode: 49, modifiers: Int(CGEventFlags.maskControl.rawValue)), "Switch Input Source")
+        XCTAssertEqual(reservedShortcutName(keyCode: 9, modifiers: command | 0x100), "Paste", "Device-specific flag bits are ignored.")
+    }
+
+    func testShortcutsWithExtraModifiersAndTheDefaultsStayAvailable() {
+        let command = CGEventFlags.maskCommand.rawValue
+        XCTAssertNil(reservedShortcutName(keyCode: 9, modifiers: Int(command | CGEventFlags.maskAlternate.rawValue)), "⌘⌥V is free.")
+        XCTAssertNil(reservedShortcutName(keyCode: 9, modifiers: 0))
+        for (keyCode, modifiers) in [(49, 524288), (63, 0), (49, 655360), (49, 393216)] { // shipped defaults
+            XCTAssertNil(reservedShortcutName(keyCode: keyCode, modifiers: modifiers), "\(keyCode)/\(modifiers)")
+        }
+    }
+
     func testFnAndFunctionKeysAreAllowedWithoutModifiers() {
         for keyCode in [63, 122, 111, 105, 90] { // fn, F1, F12, F13, F20
             XCTAssertTrue(hotkeyIsSafeToAssign(keyCode: keyCode, modifiers: 0), "keyCode \(keyCode)")

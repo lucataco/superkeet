@@ -132,7 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch is CancellationError {
                 appLog.info("Parakeet daemon start cancelled")
             } catch {
-                appLog.error("Failed to start daemon: \(error.localizedDescription)")
+                appLog.error("Failed to start daemon: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
                     guard !self.isTerminating else { return }
                     let alert = NSAlert()

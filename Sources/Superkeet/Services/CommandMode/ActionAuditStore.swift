@@ -144,7 +144,7 @@ final class ActionAuditStore: @unchecked Sendable {
                 entryCount = Self.lineCount(at: fileURL)
             }
         } catch {
-            log.error("Failed to append action audit entry: \(error.localizedDescription)")
+            log.error("Failed to append action audit entry: \(error.localizedDescription, privacy: .public)")
         }
         pruneIfNeeded()
     }
@@ -184,7 +184,7 @@ final class ActionAuditStore: @unchecked Sendable {
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
             entryCount = lines.count - start
         } catch {
-            log.error("Failed to prune action audit log: \(error.localizedDescription)")
+            log.error("Failed to prune action audit log: \(error.localizedDescription, privacy: .public)")
         }
     }
 }
