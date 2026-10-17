@@ -4,10 +4,6 @@ import os.log
 
 private let sessionLog = Logger(subsystem: "com.superkeet.app", category: "ListeningSession")
 
-/// One press of the Actions shortcut opens a listening session: the microphone stays open, each
-/// utterance is dispatched as its own command when the speaker pauses, and the HUD pill stays up
-/// between commands. Pressing the shortcut again (or Escape) closes the session and releases the
-/// microphone. Nothing listens outside a session.
 @MainActor
 final class ListeningSessionController: ObservableObject {
     static let shared = ListeningSessionController()
@@ -15,26 +11,21 @@ final class ListeningSessionController: ObservableObject {
     struct Hooks {
         var startRecording: @MainActor () -> Void
         var stopRecording: @MainActor () -> Void
-        /// Ends a take the session will follow with another; the engine keeps the microphone
-        /// open so nothing said while this take finishes is lost.
         var stopForNextTake: (@MainActor () -> Void)?
         var cancelRecording: @MainActor () -> Void
         var isRecording: @MainActor () -> Bool
         var isStartPending: @MainActor () -> Bool
         var playSound: @MainActor (CaptureSoundPlayer.Event) -> Void
-        /// The app carried from one utterance to the next belongs to the session; drop it at the end.
         var forgetContext: @MainActor () -> Void = {}
     }
 
     struct Streams {
-        /// The running interim text of the current take; nil while no take is listening.
         var transcript: AnyPublisher<String?, Never>
         var daemonState: AnyPublisher<ParakeetService.DaemonState, Never>
         var outcome: AnyPublisher<TranscriptOutcomeEvent?, Never>
     }
 
     @Published private(set) var isActive = false
-    /// Utterances handed to the command runner during this session; the HUD shows a count.
     @Published private(set) var dispatchedCommands = 0
 
     private let settings: AppSettings
@@ -44,7 +35,6 @@ final class ListeningSessionController: ObservableObject {
     private var endpointTimer: Task<Void, Never>?
     private var consecutiveFailures = 0
     private var currentTranscript = ""
-    /// Transcript endings already heard in this take; seeing one again is flicker, not speech.
     private var seenProgress: Set<String> = []
     private var endpointGeneration = UUID()
     private var lastOutcomeID: UUID?
@@ -82,7 +72,6 @@ final class ListeningSessionController: ObservableObject {
         )
     }
 
-    /// The shortcut opens or closes a session; closing it runs whatever was being said.
     func toggle() {
         dispatchPrecondition(condition: .onQueue(.main))
         if isActive {
@@ -106,8 +95,6 @@ final class ListeningSessionController: ObservableObject {
         hooks.startRecording()
     }
 
-    /// Closes the session. With `dispatchPending`, speech already captured still runs; without it
-    /// (Escape), the take is dropped.
     func end(dispatchPending: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard isActive else { return }
@@ -166,7 +153,6 @@ final class ListeningSessionController: ObservableObject {
             return
         }
         let isNewSpeech = seenProgress.insert(ListeningSessionPolicy.progressKey(for: transcript)).inserted
-        // A re-decode that only reshuffles words already heard keeps the pause timer running.
         guard isNewSpeech || endpointTimer == nil else { return }
         endpointTimer?.cancel()
         let generation = UUID()

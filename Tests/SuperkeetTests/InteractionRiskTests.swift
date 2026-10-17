@@ -3,8 +3,6 @@ import XCTest
 
 final class InteractionRiskTests: XCTestCase {
     func testDestructiveHintOnPlainInteractionsMeansChangesState() {
-        // Cua Driver annotates click as destructive; under Just Do It that would raise a card for
-        // every click. Interactions change state but delete nothing.
         for name in ["click", "double_click", "right_click", "type_text", "press_key", "hotkey", "scroll", "drag", "set_value"] {
             XCTAssertEqual(MCPToolRiskClassifier.risk(for: MCPToolAnnotations(destructiveHint: true), name: name), .mutating, name)
             XCTAssertFalse(ActionApprovalPolicy.autoApprove.requiresApproval(for: .mutating), name)

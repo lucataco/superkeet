@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Installs the pinned SwiftLint release so CI and releases lint with the same rules as developers.
 set -euo pipefail
 
 VERSION="0.65.1"

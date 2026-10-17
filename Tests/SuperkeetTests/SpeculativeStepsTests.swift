@@ -135,8 +135,6 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertEqual(detector.steps.count, 1)
     }
 
-    // MARK: Last clause while still speaking
-
     private func notesDetector(installed: [String] = []) -> SpeculativeStepDetector {
         SpeculativeStepDetector(environment: .init(
             resolveApp: { [notes, safari] name in

@@ -4,7 +4,6 @@ import os.log
 
 protocol MCPSecretStoring: AnyObject {
     func secretEnvironment(for name: String) -> [String: String]
-    /// Throws when the secret could not be stored, so the caller never reports it as saved.
     func setSecretEnvironment(_ environment: [String: String], for name: String) throws
     func removeSecretEnvironment(for name: String)
 }

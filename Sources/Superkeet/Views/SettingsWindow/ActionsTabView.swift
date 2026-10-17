@@ -289,7 +289,6 @@ struct ActionsTabView: View {
             get: { server.enabled },
             set: { enabled in
                 store.setEnabled(enabled, for: server.id)
-                // Connect now so the first command does not pay for the server's cold start.
                 guard enabled, settings.actionsEnabled, !manager.state(for: server.id).isConnected else { return }
                 Task { await manager.connect(server) }
             }

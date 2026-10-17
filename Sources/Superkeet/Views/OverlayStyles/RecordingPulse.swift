@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The recording dot's breathing animation. Held still when the user has Reduce Motion on.
 struct RecordingPulse: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let isRecording: Bool

@@ -11,7 +11,6 @@ enum ListeningSessionPolicy {
     /// still (`SpeculativeStepDetector.trailingHold`).
     static let endpointSilence: Duration = .milliseconds(1_000)
 
-    /// Words at the end of the running transcript that identify where the speaker has got to.
     static let progressWordCount = 4
 
     /// What counts as new speech. On a long take the engine re-decodes the whole tail every tick,
@@ -26,13 +25,10 @@ enum ListeningSessionPolicy {
         return words.joined(separator: " ")
     }
 
-    /// Consecutive failed takes before the session gives up rather than looping on a broken engine.
     static let maximumConsecutiveFailures = 2
 
     enum EndAction: Equatable {
-        /// Finish the take and run what was said.
         case stopAndDispatch
-        /// Drop the take (nothing said, or the user asked to abandon it).
         case cancel
         case none
     }
@@ -42,7 +38,6 @@ enum ListeningSessionPolicy {
         return startPending ? .cancel : .none
     }
 
-    /// Only text worth acting on arms the pause timer; silence from the start keeps listening.
     static func shouldArmEndpoint(transcript: String) -> Bool {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -57,8 +52,6 @@ enum ListeningSessionPolicy {
         case endSession
     }
 
-    /// The engine returns to idle once a take's transcript is delivered; that is the moment to
-    /// open the microphone again. An engine that stopped altogether ends the session.
     static func rearmAction(daemonState: ParakeetService.DaemonState, isRecording: Bool, startPending: Bool) -> RearmAction {
         switch daemonState {
         case .idle: return isRecording || startPending ? .wait : .rearm

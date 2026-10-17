@@ -447,8 +447,6 @@ enum ModelProvisionState: Equatable {
         }
     }
 
-    /// The state's case without its payload. Observe this instead of `state` when you only care
-    /// about transitions; `.downloading` is republished on every progress event.
     var phase: Phase {
         switch self {
         case .unknown: return .unknown
@@ -539,7 +537,6 @@ final class DownloadStallWatchdog: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Returns true exactly once, the first time the download is seen stalled.
     func checkForStall(at now: Date = Date()) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -609,8 +606,6 @@ private final class DownloadCancellationState: @unchecked Sendable {
         guard shouldTerminate else { return }
         process.terminate()
 
-        // Escalate to SIGKILL if the downloader ignores SIGTERM (e.g. blocked in network I/O),
-        // so cancellation — and therefore app quit — can never hang on it.
         let pid = process.processIdentifier
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.killGracePeriod) {
             guard process.isRunning, process.processIdentifier == pid else { return }

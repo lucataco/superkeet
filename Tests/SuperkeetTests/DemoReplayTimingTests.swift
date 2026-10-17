@@ -9,9 +9,7 @@ import XCTest
 /// `scripts/demo_replay_partials.py` from `demo-audio.wav` with the pinned engine. No
 /// microphone, speakers, model or engine is needed here, so it runs in CI.
 final class DemoReplayTimingTests: XCTestCase {
-    /// Engine decode plus socket delivery of a partial after the audio it covers.
     private static let partialLatencyMs = 150
-    /// Engine finalisation, handoff and command routing after the endpoint.
     private static let finalLatencyMs = 450
 
     private let directory = URL(fileURLWithPath: "/fixture/Applications")
@@ -38,7 +36,6 @@ final class DemoReplayTimingTests: XCTestCase {
         let how: String
     }
 
-    /// The same exact resolver InstalledAppInventory uses while the user is speaking.
     private lazy var resolver = AppResolver(directories: [directory], applicationsInDirectory: { [apps] _ in apps })
 
     private func resolve(_ name: String) -> URL? {
@@ -71,7 +68,6 @@ final class DemoReplayTimingTests: XCTestCase {
     private func date(_ ms: Int) -> Date { Date(timeIntervalSince1970: Double(ms) / 1_000) }
     private func ms(_ date: Date) -> Int { Int((date.timeIntervalSince1970 * 1_000).rounded()) }
 
-    /// Runs the live detectors over every take and returns what was dispatched, when.
     private func simulate() throws -> [Dispatch] {
         let takes = try loadTakes()
         XCTAssertGreaterThan(takes.count, 3, "The fixture should hold one take per utterance.")
@@ -115,7 +111,6 @@ final class DemoReplayTimingTests: XCTestCase {
             }
             fireTrailing(before: take.endMs)
 
-            // The final transcript runs whatever is left, clause by clause, like the command runner.
             let finalAt = take.endMs + Self.finalLatencyMs
             var app = carriedApp ?? launch.commit?.action.app.name
             for clause in CommandClauses.split(take.final) where !CommandClauses.isDroppable(clause) && !CommandLeadIn.isAcknowledgement(clause) {
@@ -126,7 +121,6 @@ final class DemoReplayTimingTests: XCTestCase {
                 } else if case .openApp(let name) = action, ran.contains(where: {
                     if case .openApp(let other) = $0 { return resolve(other) == resolve(name) } else { return false }
                 }) {
-                    // Opened while speaking under a different spoken form.
                 } else {
                     dispatches.append(Dispatch(atMs: finalAt, action: action, how: "final transcript"))
                 }

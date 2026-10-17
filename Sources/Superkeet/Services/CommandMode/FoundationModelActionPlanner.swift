@@ -78,7 +78,6 @@ final class FoundationModelActionPlanner: ContextualActionPlanning {
         return text
     }
 
-    /// The router stops the run at the step limit, so the model is told to finish with a summary before it gets there.
     static func budgetInstructions(maxSteps: Int) -> String {
         let limit = max(1, maxSteps)
         let aim = min(limit, 3)

@@ -1,7 +1,6 @@
 import XCTest
 @testable import Superkeet
 
-/// Splitting and routing survive the recogniser's glitches and conversational phrasing.
 final class ClauseRecoveryTests: XCTestCase {
     private let notes = URL(fileURLWithPath: "/fixture/Applications/Notes.app")
 

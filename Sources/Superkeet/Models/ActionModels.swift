@@ -1,6 +1,5 @@
 import Foundation
 
-/// Persisted on MCP server configs. Local stdio is the only transport Superkeet launches.
 enum MCPTransportKind: String, Codable {
     case stdio
 }

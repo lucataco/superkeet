@@ -13,8 +13,6 @@ struct HomeTabView: View {
     @ObservedObject var modelProvisioning = ModelProvisioning.shared
 
     @State private var editingHotkey: EditingHotkey?
-    // Populated in onAppear; probing CoreAudio/AX/filesystem in the initializer would run on
-    // every tab switch and every parent re-render.
     @State private var readiness = AppReadinessReport.placeholder
     @State private var loginItemError: String?
     @State private var shortcutError: String?
@@ -107,7 +105,6 @@ struct HomeTabView: View {
             refreshReadiness()
         }
         .onChange(of: modelProvisioning.state.phase) {
-            // Re-probe only on state transitions, not on every download progress tick.
             refreshReadiness()
         }
         .alert("Re-download the speech model?", isPresented: $confirmRedownload) {

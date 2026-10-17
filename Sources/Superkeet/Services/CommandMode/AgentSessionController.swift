@@ -44,8 +44,6 @@ final class AgentSessionController: ObservableObject {
     @Published private(set) var checklist = ActionChecklist()
     @Published private(set) var stepIndex: Int = 0
     @Published private(set) var stepTotal: Int = 0
-    /// The app the last command of a listening session acted in. The next utterance starts with
-    /// it as the current app, so "type hello" after "open Notes" needs no model.
     @Published private(set) var carriedApp: NativeLaunchedApp?
 
     private let settings: AppSettings
@@ -79,20 +77,14 @@ final class AgentSessionController: ObservableObject {
         var toolResults: [String: CachedResult] = [:]
         var cancelOperations: [UUID: @Sendable () -> Void] = [:]
         var speculative: SpeculativeLaunchResult?
-        /// Clauses that ran while the user was speaking, and which of them a step has claimed.
         var earlySteps: [SpeculativeStepResult] = []
         var consumedEarlySteps: Set<Int> = []
         var openedApps: [NativeLaunchedApp] = []
         var focusTerms: Set<String> = []
-        /// Apps launched without waiting whose window has since been confirmed on screen.
         var windowReadyProcesses: Set<Int32> = []
-        /// Handles from the latest computer-use observation, filled into later calls for the model.
         var observation = ObservationBinding()
-        /// The app the current step acts in, for calls that need a pid the model did not give.
         var currentProcessIdentifier: Int32?
-        /// The app the command ended up acting in; carried to the next utterance of a session.
         var lastApp: NativeLaunchedApp?
-        /// Tools prepared for the planner, so Superkeet can run its own observations among them.
         var tools: [ActionToolSpec] = []
 
         init(limit: Int) {
@@ -171,7 +163,6 @@ final class AgentSessionController: ObservableObject {
         phase = .planning
         settings.isActionSessionActive = true
         settings.actionStatusText = "Thinking…"
-        // Keep the recording-start mark when live text was flowing; otherwise latency counts from here.
         audit.beginTimeline(replacing: false)
         runTask = Task { [weak self] in
             if let handoff { await self?.adopt(handoff, run: run) }
@@ -193,7 +184,6 @@ final class AgentSessionController: ObservableObject {
         finish(.cancelled, run: run)
     }
 
-    /// Called when a listening session ends; the next session starts with no assumed app.
     func forgetCarriedContext() {
         dispatchPrecondition(condition: .onQueue(.main))
         carriedApp = nil
@@ -359,7 +349,6 @@ final class AgentSessionController: ObservableObject {
 
     private enum StepRoute {
         case alreadyDone(appName: String)
-        /// The clause ran while the user was still speaking.
         case earlyStep(SpeculativeStepResult)
         case native(NativeOpenAction)
         case shortcut(NativeAppRecipe, target: String)
@@ -378,11 +367,9 @@ final class AgentSessionController: ObservableObject {
         if let action = NativeClauseRouter.action(for: clause.text, context: clauseContext(context)) {
             return stepRoute(for: action, clause: clause)
         }
-        // Lucky-search / current-browser resolution for opens the shared router left unresolved.
         if plan.isCompound, let action = nativeOpen(for: clause.intent, context: context) {
             return .native(action)
         }
-        // Typing into the frontmost app when the clause named neither an app nor a current one.
         if let recipe = NativeTypeRecipe.recipe(for: clause.text), let target = typeTarget(recipe, context: context) {
             return .typeText(target)
         }
@@ -515,8 +502,6 @@ final class AgentSessionController: ObservableObject {
         return output
     }
 
-    /// Apps launched while the user was speaking were not waited on. Before a step acts inside
-    /// one, wait for its window so shortcuts land somewhere and the planner is told the truth.
     private func settleWindows(_ execution: CommandExecution, run: RunContext) async throws {
         for app in execution.context.openedApps where !app.windowReady && !run.windowReadyProcesses.contains(app.processIdentifier) {
             let ready = await awaitWindow(app.processIdentifier)
@@ -551,9 +536,6 @@ final class AgentSessionController: ObservableObject {
         return planner
     }
 
-    /// Fills the handles the model does not carry. When a call needs a window id Superkeet has
-    /// not seen for that app, the window list is fetched first so the call does not fail once
-    /// and cost the planner a whole round trip.
     private func completeArguments(_ argumentsJSON: String, for spec: ActionToolSpec, run: RunContext) async throws -> String {
         guard spec.serverID != NativeOpenAction.serverID else { return argumentsJSON }
         let current = run.currentProcessIdentifier.map(Int.init).flatMap { $0 > 0 ? $0 : nil }
@@ -617,7 +599,6 @@ final class AgentSessionController: ObservableObject {
         let text: String
     }
 
-    /// With nothing opened by the command yet, the frontmost app is the target.
     private func typeTarget(_ recipe: NativeTypeRecipe, context: ActionPlanContext) -> TypeTarget? {
         if let target = NativeClauseRouter.typeTarget(recipe, context: clauseContext(context)) {
             return TypeTarget(name: target.app, text: target.text)
@@ -648,8 +629,6 @@ final class AgentSessionController: ObservableObject {
         dispatchPrecondition(condition: .onQueue(.main))
         try requireCurrent(run)
 
-        // The model names controls by element_index; Superkeet supplies the pid, window,
-        // snapshot, token and session that go with it.
         let argumentsJSON = try await completeArguments(argumentsJSON, for: spec, run: run)
         try requireCurrent(run)
         let cacheKey = "\(spec.id)|\(argumentsJSON)"
@@ -789,7 +768,6 @@ final class AgentSessionController: ObservableObject {
         agentLog.info("Action session finished: \(String(describing: phase), privacy: .private)")
         if !queue.isEmpty {
             let next = queue.removeFirst()
-            // Automatic handoffs keep failures visible until dismissal or a new command starts from idle.
             startCommand(next.text, handoff: next.handoff)
         }
     }

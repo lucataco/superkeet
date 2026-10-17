@@ -8,8 +8,6 @@ protocol NativeActionExecuting: AnyObject, Sendable {
 
 @MainActor
 protocol NativeAppLaunching: AnyObject {
-    /// Launches (or brings forward) the app. With `awaitWindow`, waits up to a few seconds for an
-    /// ordinary window so callers that act inside the app know there is something to act on.
     func launch(applicationAt url: URL, awaitWindow: Bool) async throws -> NativeLaunchedApp
 }
 
@@ -22,9 +20,7 @@ extension NativeAppLaunching {
 @MainActor
 protocol NativeWorkspaceOpening {
     func applicationURL(bundleIdentifier: String) -> URL?
-    /// Returns as soon as macOS reports the process; `windowReady` reflects that moment only.
     func openApplication(at url: URL) async throws -> NativeLaunchedApp
-    /// Polls until the process shows an ordinary window or the wait times out.
     func waitForWindow(processIdentifier: Int32) async throws -> Bool
     func openURL(_ url: URL, in application: URL?) async throws
 }
@@ -36,7 +32,6 @@ protocol NativeShortcutPressing: AnyObject {
 
 @MainActor
 protocol NativeTextTyping: AnyObject {
-    /// Types the text into the app at its current insertion point; returns the app's pid.
     func type(_ text: String, inApplicationAt url: URL) async throws -> Int32
 }
 
@@ -45,8 +40,6 @@ final class NativeActionExecutor: NativeActionExecuting, NativeAppLaunching {
     static let shared = NativeActionExecutor()
     nonisolated static let serverID = NativeOpenAction.serverID
 
-    /// Injected by tests. Otherwise lookups go through the inventory's memoized scan, so a
-    /// resolution never re-reads the Applications folders (a fresh scan cost 0.8 s per open).
     private let injectedResolver: AppResolver?
     private let workspace: any NativeWorkspaceOpening
     private let shortcuts: any NativeShortcutPressing
@@ -133,8 +126,6 @@ final class NativeActionExecutor: NativeActionExecuting, NativeAppLaunching {
         }
     }
 
-    /// Waits for a window of an app that was launched without waiting. Never throws; a cancelled
-    /// or timed-out wait simply reports the window as not ready.
     func waitForWindow(processIdentifier: Int32) async -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
         return (try? await workspace.waitForWindow(processIdentifier: processIdentifier)) ?? false
@@ -142,10 +133,7 @@ final class NativeActionExecutor: NativeActionExecuting, NativeAppLaunching {
 
     func resolve(_ name: String) throws -> URL {
         dispatchPrecondition(condition: .onQueue(.main))
-        // A whole sentence is never an app name; refuse before touching the disk.
         guard NativeOpenAction.isPlausibleAppName(name) else { throw NativeOpenActionError.appNotFound(name) }
-        // The final command may take a sound-alike ("the crown" opens Chrome); only the live-speech
-        // path, which resolves through the inventory directly, stays exact.
         guard let url = currentResolver().resolve(name, bundleLookup: { workspace.applicationURL(bundleIdentifier: $0) }, fuzzy: true) else {
             throw NativeOpenActionError.appNotFound(name)
         }
@@ -167,8 +155,6 @@ struct SystemNativeWorkspace: NativeWorkspaceOpening {
     }
 
     var launchWaiter = NativeLaunchWaiter()
-    /// Brings an already-running app's windows back: unhide, un-minimize, activate. Injectable
-    /// because it talks to the Accessibility API of other processes.
     var restoreWindows: @MainActor (NSRunningApplication) -> Void = SystemNativeWorkspace.restoreWindows
 
     func applicationURL(bundleIdentifier: String) -> URL? {
@@ -221,8 +207,6 @@ struct SystemNativeWorkspace: NativeWorkspaceOpening {
         return NSWorkspace.shared.runningApplications.first { $0.bundleURL?.standardizedFileURL.path == target && !$0.isTerminated }
     }
 
-    /// Unhides, un-minimizes (through Accessibility, which Superkeet already holds for its
-    /// shortcuts), and activates a running app so "open" always ends with a visible window.
     static func restoreWindows(_ app: NSRunningApplication) {
         if app.isHidden { app.unhide() }
         if AXIsProcessTrusted() {
@@ -330,7 +314,6 @@ final class SystemTextTyper: NativeTextTyping {
         var postText: (String) -> Bool = { SystemTextTyper.post($0) }
         var postReturn: () -> Bool = { KeyboardShortcut(keys: ["return"]).map(SystemShortcutPresser.post) ?? false }
         var activationTimeout: Duration = .milliseconds(1_500)
-        /// Pause between chunks so the target app's event queue keeps up.
         var chunkDelay: Duration = .milliseconds(8)
     }
 

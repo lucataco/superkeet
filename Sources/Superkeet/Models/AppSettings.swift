@@ -19,7 +19,6 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     @AppStorage("commandPTTHotkeyKeyCode") var commandPTTHotkeyKeyCode: Int = 49
     @AppStorage("commandPTTHotkeyModifierFlags") var commandPTTHotkeyModifierFlags: Int = 393216
 
-    // Display names are derived from the key code and modifiers so they can never drift.
     var toggleHotkeyDisplayName: String {
         displayNameForHotkey(keyCode: toggleHotkeyKeyCode, modifierFlags: toggleHotkeyModifierFlags)
     }
@@ -39,7 +38,6 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("hasVerifiedSetup") var hasVerifiedSetup: Bool = false
 
-    /// Read straight from the system so it can never disagree with what login items actually do.
     var launchAtLoginEnabled: Bool {
         SMAppService.mainApp.status == .enabled
     }
@@ -72,15 +70,12 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     @AppStorage("actionsEnabled") var actionsEnabled: Bool = false
     @AppStorage("actionApprovalPolicy") var actionApprovalPolicy: ActionApprovalPolicy = .readOnlyAuto
-    /// The asking policy that was active before the menu bar checkbox switched on auto-approve.
     @AppStorage("actionApprovalPolicyBeforeAutoApprove") var actionApprovalPolicyBeforeAutoApprove: ActionApprovalPolicy?
     @AppStorage("actionMaxSteps") var actionMaxSteps: Int = 12
     @AppStorage("actionTimeoutSeconds") var actionTimeoutSeconds: Int = 120
     @AppStorage("actionRunDeadlineSeconds") var actionRunDeadlineSeconds: Int = 180
     @AppStorage("actionAuditEnabled") var actionAuditEnabled: Bool = true
     @AppStorage("instantAppLaunchEnabled") var instantAppLaunchEnabled: Bool = true
-    /// The Actions shortcut opens a listening session (speak several commands, each dispatched on
-    /// a pause) instead of one press-to-start, press-to-run take. Off restores the single take.
     @AppStorage("actionListeningSessionEnabled") var actionListeningSessionEnabled: Bool = true
 
     @Published var isRecording: Bool = false

@@ -10,11 +10,9 @@ final class ParakeetInterimTranscriptTests: XCTestCase {
     }
 
     func testCompletionTimeoutScalesWithRecordingLength() {
-        // Short takes fail fast instead of blocking recording for minutes.
         XCTAssertEqual(ParakeetService.completionTimeout(forRecordingDuration: 0), 20)
         XCTAssertEqual(ParakeetService.completionTimeout(forRecordingDuration: 3), 20)
         XCTAssertEqual(ParakeetService.completionTimeout(forRecordingDuration: 30), 60)
-        // Long takes still get generous headroom, capped at the historical five minutes.
         XCTAssertEqual(ParakeetService.completionTimeout(forRecordingDuration: 600), 300)
     }
 

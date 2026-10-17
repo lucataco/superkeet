@@ -35,7 +35,6 @@ protocol SpeculativeLaunching: AnyObject {
     func begin(sessionID: String)
     func end(sessionID: String)
     func take(sessionID: String) -> SpeculativeLaunch?
-    /// The early launch plus every clause that already ran, or nil when nothing happened early.
     func takeHandoff(sessionID: String) -> SpeculativeHandoff?
 }
 
@@ -69,7 +68,6 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         }
     }
 
-    /// A clause beyond the first app launch that ran (or is running) while the user speaks.
     enum StepActivity: Equatable {
         case running(SpeculativeStep)
         case done(SpeculativeStepResult)
@@ -84,10 +82,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
     }
 
     @Published private(set) var activity: Activity?
-    /// The most recent early step, kept for callers that only show one line.
     @Published private(set) var stepActivity: StepActivity?
-    /// Every step run while the user is speaking, in order, so the HUD can show what already
-    /// happened rather than only the latest step.
     @Published private(set) var stepActivities: [StepActivity] = []
     @Published private(set) var listening: Listening?
 
@@ -208,7 +203,6 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         let session = Session(id: sessionID, detector: detector, stepDetector: stepDetector)
         self.session = session
         listening = Listening(sessionID: sessionID, transcript: "")
-        // Latency in the action log counts from the moment the user started speaking.
         audit.beginTimeline(replacing: true)
         session.listener = Task { @MainActor [weak self] in
             guard self?.session === session, !Task.isCancelled else { return }
@@ -225,8 +219,6 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
                     if let commit = session.detector.observe(partial) {
                         self.launch(commit, in: session)
                     }
-                    // Clauses after the launch run as soon as the next clause has begun; a safe
-                    // last clause runs once it has held still.
                     for step in session.stepDetector.observe(partial, launchedApp: session.detector.commit?.action.app, at: self.now()) {
                         self.run(step, in: session)
                     }
@@ -297,8 +289,6 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         }
     }
 
-    /// Runs one completed clause. Steps run strictly in order and after the early launch, and a
-    /// step inside a freshly launched app waits for that app's window first.
     private func run(_ step: SpeculativeStep, in session: Session) {
         let previous = session.steps.last?.task
         let launch = session.launch
@@ -367,8 +357,6 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         session.launch = Task { @MainActor [weak self] in
             let outcome: Result<NativeLaunchedApp, Error>
             do {
-                // Do not wait for a window here: the command starts the moment the transcript
-                // lands, and only steps that act inside the app wait for its window.
                 outcome = .success(try await launcher.launch(applicationAt: app.url, awaitWindow: false))
             } catch {
                 outcome = .failure(error)

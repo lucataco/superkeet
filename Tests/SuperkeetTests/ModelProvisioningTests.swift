@@ -9,7 +9,6 @@ final class ModelProvisioningTests: XCTestCase {
     }
 
     func testPhaseIgnoresDownloadProgressPayload() {
-        // Views observe `phase` so a 670 MB download does not trigger a readiness probe per event.
         var early = ModelDownloadProgress()
         early.overallFraction = 0.1
         var late = ModelDownloadProgress()

@@ -312,8 +312,6 @@ enum ActionToolFilter {
         filtering(tools, intent: HeuristicIntentExtractor.intent(for: task))
     }
 
-    /// Server housekeeping that a spoken command never needs. Offering these only invites the
-    /// model to call them (it asked Cua Driver to prompt for permissions mid-command).
     static let housekeepingNames: Set<String> = [
         "check_permissions", "check_for_update", "get_cursor_position", "get_screen_size", "health_report",
         "get_config", "set_config", "install_ffmpeg", "start_recording", "stop_recording", "get_recording_state",

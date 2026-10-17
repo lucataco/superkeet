@@ -8,7 +8,6 @@ final class NativeActionExecutorTests: XCTestCase {
         var openedURLs: [(URL, URL?)] = []
         var failure: Error?
         var windowReady = true
-        /// What the window wait reports; the initial open always reports no window yet.
         var windowAppears = true
         private(set) var waitedFor: [Int32] = []
         func applicationURL(bundleIdentifier: String) -> URL? { nil }

@@ -67,8 +67,6 @@ final class InstalledAppInventory: ObservableObject {
         return resolver?.resolve(name, bundleLookup: bundleLookup)
     }
 
-    /// What the live-speech detectors resolve with: an exact name, or else a single installed app
-    /// whose name is spelled almost the same (the recogniser mishearing a word).
     func resolveWhileSpeaking(_ name: String) -> URL? {
         dispatchPrecondition(condition: .onQueue(.main))
         return resolve(name) ?? resolver?.uniqueNearMatch(name)

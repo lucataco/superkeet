@@ -5,8 +5,6 @@ import UniformTypeIdentifiers
 
 private let exportLog = Logger(subsystem: "com.superkeet.app", category: "LogExporter")
 
-/// Collects Superkeet's own unified-log messages since launch into a text file for bug reports.
-/// Values logged as private stay redacted, as they do in Console.
 enum LogExporter {
     static let subsystem = "com.superkeet.app"
 
@@ -46,7 +44,6 @@ enum LogExporter {
         }
     }
 
-    /// Asks where to save, then writes the diagnostics summary followed by the log.
     @MainActor
     static func exportWithSavePanel() -> String? {
         let panel = NSSavePanel()

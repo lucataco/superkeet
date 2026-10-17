@@ -20,8 +20,6 @@ final class RecordingOverlayWindowController: ObservableObject {
 
     private init() {}
 
-    /// Subscribes to the engine so the overlay stays up through "Transcribing…" and flashes the
-    /// outcome ("Copied", "Pasted", …) instead of vanishing the instant recording stops.
     func start(service: ParakeetService = .shared) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard stateCancellables.isEmpty else { return }
@@ -46,7 +44,6 @@ final class RecordingOverlayWindowController: ObservableObject {
         case .transcribing:
             if phase == .recording { showTranscribing() }
         case .stopped, .stopping:
-            // The engine went away. Let a result flash finish; otherwise there is nothing to show.
             if case .result = phase { return }
             hide()
         case .starting, .idle, .recording:

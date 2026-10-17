@@ -83,7 +83,6 @@ jobs:
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
           echo "parakeet_ref=$PARAKEET_REF" >> "$GITHUB_OUTPUT"
 
-      # A tag must pass the same gate as CI before anything is signed or published.
       - name: Install SwiftLint
         run: ./scripts/install_swiftlint.sh
 

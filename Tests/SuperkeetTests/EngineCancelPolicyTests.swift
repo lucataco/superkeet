@@ -8,8 +8,6 @@ final class EngineCancelPolicyTests: XCTestCase {
     }
 
     func testTranscribingReplyIsProbedBeforeAnyRestart() {
-        // The engine flips its phase before the worker drains, so the cancel ack always says
-        // "transcribing". That alone must never trigger a restart.
         XCTAssertEqual(EngineCancelPolicy.nextStep(engineState: "transcribing", polls: 0), .poll(delay: EngineCancelPolicy.pollInterval))
         XCTAssertEqual(
             EngineCancelPolicy.nextStep(engineState: "transcribing", polls: EngineCancelPolicy.maximumPolls - 1),

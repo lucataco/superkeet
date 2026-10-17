@@ -131,7 +131,6 @@ final class ActionToolRouter: ActionRouting {
             return ActionResultText.truncate(output, limit: ActionResultText.modelLimit)
         } catch {
             let cancelled = Task.isCancelled || ActionErrorHandling.isCancellation(error)
-            // The error text is the only clue to why an observation failed; always keep it.
             record(spec, argumentsJSON, outcome: cancelled ? "cancelled" : "failed",
                    detail: ActionErrorHandling.userFacingMessage(for: error),
                    durationMs: Self.milliseconds(started.duration(to: clock.now)))

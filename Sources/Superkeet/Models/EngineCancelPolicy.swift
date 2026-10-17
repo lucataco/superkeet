@@ -8,10 +8,7 @@ import Foundation
 /// `status` a few times and restart only if the engine never returns to idle.
 enum EngineCancelPolicy {
     enum Step: Equatable {
-        /// Ask the engine for its status, after sleeping `delay` (nil for the first probe when the
-        /// cancel reply carried no state at all).
         case poll(delay: Duration?)
-        /// Stop probing; the caller decides between idle and restart from the last state seen.
         case settle
     }
 

@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Overlay style and sound cues: how Superkeet tells you it is listening. Lives on the General
-/// tab next to the shortcuts because it is part of the recording experience, not output routing.
 struct RecordingFeedbackSection: View {
     @ObservedObject var settings = AppSettings.shared
 

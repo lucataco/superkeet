@@ -12,8 +12,6 @@ private let engineLog = Logger(subsystem: "com.superkeet.app", category: "Speech
 final class SpeechAnalyzerEngine: StreamingSpeechRecognizing {
     struct Configuration: Sendable {
         var locale: Locale = .current
-        /// App names bias recognition toward "open Notes…" style commands. Reuse the memoized
-        /// inventory instead of rescanning /Applications on every start.
         var contextualStrings: @Sendable () -> [String] = {
             MainActor.assumeIsolated {
                 let inventory = InstalledAppInventory.shared

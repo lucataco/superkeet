@@ -125,7 +125,6 @@ struct RecordingTabView: View {
             applyMicrophoneChange()
         }
         .onChange(of: parakeetService.daemonState) { _, state in
-            // Clear the restart notice once the engine is back and nothing is still pending.
             guard state == .idle, !parakeetService.hasPendingEngineRestart else { return }
             deviceChangeStatus = nil
         }
@@ -142,12 +141,9 @@ struct RecordingTabView: View {
         guard trimmed != settings.modelDirectory else { return }
         advancedTabLog.info("Model directory changed")
         settings.modelDirectory = trimmed
-        // The engine loads the model at launch, so it needs a restart to use the new folder.
         parakeetService.requestEngineRestartForSettingsChange()
     }
 
-    /// The engine opens its input device at launch, so a new selection needs a restart. Do it for
-    /// the user instead of telling them to, but never interrupt a take in progress.
     private func applyMicrophoneChange() {
         switch parakeetService.requestEngineRestartForSettingsChange() {
         case .notNeeded:

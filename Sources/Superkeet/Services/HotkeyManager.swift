@@ -155,11 +155,8 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         stopListening()
         accessibilityGranted = false
         settings.runtimeIssue = Self.accessibilityRevokedMessage
-        // Resume automatically once the user grants access again.
         startRetryTimer()
     }
-
-    // MARK: Push-to-talk release watchdog
 
     /// While a push-to-talk key is held, confirm it really is. Secure Event Input (password
     /// fields, 1Password, Terminal's Secure Keyboard Entry) hides key events from the tap, so the
@@ -262,11 +259,8 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         retryTimer = nil
     }
 
-    // MARK: - Config snapshot (main thread → tap thread)
-
     private func installConfigObservers() {
         guard configObservers.isEmpty else { return }
-        // Hotkey assignments and actionsEnabled live in UserDefaults; recording/action state is @Published.
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshConfigSnapshot() }
@@ -281,7 +275,6 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
             .store(in: &configObservers)
     }
 
-    /// Listening sessions live on the main actor; copy the flag so Escape still cancels between utterances.
     func noteListeningSessionActive(_ active: Bool) {
         listeningSessionActive.withLock { $0 = active }
         refreshConfigSnapshot()
@@ -303,18 +296,12 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
             commandPTTKeyCode: settings.commandPTTHotkeyKeyCode,
             commandPTTModifiers: settings.commandPTTHotkeyModifierFlags,
             actionsEnabled: settings.actionsEnabled,
-            // A listening session counts as recording for Escape: between utterances the
-            // microphone is about to reopen, and Escape must be able to close the session.
             isRecording: settings.isRecording || listeningSessionActive.withLock { $0 },
             isActionSessionActive: settings.isActionSessionActive,
             captureActive: hotkeyCaptureCount > 0
         )
     }
 
-    // MARK: - Event handling
-
-    /// Main-thread entry point (tests and direct callers). Reads live settings so state changes
-    /// made moments ago are honoured, and performs the resulting actions synchronously.
     @MainActor
     func handleEvent(_ event: HotkeyEvent) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -337,8 +324,6 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
         return decision.consume
     }
 
-    /// The system disabled the tap (timeout or user input). Release any held key, then re-enable
-    /// with a back-off so a wedged tap does not spin.
     fileprivate nonisolated func handleTapDisabled() {
         let released = decider.withLock { $0.releasePushToTalk() }
         if !released.isEmpty {
@@ -401,7 +386,6 @@ final class HotkeyManager: ObservableObject, @unchecked Sendable {
 }
 
 extension HotkeyConfig {
-    /// Used only until the first snapshot is taken; matches nothing.
     static let placeholder = HotkeyConfig(
         toggleKeyCode: -1, toggleModifiers: 0,
         pttKeyCode: -1, pttModifiers: 0,
@@ -411,7 +395,6 @@ extension HotkeyConfig {
     )
 }
 
-/// Hosts the event tap's run loop so keystroke filtering never waits on the main thread.
 private final class EventTapThread: Thread {
     private let source: CFRunLoopSource
     private let running = DispatchSemaphore(value: 0)
@@ -562,8 +545,6 @@ func keyCodeName(_ keyCode: Int) -> String {
     }
 }
 
-/// Keys that are safe to use with no modifier: fn and the function keys F1–F20. They don't type
-/// text, so consuming them system-wide doesn't break typing in other apps.
 let standaloneHotkeyKeyCodes: Set<Int> = [
     63, // fn
     122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, // F1–F12
@@ -581,8 +562,6 @@ func hotkeyIsSafeToAssign(keyCode: Int, modifiers: Int) -> Bool {
     return standaloneHotkeyKeyCodes.contains(keyCode)
 }
 
-/// Decides when a held push-to-talk key has really been let go: two consecutive readings of
-/// "not held", so a single stale reading can't cut a recording short.
 struct PushToTalkReleaseWatchdog {
     static let requiredMisses = 2
     private(set) var misses = 0

@@ -51,7 +51,6 @@ enum ActionIntentPolicy {
         return intent.browser == nil || ["chrome", "google chrome"].contains(intent.browser?.lowercased() ?? "")
     }
 
-    /// Whether an app name refers to a web browser ("Google Chrome", "Helium browser", "Safari").
     static func isBrowserName(_ appName: String) -> Bool {
         let normalized = AppResolver.normalizedName(appName)
         return browsers.contains(normalized)
@@ -61,10 +60,8 @@ enum ActionIntentPolicy {
 }
 
 enum HeuristicIntentExtractor {
-    /// Verb prefixes and the action each one implies; longer phrases first so "open up" wins over "open".
     static let verbs: [(prefix: String, action: ActionIntent.Action)] = [
         ("switch over to ", .switchApp), ("switch to ", .switchApp), ("activate ", .switchApp), ("bring up ", .switchApp),
-        // "go search …" is how people say it, and how the recogniser often hears "Google search".
         ("go search for ", .webSearch), ("go search ", .webSearch),
         ("go to ", .switchApp),
         ("open up ", .openApp), ("open ", .openApp), ("launch ", .openApp), ("pull up ", .openApp), ("fire up ", .openApp),
@@ -121,11 +118,8 @@ enum HeuristicIntentExtractor {
         pattern: #"\A(?:(?:google\s+)?search|for|up|on\s+google\s+for)\b[.,;:!?]*\s+"#, options: .caseInsensitive
     )
 
-    /// Drops a trailing "in Chrome" / "using Safari" from a search query. Other trailing phrases
-    /// ("restaurants in Paris") are part of the query and stay.
     static func searchQuery(from value: String) -> String {
         var query = value.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".,;:!?")))
-        // "Google search. Simon Cowell": the recogniser's punctuation after the verb is not the query.
         for _ in 0..<2 {
             guard let leadingSearchWord,
                   let match = leadingSearchWord.firstMatch(in: query, range: NSRange(query.startIndex..., in: query)),
@@ -140,7 +134,6 @@ enum HeuristicIntentExtractor {
             query = String(query[..<wholeRange.lowerBound])
         }
         query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        // "search for" with nothing after it: the verb matched but there is no query.
         return ["for", "the web for", "the web"].contains(query.lowercased()) ? "" : query
     }
 }

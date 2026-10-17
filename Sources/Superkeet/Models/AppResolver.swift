@@ -36,7 +36,6 @@ struct AppResolver: Sendable {
         "calc": Alias(name: "Calculator", bundleID: "com.apple.calculator")
     ]
 
-    /// Edits allowed between a spoken name and an installed one that sounds the same.
     static let maximumFuzzyDistance = 3
 
     let directories: [URL]
@@ -79,9 +78,6 @@ struct AppResolver: Sendable {
         return nil
     }
 
-    /// A misheard name ("the crown" for Chrome, "nodes" for Notes) resolves to the installed app
-    /// or alias that sounds the same and is within a few edits. Partial names ("Heli") and whole
-    /// phrases stay unresolved: a fuzzy match needs the same Soundex key, not just a prefix.
     private func fuzzyResolve(_ target: String, bundleLookup: (String) -> URL?) -> URL? {
         guard target.count >= 4, target.split(separator: " ").count <= 2 else { return nil }
         let key = Self.soundex(target)
@@ -105,12 +101,6 @@ struct AppResolver: Sendable {
         return best?.url
     }
 
-    /// A misheard installed-app name for use while the user is still speaking ("phone booth" for
-    /// Photo Booth). Stricter than `fuzzyResolve` in one way and looser in another: it ignores
-    /// Soundex (which splits "phone"/"photo") but needs a near-identical spelling of a longer
-    /// name (one edit from 6 letters, two from 10; shorter names are never guessed, so "nodes"
-    /// still does nothing until the final transcript), exactly one app that close, and the
-    /// next-closest app at least two edits further away. Aliases and bundle lookups are ignored.
     func uniqueNearMatch(_ name: String) -> URL? {
         let target = Self.matchKey(name)
         let allowed = Self.allowedNearMatchDistance(forLength: target.count)
@@ -140,8 +130,6 @@ struct AppResolver: Sendable {
         }
     }
 
-    /// Classic Soundex over ASCII letters: first letter, then consonant classes with vowels
-    /// dropped and adjacent duplicates collapsed, padded to four characters.
     static func soundex(_ text: String) -> String {
         let letters = text.lowercased().filter { $0.isLetter && $0.isASCII }
         guard let first = letters.first else { return "" }
@@ -232,8 +220,6 @@ struct AppResolver: Sendable {
         return result.trimmingCharacters(in: edges)
     }
 
-    /// ASR often splits CamelCase app names ("TextEdit" → "text edit"). Matching ignores those
-    /// spaces so instant launch can fire without falling back to sound-alike guessing.
     static func matchKey(_ name: String) -> String {
         String(normalizedName(insertingWordBreaks(name)).filter { !$0.isWhitespace })
     }

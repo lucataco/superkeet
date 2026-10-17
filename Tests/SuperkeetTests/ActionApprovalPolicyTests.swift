@@ -84,10 +84,8 @@ final class ActionApprovalPolicyTests: XCTestCase {
     }
 
     func testMenuBarAutoApproveToggleFallsBackToTheDefaultWithoutAMemory() {
-        // Auto-approve was chosen in Settings, so there is nothing to restore; use the default.
         let off = ActionApprovalPolicy.togglingAutoApprove(current: .autoApprove, remembered: nil)
         XCTAssertEqual(off.policy, .readOnlyAuto)
-        // A corrupt memory of "autoApprove" must not leave the checkbox stuck on.
         let stuck = ActionApprovalPolicy.togglingAutoApprove(current: .autoApprove, remembered: .autoApprove)
         XCTAssertEqual(stuck.policy, .readOnlyAuto)
     }

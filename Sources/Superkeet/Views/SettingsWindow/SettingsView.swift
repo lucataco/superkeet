@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Lets other parts of the app open Settings on a particular tab.
 @MainActor
 final class SettingsNavigation: ObservableObject {
     static let shared = SettingsNavigation()
@@ -31,7 +30,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Actions Mode cannot work below macOS 26, so do not advertise a tab full of dead controls.
     private var visibleTabs: [SettingsTab] {
         SettingsTab.allCases.filter { $0 != .actions || AppleIntelligenceAvailability.osSupportsActionsMode }
     }
@@ -121,7 +119,6 @@ struct SettingsTabHeader: View {
     }
 }
 
-/// Title + caption label used by settings rows across every tab.
 func rowLabel(_ title: String, _ subtitle: String) -> some View {
     VStack(alignment: .leading, spacing: 2) {
         Text(title)

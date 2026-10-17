@@ -5,7 +5,6 @@ final class TranscriptOutcomeTests: XCTestCase {
     func testDictationOutcomeReflectsHowTextWasDelivered() {
         XCTAssertEqual(TranscriptOutcome.forDictation(delivery: .copied, isPartial: false), .copied)
         XCTAssertEqual(TranscriptOutcome.forDictation(delivery: .pasted, isPartial: false), .pasted)
-        // A failed paste still leaves the text on the clipboard, so say so rather than claiming a paste.
         XCTAssertEqual(TranscriptOutcome.forDictation(delivery: .pasteFailed, isPartial: false), .copied)
     }
 

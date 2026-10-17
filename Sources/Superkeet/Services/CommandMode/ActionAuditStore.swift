@@ -9,10 +9,7 @@ struct ActionAuditEntry: Codable, Equatable {
     let arguments: String
     let outcome: String
     let detail: String?
-    /// Milliseconds since the user's command began (the recording start when the interim text
-    /// was flowing, otherwise the run start). Nil for entries written outside a command.
     var sinceCommandMs: Int?
-    /// Milliseconds the tool call itself took. Nil for decisions and early launches.
     var durationMs: Int?
 }
 
@@ -31,8 +28,6 @@ final class ActionAuditStore: @unchecked Sendable {
     /// All file I/O runs here, in order, so recording an entry never blocks the main thread.
     /// Reads go through the same queue and therefore see every entry recorded before them.
     private let io = DispatchQueue(label: "com.superkeet.action-audit", qos: .utility)
-    /// Counted lazily on the first append so creating the store (which happens at app launch even
-    /// with Actions Mode off) never reads the log file.
     private var entryCount: Int?
     private var timelineStart: Date?
 
@@ -55,7 +50,6 @@ final class ActionAuditStore: @unchecked Sendable {
         }
     }
 
-    /// Blocks until every recorded entry is on disk. Call before the app exits.
     func flush() {
         io.sync {}
     }
@@ -65,9 +59,6 @@ final class ActionAuditStore: @unchecked Sendable {
         return contents.split(separator: "\n", omittingEmptySubsequences: true).count
     }
 
-    /// Marks when the user's command began so later entries carry `sinceCommandMs`. The recording
-    /// start marks with `replacing: true`; the run start uses `replacing: false` so it keeps the
-    /// earlier mark when one exists and only fills in when nothing was listening.
     func beginTimeline(at date: Date = Date(), replacing: Bool = true) {
         lock.lock()
         defer { lock.unlock() }
@@ -150,7 +141,6 @@ final class ActionAuditStore: @unchecked Sendable {
             if let known = entryCount {
                 entryCount = known + 1
             } else {
-                // First append this launch: the file now includes the line we just wrote.
                 entryCount = Self.lineCount(at: fileURL)
             }
         } catch {
@@ -159,7 +149,6 @@ final class ActionAuditStore: @unchecked Sendable {
         pruneIfNeeded()
     }
 
-    /// Fraction of a limit to keep after pruning, leaving headroom before the next rewrite.
     static let pruneRetainFraction = 0.75
 
     static func pruneTarget(for limit: Int) -> Int {

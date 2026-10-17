@@ -25,7 +25,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @Published var lastDiagnosticsSummary: String?
     @Published var startupStatusDetail: String?
     @Published private(set) var daemonProtocolVersion: Int?
-    /// Fires once per finished take so the overlay can confirm what happened to the text.
     @Published private(set) var lastOutcome: TranscriptOutcomeEvent?
 
     static let supportedProtocolVersions: Set<Int> = [1, 2]
@@ -54,8 +53,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private var outputGate = TranscriptSessionGate()
     private var recordingDuration: TimeInterval = 0
     private var completionTimeout: DispatchWorkItem?
-    /// Auto-stops a take that was left running (e.g. a forgotten toggle) so the mic isn't held
-    /// open indefinitely and the take stays within the engine's transcription limits.
     static let maxRecordingDuration: TimeInterval = 15 * 60
     private var maxDurationStop: DispatchWorkItem?
     private var startRequestPending = false
@@ -333,8 +330,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             throw error
         }
 
-        // Reuse the pre-launch readiness scan; the only thing that can change during startup is
-        // the model install state, which we know succeeded if we got here.
         let finalReadiness = readiness.needsModelDownload
             ? AppReadiness.current(settings: settings)
             : readiness
@@ -406,7 +401,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         let process = lifecycleLock.withLock { daemonProcess }
         if let process, process.isRunning {
             sendSocketCommand("shutdown")
-            // Poll for a graceful exit instead of sleeping a fixed interval; escalate only if needed.
             if !(await waitForProcessToExit(process, timeoutNanoseconds: 1_000_000_000)) {
                 await terminateRunningProcess(process)
             }
@@ -447,14 +441,11 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     }
 
     enum EngineRestartRequest: Equatable {
-        /// The engine isn't running; the new setting is picked up at the next start.
         case notNeeded
         case restarting
         case deferredUntilIdle
     }
 
-    /// Restarts the engine so it picks up a launch-time setting, without interrupting a take: if
-    /// the engine is busy the restart runs as soon as it returns to idle.
     @MainActor
     @discardableResult
     func requestEngineRestartForSettingsChange() -> EngineRestartRequest {
@@ -476,7 +467,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         guard pendingEngineRestart else { return }
         switch daemonState {
         case .stopped:
-            // A stopped engine reads the new setting on its next start.
             pendingEngineRestart = false
         case .idle:
             pendingEngineRestart = false
@@ -531,7 +521,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         try? FileManager.default.removeItem(atPath: socketPath)
         try? FileManager.default.removeItem(atPath: pidPath)
 
-        // Only give the kernel time to release the socket if we actually tore down a process.
         if killedStaleProcess {
             try? await Task.sleep(for: .milliseconds(200))
         }
@@ -610,8 +599,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + limit, execute: work)
     }
 
-    /// `keepMicWarm` is for a listening session about to start its next take: the engine keeps
-    /// the microphone open, so words spoken while this take finishes land in the next one.
     @MainActor
     func stopRecording(keepMicWarm: Bool = false) {
         maxDurationStop?.cancel()
@@ -661,10 +648,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 return
             }
 
-            // Confirm the engine is back at idle before reusing it. The cancel reply always reports
-            // "transcribing" (the engine flips the phase before its worker drains the audio), and
-            // older engines omit `state` entirely, so probe status for a moment and restart only
-            // if the engine is genuinely stuck.
             var engineState = cancelEnvelope.state
             var polls = 0
             while case .poll(let delay) = EngineCancelPolicy.nextStep(engineState: engineState, polls: polls) {
@@ -1025,10 +1008,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 }
             )
         } else if processedText.isEmpty {
-            // The take was only filler words; nothing was worth delivering.
             publishOutcome(.noSpeech)
         } else {
-            // Clipboard and paste are both off; the take finished but nothing left the app.
             publishOutcome(isPartial ? .partial : .done)
         }
     }
@@ -1058,9 +1039,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         finishSession()
     }
 
-    /// Inference on Apple Silicon runs well under real time, so a healthy engine finishes in a
-    /// fraction of the recording length. Scale the deadline with the take so a stuck engine is
-    /// detected in seconds for short dictation instead of holding recording hostage for minutes.
     static func completionTimeout(forRecordingDuration duration: TimeInterval) -> TimeInterval {
         min(max(20, duration * 2), 300)
     }
@@ -1093,7 +1071,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         lifecycleLock.withLock { isShuttingDown = true }
     }
 
-    /// Final shutdown: blocks any further engine starts, then stops the engine.
     func cleanupAndWait() async {
         beginShutdown()
         await stopDaemonAndWait()
@@ -1101,8 +1078,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         try? FileManager.default.removeItem(atPath: settings.pidFilePath)
     }
 
-    /// Last resort when graceful shutdown overran its deadline: SIGKILL the engine synchronously so
-    /// it cannot outlive the app. Safe to call more than once.
     func forceKillDaemonForExit() {
         beginShutdown()
         guard let process = lifecycleLock.withLock({ daemonProcess }), process.isRunning else { return }

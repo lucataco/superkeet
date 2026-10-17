@@ -51,8 +51,6 @@ enum ActionToolSchema {
         }
         switch type {
         case "object":
-            // Handles Superkeet fills in itself (sessions, element tokens, snapshot ids) are kept
-            // out of the model's view of a tool, so it cannot invent them.
             let hidden = path.isEmpty ? ObservationHandles.hidden : []
             let properties = (object["properties"] as? [String: [String: Any]] ?? [:]).filter { !hidden.contains($0.key) }
             let required = Set(object["required"] as? [String] ?? []).subtracting(hidden)

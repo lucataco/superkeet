@@ -2,7 +2,6 @@ import Foundation
 import AppKit
 import Carbon
 
-/// How a transcript reached the user. `pasteFailed` means the text is still on the clipboard.
 enum PasteDelivery: Equatable, Sendable {
     case copied
     case pasted
@@ -12,7 +11,6 @@ enum PasteDelivery: Equatable, Sendable {
 final class PasteService: @unchecked Sendable {
     static let shared = PasteService()
 
-    /// Delay between activating the target and posting ⌘V.
     static let pasteDelay: TimeInterval = 0.15
     /// Delay between posting ⌘V and restoring the user's clipboard. Apps that read the pasteboard
     /// lazily (Electron, remote desktop, VMs) can otherwise paste the restored content instead.
@@ -67,8 +65,6 @@ final class PasteService: @unchecked Sendable {
             let savedClipboard = decision.shouldKeepClipboardAfterPaste
                 ? []
                 : snapshotClipboard()
-            // When the clipboard is restored afterwards the transcript is only there briefly, so
-            // keep it out of clipboard-manager history.
             let transcriptChangeCount = copyToClipboard(text, transient: !decision.shouldKeepClipboardAfterPaste)
             guard let targetProcessIdentifier, environment.activateTarget(targetProcessIdentifier) else {
                 environment.reportIssue("Automatic paste was cancelled because the original app could not be activated. Use Copy Last Transcript to recover the text.")
@@ -141,7 +137,6 @@ final class PasteService: @unchecked Sendable {
         guard !items.isEmpty else { return }
 
         let restoredItems = items.compactMap { snapshot -> NSPasteboardItem? in
-            // Restore every type that can be restored; one failing type must not drop the item.
             let item = NSPasteboardItem()
             for (type, data) in snapshot {
                 _ = item.setData(data, forType: type)

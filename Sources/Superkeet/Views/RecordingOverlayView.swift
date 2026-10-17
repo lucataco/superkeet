@@ -66,8 +66,6 @@ struct RecordingOverlayView: View {
         }
     }
 
-    /// Shared "Transcribing…" / outcome pill. The Wide Notch style straddles the camera, so its
-    /// pill sits to the right of the notch gap like the timer does while recording.
     @ViewBuilder
     private var statusView: some View {
         let gap = layout.notchGapWidth
@@ -230,8 +228,6 @@ struct ExpandedRecordingOverlay: View {
     }
 }
 
-/// Post-recording feedback shown in the same window and chrome as the recording overlay, so the
-/// user's eye does not have to move to learn what happened to their text.
 struct OverlayStatusPill: View {
     let phase: OverlayPhase
 

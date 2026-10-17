@@ -130,7 +130,6 @@ struct SpeculativeIntentDetector {
     )
     private static let launchVerbs: Set<String> = ["open", "open up", "launch", "pull up", "fire up", "start", "show me"]
     private static let boundary = try? NSRegularExpression(
-        // "for" ends the name only as politeness still being spoken ("the notes app for", "for me").
         pattern: #"\b(?:and\s+then|and|then|to|so)\b|\bfor(?=\s*\z|\s+(?:me|us|you)\b)|[,;:\n]|[.?!](?=\s|\z)"#,
         options: .caseInsensitive
     )
@@ -176,9 +175,6 @@ struct SpeculativeIntentDetector {
         }
     }
 
-    /// Another installed app whose name extends the spoken one ("Safari" while "Safari Technology
-    /// Preview" is installed, "Note" while "Notes" is) means the recogniser may still be mid-word,
-    /// so a stable sighting alone is not enough to launch.
     private mutating func isAmbiguous(_ app: SpeculativeApp) -> Bool {
         let names = cachedNames ?? environment.installedNames().map(AppResolver.normalizedName)
         cachedNames = names

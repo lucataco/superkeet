@@ -152,7 +152,6 @@ final class HotkeyDeciderTests: XCTestCase {
     }
 
     func testDeciderStateSurvivesConfigChangesBetweenEvents() {
-        // Settings can be edited mid-press; the release must still end the recording.
         var decider = HotkeyDecider()
         XCTAssertEqual(decider.decide(fn(pressed: true), config: config()), .consumed(.pushToTalkStart))
         let rebound = config(isRecording: true)
