@@ -37,12 +37,14 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check out source for manual publish
         if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: refs/tags/${{ github.event.inputs.tag }}
 
       - name: Resolve tag and pinned parakeet ref
@@ -87,7 +89,7 @@ jobs:
         run: ./scripts/install_swiftlint.sh
 
       - name: Lint
-        run: swiftlint lint --strict
+        run: '"$SWIFTLINT" lint --strict'
 
       - name: Run test suite
         run: swift test
@@ -106,6 +108,7 @@ jobs:
           repository: ${{ env.PARAKEET_REPOSITORY }}
           ref: ${{ steps.vars.outputs.parakeet_ref }}
           path: .release/parakeet-cli
+          persist-credentials: false
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -162,11 +165,15 @@ jobs:
         run: |
           CERT_PATH="$RUNNER_TEMP/superkeet-signing-cert.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/superkeet-build.keychain-db"
-          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$CERT_PATH"
+          trap 'rm -f "$CERT_PATH"' EXIT
+          (umask 077 && echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$CERT_PATH")
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          # Only codesign may use the key, so build code running in the Package step can't.
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          rm -f "$CERT_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security find-identity -v "$KEYCHAIN_PATH"
 
@@ -207,10 +214,12 @@ jobs:
               echo "Release already exists and no notes file was found; leaving notes unchanged."
             fi
           else
+            # A draft until its files are attached: the app's update check offers the latest
+            # published release, which must never be one with nothing to download.
             if [ -f "$NOTES_FILE" ]; then
-              gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$NOTES_FILE"
+              gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file "$NOTES_FILE"
             else
-              gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+              gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
             fi
           fi
 
@@ -229,6 +238,12 @@ jobs:
             fi
           done
           gh release upload "$TAG" .release/dist/*.zip .release/dist/*.sha256
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.vars.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false
 
       - name: Check out Homebrew tap
         if: steps.tap.outputs.enabled == 'true'
