@@ -61,6 +61,10 @@ final class ActionToolRouter: ActionRouting {
     }
 
     func execute(spec: ActionToolSpec, argumentsJSON: String) async throws -> String {
+        try await execute(spec: spec, argumentsJSON: argumentsJSON, dictated: false)
+    }
+
+    func execute(spec: ActionToolSpec, argumentsJSON: String, dictated: Bool) async throws -> String {
         dispatchPrecondition(condition: .onQueue(.main))
         try Task.checkCancellation()
         let canonical = try canonicalSpec(spec)
@@ -77,7 +81,9 @@ final class ActionToolRouter: ActionRouting {
         let nativeAction: NativeOpenAction? = canonical.serverID == NativeActionExecutor.serverID
             ? try NativeOpenAction.decode(toolName: canonical.toolName, argumentsJSON: argumentsJSON)
             : nil
-        let spec = nativeAction?.spec ?? canonical
+        var resolved = nativeAction?.spec ?? canonical
+        if let nativeAction, !dictated { resolved.approvalExempt = nativeAction.isApprovalExemptWhenChosenByModel }
+        let spec = resolved
 
         var successOutcome = "succeeded"
         if settings.actionApprovalPolicy.requiresApproval(for: spec) {
@@ -125,13 +131,13 @@ final class ActionToolRouter: ActionRouting {
                     return try await callTool(spec.serverID, spec.toolName, finalArguments, structured)
                 }
             }
-            record(spec, argumentsJSON, outcome: successOutcome, detail: structured ? nil : output,
+            record(spec, argumentsJSON, outcome: successOutcome,
+                   detail: ActionObservationPolicy.auditDetail(for: spec, output: output, structured: structured),
                    durationMs: Self.milliseconds(started.duration(to: clock.now)))
             if structured { return output }
             return ActionResultText.truncate(output, limit: ActionResultText.modelLimit)
         } catch {
             let cancelled = Task.isCancelled || ActionErrorHandling.isCancellation(error)
-            // The error text is the only clue to why an observation failed; always keep it.
             record(spec, argumentsJSON, outcome: cancelled ? "cancelled" : "failed",
                    detail: ActionErrorHandling.userFacingMessage(for: error),
                    durationMs: Self.milliseconds(started.duration(to: clock.now)))

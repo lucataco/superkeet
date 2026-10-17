@@ -7,7 +7,7 @@ final class LogExporterTests: XCTestCase {
         let line = LogExporter.Line(date: Date(timeIntervalSince1970: 0), level: "error", category: "ParakeetService", message: "boom")
         let text = LogExporter.render([line], header: "Superkeet Diagnostics")
         XCTAssertTrue(text.hasPrefix("Superkeet Diagnostics\n"))
-        XCTAssertTrue(text.contains("Log (1 entries since launch)"))
+        XCTAssertTrue(text.contains("Log (1 entries since launch, up to 24 hours)"))
         XCTAssertTrue(text.contains("1970-01-01T00:00:00.000Z [error] ParakeetService: boom"))
     }
 

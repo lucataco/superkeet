@@ -20,6 +20,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let recordingStart = RecordingStartCoordinator()
     private var didShowMicrophoneDeniedAlert = false
     private var recordingRequested: Bool { recordingStart.requestID != nil }
+    private var isWaitingForEngine: Bool { recordingRequested && !settings.isRecording && !settings.isDaemonRunning }
     private var pttSessionActive: Bool = false
     private var recordingStateCancellable: AnyCancellable?
     private var sessionStatusCancellable: AnyCancellable?
@@ -38,8 +39,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         menu.delegate = self
         statusItem?.menu = menu
 
-        // Recording ended outside our own stop/cancel path (engine auto-stop, crash, daemon stop).
-        // The overlay window controller decides on its own whether to show "Transcribing…" or hide.
         recordingStateCancellable = settings.$isRecording
             .scan((false, false)) { ($0.1, $1) }
             .filter { $0.0 && !$0.1 }
@@ -79,6 +78,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         let statusText: String
         if settings.isActionSessionActive {
             statusText = settings.actionStatusText.isEmpty ? "Working on it…" : settings.actionStatusText
+        } else if isWaitingForEngine {
+            statusText = EngineStatusText.whileStopped(daemonState: .starting, model: ModelProvisioning.shared.state, runtimeIssue: nil)
         } else if speculation.listening != nil || listeningSession.isActive {
             statusText = "Listening…"
         } else if parakeetService.daemonState == .transcribing {
@@ -88,7 +89,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         } else if !hotkeyManager.isListening {
             statusText = "Hotkeys not active — grant Accessibility"
         } else if !settings.isDaemonRunning {
-            statusText = "Daemon not running"
+            statusText = EngineStatusText.whileStopped(
+                daemonState: parakeetService.daemonState, model: ModelProvisioning.shared.state, runtimeIssue: settings.runtimeIssue
+            )
         } else {
             statusText = parakeetService.sessionStatus
         }
@@ -155,7 +158,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             menu.addItem(autoApproveItem)
         }
 
-        // People who set up before Actions Mode existed never saw it offered in Setup.
         if AppleIntelligenceAvailability.osSupportsActionsMode, !settings.actionsEnabled {
             let tryActions = NSMenuItem(title: "Try Actions Mode…", action: #selector(openActionsSettings), keyEquivalent: "")
             tryActions.target = self
@@ -245,7 +247,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @MainActor
     @objc private func startRecording() {
         guard parakeetService.daemonState != .transcribing else {
-            // Say why nothing happened instead of silently ignoring the shortcut.
             menuBarLog.info("Recording requested while the previous take is still transcribing")
             NSSound.beep()
             parakeetService.sessionStatus = "Still transcribing the last recording…"
@@ -253,6 +254,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
         guard let requestID = recordingStart.begin() else { return }
         updateMenuBarIcon(recording: false)
+        if isWaitingForEngine {
+            // Starting the engine can take seconds (a model load, or the download on first use).
+            parakeetService.sessionStatus = RecordingStartFeedback.waitingForEngine.status
+            if !listeningSession.isActive { RecordingOverlayWindowController.shared.showStarting() }
+        }
 
         Task { @MainActor in
             await self.startRecordingFlow(requestID: requestID)
@@ -265,7 +271,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             menuBarLog.error("Recording blocked: microphone access denied")
             parakeetService.disarmCommandMode()
             guard recordingStart.isCurrent(requestID) else { return }
-            teardownRecordingUI(hideOverlay: true)
+            startFailed(.microphoneDenied)
             reportMicrophoneDenied()
             return
         }
@@ -281,10 +287,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 await self.parakeetService.startRecording()
             })
         } catch {
-            menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription)")
+            menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription, privacy: .public)")
             parakeetService.disarmCommandMode()
             guard recordingStart.isCurrent(requestID) else { return }
-            teardownRecordingUI(hideOverlay: true)
+            if error is CancellationError {
+                teardownRecordingUI(hideOverlay: true)
+            } else {
+                startFailed(.engineFailed)
+            }
             return
         }
 
@@ -295,13 +305,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
         guard started else {
             parakeetService.disarmCommandMode()
-            teardownRecordingUI(hideOverlay: true)
+            startFailed(.notStarted)
             return
         }
 
         updateMenuBarIcon(recording: true)
-        // Inside a listening session the HUD pill is the indicator: one sound when the session
-        // opens, none per utterance, and no recording overlay flashing between commands.
         guard !listeningSession.isActive else { return }
         CaptureSoundPlayer.play(.start)
 
@@ -312,11 +320,21 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-    /// Surfaces a denied microphone permission. The status/issue is updated every time; the alert
-    /// with a link to System Settings is shown once per launch so repeated hotkey presses don't nag.
+    /// A listening session ends here, since no engine state change would come to re-arm it.
+    @MainActor
+    private func startFailed(_ feedback: RecordingStartFeedback) {
+        teardownRecordingUI()
+        parakeetService.sessionStatus = feedback.status
+        if listeningSession.isActive {
+            listeningSession.startFailed()
+        } else {
+            NSSound.beep()
+        }
+        RecordingOverlayWindowController.shared.showNotice(feedback)
+    }
+
     @MainActor
     private func reportMicrophoneDenied() {
-        parakeetService.sessionStatus = "Microphone access needed"
         settings.runtimeIssue = MicrophoneAccess.deniedMessage
         guard !didShowMicrophoneDeniedAlert else { return }
         didShowMicrophoneDeniedAlert = true
@@ -333,8 +351,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-    /// Releases recording-time resources. The overlay is left alone by default so it can show
-    /// "Transcribing…" and the outcome; pass `hideOverlay: true` when there is nothing to wait for.
     @MainActor
     private func teardownRecordingUI(hideOverlay: Bool = false) {
         recordingStart.cancel()
@@ -362,10 +378,15 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     @objc private func cancelRecording() {
+        cancelTake(statusIfPending: "Recording cancelled")
+    }
+
+    @MainActor
+    private func cancelTake(statusIfPending: String) {
         let wasPending = recordingRequested && !settings.isRecording
         recordingStart.cancel()
         parakeetService.cancelRecording()
-        if wasPending { parakeetService.sessionStatus = "Recording cancelled" }
+        if wasPending { parakeetService.sessionStatus = statusIfPending }
         if !listeningSession.isActive { CaptureSoundPlayer.play(.stop) }
         teardownRecordingUI(hideOverlay: true)
     }
@@ -487,6 +508,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         guard !settings.isRecording || listening else { return }
         if active {
             setStatusImage("wand.and.stars", tint: .systemPurple, description: "Superkeet - Working")
+        } else if isWaitingForEngine {
+            setStatusImage("hourglass", tint: .systemOrange, description: "Superkeet - Starting speech engine")
         } else if listening {
             setStatusImage("waveform", tint: .systemBlue, description: "Superkeet - Listening")
         } else if parakeetService.daemonState == .transcribing {
@@ -538,6 +561,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     func stopPushToTalk() {
         guard pttSessionActive else { return }
         pttSessionActive = false
+        if recordingRequested, !settings.isRecording {
+            cancelTake(statusIfPending: RecordingStartFeedback.releasedEarly.status)
+            RecordingOverlayWindowController.shared.showNotice(.releasedEarly)
+            return
+        }
         stopRecordingOnly()
     }
 
@@ -553,7 +581,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         cancelRecording()
     }
 
-    /// Hold-to-talk for Actions Mode: arms command mode and records until the key is released.
     @MainActor
     func startCommandPushToTalk() {
         guard settings.actionsEnabled, !settings.isRecording, !recordingRequested else { return }
@@ -562,11 +589,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         startRecording()
     }
 
-    /// Whether a recording start is in flight (the daemon may still be launching).
     var isRecordingStartPending: Bool { recordingRequested }
 
-    /// Starts a Command Mode take without toggling anything: the listening session calls this
-    /// between utterances. A take already recording or starting is left alone.
     @MainActor
     func startCommandRecording() {
         guard settings.actionsEnabled, !settings.isRecording, !recordingRequested,
@@ -578,8 +602,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     func toggleCommandRecording() {
-        // One shortcut, one session: press to start listening, press again to stop. The old
-        // press-to-start, press-to-run take stays available with the session setting off.
         if settings.actionsEnabled, settings.actionListeningSessionEnabled {
             ListeningSessionController.shared.toggle()
             return

@@ -44,8 +44,6 @@ final class AgentSessionController: ObservableObject {
     @Published private(set) var checklist = ActionChecklist()
     @Published private(set) var stepIndex: Int = 0
     @Published private(set) var stepTotal: Int = 0
-    /// The app the last command of a listening session acted in. The next utterance starts with
-    /// it as the current app, so "type hello" after "open Notes" needs no model.
     @Published private(set) var carriedApp: NativeLaunchedApp?
 
     private let settings: AppSettings
@@ -73,26 +71,22 @@ final class AgentSessionController: ObservableObject {
         struct CachedResult {
             let output: String
             let mutating: Bool
+            let idempotent: Bool
         }
 
         let budget: StepBudget
+        var handoff: SpeculativeHandoff?
         var toolResults: [String: CachedResult] = [:]
         var cancelOperations: [UUID: @Sendable () -> Void] = [:]
         var speculative: SpeculativeLaunchResult?
-        /// Clauses that ran while the user was speaking, and which of them a step has claimed.
         var earlySteps: [SpeculativeStepResult] = []
         var consumedEarlySteps: Set<Int> = []
         var openedApps: [NativeLaunchedApp] = []
         var focusTerms: Set<String> = []
-        /// Apps launched without waiting whose window has since been confirmed on screen.
         var windowReadyProcesses: Set<Int32> = []
-        /// Handles from the latest computer-use observation, filled into later calls for the model.
         var observation = ObservationBinding()
-        /// The app the current step acts in, for calls that need a pid the model did not give.
         var currentProcessIdentifier: Int32?
-        /// The app the command ended up acting in; carried to the next utterance of a session.
         var lastApp: NativeLaunchedApp?
-        /// Tools prepared for the planner, so Superkeet can run its own observations among them.
         var tools: [ActionToolSpec] = []
 
         init(limit: Int) {
@@ -102,6 +96,11 @@ final class AgentSessionController: ObservableObject {
 
         func invalidateObservations() {
             toolResults = toolResults.filter { $0.value.mutating }
+        }
+
+        /// A change repeated in a later step ("new note… new note") is a new request, not a retry.
+        func beginStep() {
+            toolResults = toolResults.filter { $0.value.idempotent }
         }
     }
 
@@ -137,6 +136,8 @@ final class AgentSessionController: ObservableObject {
         return nil
     }
 
+    var isRunning: Bool { activeRun != nil || phase.isActive }
+
     func handleCommand(_ text: String, speculative: SpeculativeLaunch? = nil) {
         handleCommand(text, handoff: speculative.map { SpeculativeHandoff(launch: $0) })
     }
@@ -146,7 +147,7 @@ final class AgentSessionController: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let handoff = handoff?.isEmpty == false ? handoff : nil
-        if activeRun != nil || phase.isActive {
+        if isRunning {
             guard queue.count < Self.maximumQueuedCommands else {
                 activityLog.append("Command queue full (\(Self.maximumQueuedCommands) waiting); skipped “\(trimmed)”")
                 return
@@ -161,6 +162,7 @@ final class AgentSessionController: ObservableObject {
     private func startCommand(_ text: String, handoff: SpeculativeHandoff?) {
         dispatchPrecondition(condition: .onQueue(.main))
         let run = RunContext(limit: max(1, settings.actionMaxSteps))
+        run.handoff = handoff
         activeRun = run
         commandText = text
         liveMessage = ""
@@ -171,7 +173,6 @@ final class AgentSessionController: ObservableObject {
         phase = .planning
         settings.isActionSessionActive = true
         settings.actionStatusText = "Thinking…"
-        // Keep the recording-start mark when live text was flowing; otherwise latency counts from here.
         audit.beginTimeline(replacing: false)
         runTask = Task { [weak self] in
             if let handoff { await self?.adopt(handoff, run: run) }
@@ -188,12 +189,12 @@ final class AgentSessionController: ObservableObject {
 
     func cancel() {
         dispatchPrecondition(condition: .onQueue(.main))
+        queue.forEach { $0.handoff?.cancelSteps() }
         queue.removeAll()
         guard let run = activeRun else { return }
         finish(.cancelled, run: run)
     }
 
-    /// Called when a listening session ends; the next session starts with no assumed app.
     func forgetCarriedContext() {
         dispatchPrecondition(condition: .onQueue(.main))
         carriedApp = nil
@@ -302,7 +303,7 @@ final class AgentSessionController: ObservableObject {
             if let action = nativeOpen(for: intent, context: execution.context) {
                 apply(.planning, run: run)
                 do {
-                    let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+                    let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
                     run.lastApp = NativeLaunchedApp(summary: output) ?? execution.context.currentApp
                     finish(.finished(output.isEmpty ? "Done." : output), run: run)
                     return
@@ -328,6 +329,7 @@ final class AgentSessionController: ObservableObject {
 
             for clause in plan.clauses {
                 try requireCurrent(run)
+                run.beginStep()
                 execution.context.stepNumber = clause.index + 1
                 run.focusTerms = clause.focusTerms
                 if plan.isCompound {
@@ -359,7 +361,6 @@ final class AgentSessionController: ObservableObject {
 
     private enum StepRoute {
         case alreadyDone(appName: String)
-        /// The clause ran while the user was still speaking.
         case earlyStep(SpeculativeStepResult)
         case native(NativeOpenAction)
         case shortcut(NativeAppRecipe, target: String)
@@ -378,11 +379,9 @@ final class AgentSessionController: ObservableObject {
         if let action = NativeClauseRouter.action(for: clause.text, context: clauseContext(context)) {
             return stepRoute(for: action, clause: clause)
         }
-        // Lucky-search / current-browser resolution for opens the shared router left unresolved.
         if plan.isCompound, let action = nativeOpen(for: clause.intent, context: context) {
             return .native(action)
         }
-        // Typing into the frontmost app when the clause named neither an app nor a current one.
         if let recipe = NativeTypeRecipe.recipe(for: clause.text), let target = typeTarget(recipe, context: context) {
             return .typeText(target)
         }
@@ -474,7 +473,7 @@ final class AgentSessionController: ObservableObject {
         case .native(let action):
             apply(.planning, run: run)
             do {
-                let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+                let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
                 if let launched = NativeLaunchedApp(summary: output) { execution.context.recordOpened(launched) }
                 return output
             } catch let error as NativeOpenActionError {
@@ -507,7 +506,7 @@ final class AgentSessionController: ObservableObject {
         let openedBefore = run.openedApps
         let output = try await planner.run(
             step: ActionPlanStep(task: clause.text, context: execution.context),
-            tools: execution.tools, maxSteps: run.budget.limit, execute: execute
+            tools: execution.tools, maxSteps: run.budget.remaining, execute: execute
         ) { [weak self] event in
             Task { @MainActor in self?.apply(event, run: run) }
         }
@@ -515,8 +514,6 @@ final class AgentSessionController: ObservableObject {
         return output
     }
 
-    /// Apps launched while the user was speaking were not waited on. Before a step acts inside
-    /// one, wait for its window so shortcuts land somewhere and the planner is told the truth.
     private func settleWindows(_ execution: CommandExecution, run: RunContext) async throws {
         for app in execution.context.openedApps where !app.windowReady && !run.windowReadyProcesses.contains(app.processIdentifier) {
             let ready = await awaitWindow(app.processIdentifier)
@@ -534,7 +531,7 @@ final class AgentSessionController: ObservableObject {
         checklist.addNote(note)
         apply(.planning, run: run)
         let action = NativeOpenAction.pressShortcut(app: target, shortcut: recipe.shortcut)
-        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
     }
 
     private func preparePlanner(_ execution: CommandExecution, run: RunContext) async throws -> any ActionPlanning {
@@ -551,9 +548,6 @@ final class AgentSessionController: ObservableObject {
         return planner
     }
 
-    /// Fills the handles the model does not carry. When a call needs a window id Superkeet has
-    /// not seen for that app, the window list is fetched first so the call does not fail once
-    /// and cost the planner a whole round trip.
     private func completeArguments(_ argumentsJSON: String, for spec: ActionToolSpec, run: RunContext) async throws -> String {
         guard spec.serverID != NativeOpenAction.serverID else { return argumentsJSON }
         let current = run.currentProcessIdentifier.map(Int.init).flatMap { $0 > 0 ? $0 : nil }
@@ -609,7 +603,7 @@ final class AgentSessionController: ObservableObject {
         checklist.addNote(note)
         apply(.planning, run: run)
         let action = NativeOpenAction.typeText(app: target.name, text: target.text)
-        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), run: run)
+        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
     }
 
     private struct TypeTarget: Equatable {
@@ -617,7 +611,6 @@ final class AgentSessionController: ObservableObject {
         let text: String
     }
 
-    /// With nothing opened by the command yet, the frontmost app is the target.
     private func typeTarget(_ recipe: NativeTypeRecipe, context: ActionPlanContext) -> TypeTarget? {
         if let target = NativeClauseRouter.typeTarget(recipe, context: clauseContext(context)) {
             return TypeTarget(name: target.app, text: target.text)
@@ -644,12 +637,10 @@ final class AgentSessionController: ObservableObject {
     }
 
     @MainActor
-    private func performStep(spec: ActionToolSpec, argumentsJSON: String, run: RunContext) async throws -> String {
+    private func performStep(spec: ActionToolSpec, argumentsJSON: String, dictated: Bool = false, run: RunContext) async throws -> String {
         dispatchPrecondition(condition: .onQueue(.main))
         try requireCurrent(run)
 
-        // The model names controls by element_index; Superkeet supplies the pid, window,
-        // snapshot, token and session that go with it.
         let argumentsJSON = try await completeArguments(argumentsJSON, for: spec, run: run)
         try requireCurrent(run)
         let cacheKey = "\(spec.id)|\(argumentsJSON)"
@@ -668,7 +659,7 @@ final class AgentSessionController: ObservableObject {
         apply(.toolStarted(spec), run: run)
         do {
             var output = try await ownedOperation(run: run) { [router] in
-                try await router.execute(spec: spec, argumentsJSON: argumentsJSON)
+                try await router.execute(spec: spec, argumentsJSON: argumentsJSON, dictated: dictated)
             }
             try requireCurrent(run)
             if spec.compactObservation {
@@ -677,7 +668,11 @@ final class AgentSessionController: ObservableObject {
                     ?? ActionResultText.truncate(output, limit: ActionResultText.modelLimit)
             }
             if spec.risk.meansChange { run.invalidateObservations() }
-            if cacheable { run.toolResults[cacheKey] = .init(output: output, mutating: spec.risk.meansChange) }
+            if cacheable {
+                let reopensApp = spec.serverID == NativeOpenAction.serverID && spec.toolName == "open_app"
+                run.toolResults[cacheKey] = .init(output: output, mutating: spec.risk.meansChange,
+                                                  idempotent: !spec.risk.meansChange || reopensApp)
+            }
             if spec.serverID == NativeOpenAction.serverID, spec.toolName == "open_app", let launched = NativeLaunchedApp(summary: output) {
                 run.openedApps.removeAll { $0.processIdentifier == launched.processIdentifier }
                 run.openedApps.append(launched)
@@ -767,6 +762,7 @@ final class AgentSessionController: ObservableObject {
         runTask = nil
         deadlineTask?.cancel()
         deadlineTask = nil
+        run.handoff?.cancelSteps()
         let cancellations = Array(run.cancelOperations.values)
         run.cancelOperations.removeAll()
         for cancel in cancellations { cancel() }
@@ -789,7 +785,6 @@ final class AgentSessionController: ObservableObject {
         agentLog.info("Action session finished: \(String(describing: phase), privacy: .private)")
         if !queue.isEmpty {
             let next = queue.removeFirst()
-            // Automatic handoffs keep failures visible until dismissal or a new command starts from idle.
             startCommand(next.text, handoff: next.handoff)
         }
     }
@@ -802,6 +797,8 @@ final class AgentSessionController: ObservableObject {
         init(limit: Int) {
             self.limit = limit
         }
+
+        var remaining: Int { max(0, limit - used) }
 
         func consume() -> Bool {
             guard used < limit else { return false }

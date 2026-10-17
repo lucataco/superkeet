@@ -88,7 +88,7 @@ struct ActionsTabView: View {
 
                 Section {
                     Toggle(isOn: $settings.actionAuditEnabled) {
-                        rowLabel("Keep Action Log", "Record tool calls locally for review")
+                        rowLabel("Keep Action Log", "Record tool calls locally for review. Reads are logged by size, not content")
                     }
                 } header: {
                     Text("Safety")
@@ -289,7 +289,6 @@ struct ActionsTabView: View {
             get: { server.enabled },
             set: { enabled in
                 store.setEnabled(enabled, for: server.id)
-                // Connect now so the first command does not pay for the server's cold start.
                 guard enabled, settings.actionsEnabled, !manager.state(for: server.id).isConnected else { return }
                 Task { await manager.connect(server) }
             }
@@ -399,7 +398,7 @@ struct MCPServerDraft {
         self.id = server.id
         self.name = server.name
         self.command = server.command
-        self.argsText = server.args.joined(separator: " ")
+        self.argsText = MCPArgumentParser.join(server.args)
         self.envText = server.env
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value)" }
@@ -413,7 +412,7 @@ struct MCPServerDraft {
             id: id ?? UUID(),
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             command: command.trimmingCharacters(in: .whitespacesAndNewlines),
-            args: argsText.split(whereSeparator: \.isWhitespace).map(String.init),
+            args: MCPArgumentParser.split(argsText),
             env: MCPEnvironmentParser.parse(envText),
             enabled: enabled,
             transport: transport

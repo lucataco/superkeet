@@ -1,8 +1,6 @@
 import XCTest
 @testable import Superkeet
 
-/// Spoken commands arrive punctuated and wrapped in filler. These tests pin down how sentence
-/// ends, acknowledgements, and trailing politeness are kept out of arguments and steps.
 final class CommandFillerTests: XCTestCase {
     func testSentencesSplitIntoSteps() {
         XCTAssertEqual(CommandClauses.split("Open Discord. Open Notes. Open Helium."), ["Open Discord", "Open Notes", "Open Helium"])

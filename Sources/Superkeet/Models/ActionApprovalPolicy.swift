@@ -65,9 +65,6 @@ enum ActionApprovalPolicy: String, CaseIterable, Identifiable {
         requiresApproval(for: spec.risk) && !(self == .readOnlyAuto && spec.approvalExempt)
     }
 
-    /// Flips the menu bar "Auto-Approve Actions" checkbox. Turning it on remembers which asking
-    /// policy was active so turning it off restores that choice instead of silently downgrading
-    /// "Ask Before Every Tool" to "Only Ask Before Changes".
     static func togglingAutoApprove(
         current: ActionApprovalPolicy,
         remembered: ActionApprovalPolicy?

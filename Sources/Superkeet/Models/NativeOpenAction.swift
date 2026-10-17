@@ -27,8 +27,6 @@ enum NativeOpenAction: Equatable, Sendable {
     static let maximumTypedCharacters = 4_000
     static let maximumAppNameWords = 6
 
-    /// Six words is already generous for an app name; anything longer is the rest of the
-    /// sentence, and resolving it would only waste a scan before the planner takes over.
     static func isPlausibleAppName(_ name: String) -> Bool {
         let words = AppResolver.normalizedName(name).split(whereSeparator: \.isWhitespace)
         return !words.isEmpty && words.count <= maximumAppNameWords
@@ -50,8 +48,6 @@ enum NativeOpenAction: Equatable, Sendable {
         """#)
     ]
 
-    /// The tool this action runs as. Approval exemption is decided per action: opening an app or
-    /// URL never asks under the default policy, and neither do the harmless ⌘N / ⌘T shortcuts.
     var spec: ActionToolSpec {
         var spec: ActionToolSpec
         switch self {
@@ -64,7 +60,6 @@ enum NativeOpenAction: Equatable, Sendable {
         return spec
     }
 
-    /// Shortcuts that only create something new and can always be undone by closing it.
     static let benignShortcuts: Set<KeyboardShortcut> = Set([["cmd", "n"], ["cmd", "t"], ["return"]].compactMap { KeyboardShortcut(keys: $0) })
 
     /// Typing the words the user just dictated into the app they named is what they asked for,
@@ -74,6 +69,13 @@ enum NativeOpenAction: Equatable, Sendable {
         case .openApp, .openURL, .typeText: return true
         case .pressShortcut(_, let shortcut): return Self.benignShortcuts.contains(shortcut)
         }
+    }
+
+    /// The model can be steered by a web page or tool result, so the typing, keys and URLs it
+    /// picks itself always ask; only opening an installed app stays free.
+    var isApprovalExemptWhenChosenByModel: Bool {
+        if case .openApp = self { return true }
+        return false
     }
 
     var toolName: String {
@@ -167,7 +169,6 @@ enum NativeOpenAction: Equatable, Sendable {
         return components.url
     }
 
-    /// A search-engine URL for a spoken query; nil only when the query is empty.
     static func webSearchURL(for query: String) -> URL? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, var components = URLComponents(string: webSearchBase) else { return nil }
@@ -175,7 +176,6 @@ enum NativeOpenAction: Equatable, Sendable {
         return components.url
     }
 
-    /// The query behind a search URL made by `webSearchURL(for:)`, for readable summaries.
     static func webSearchQuery(from urlString: String) -> String? {
         guard let components = URLComponents(string: urlString), let host = components.host?.lowercased(),
               host == "www.google.com" || host == "google.com", components.path == "/search",
@@ -195,8 +195,6 @@ enum NativeOpenAction: Equatable, Sendable {
             guard isPlausibleAppName(name) else { return nil }
             return .openApp(name: name)
         case .switchApp:
-            // Opening a running app brings it forward (and restores minimized windows), so a switch
-            // is just an open that happens to find the app already running.
             guard intent.app != nil, !CommandClauses.hasSequence(goal),
                   let captured = captures(#"\A(?:switch(?: over)? to|activate|bring up|go to) (.+)\z"#, in: goal)?.first else { return nil }
             let name = CommandLeadIn.stripTrailing(captured)

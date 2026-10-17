@@ -20,7 +20,6 @@ enum MicrophoneAccess {
         }
     }
 
-    /// Returns whether recording may proceed, prompting once if the user hasn't decided yet.
     static func ensureAccess(
         status: () -> AVAuthorizationStatus = { AVCaptureDevice.authorizationStatus(for: .audio) },
         requestAccess: () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }

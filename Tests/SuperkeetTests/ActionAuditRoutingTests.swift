@@ -94,7 +94,22 @@ final class ActionAuditRoutingTests: XCTestCase {
         XCTAssertTrue(entry.arguments.contains("catacolabs.com"))
         XCTAssertTrue(entry.arguments.contains("DNS records"))
         XCTAssertFalse(entry.arguments.contains("fixture-secret"))
-        XCTAssertEqual(entry.detail, "ordinary tool result")
+        XCTAssertEqual(entry.detail, "Returned 20 characters.")
+    }
+
+    func testReadResultsStayOutOfTheLogButChangeSummariesStay() {
+        func spec(_ name: String, _ risk: ActionToolRisk) -> ActionToolSpec {
+            ActionToolSpec(descriptor: MCPToolDescriptor(serverID: UUID(), serverName: "fixture", name: name,
+                title: nil, description: nil, risk: risk, inputSchemaJSON: "{}"))
+        }
+        let copied = "hunter2-from-1password"
+        XCTAssertEqual(ActionObservationPolicy.auditDetail(for: spec("clipboard_read", .readOnly), output: copied, structured: false),
+                       "Returned 22 characters.")
+        XCTAssertEqual(ActionObservationPolicy.auditDetail(for: spec("evaluate_script", .mutating), output: copied, structured: false),
+                       "Returned 22 characters.", "Script output is page content whatever its risk.")
+        XCTAssertEqual(ActionObservationPolicy.auditDetail(for: spec("get_state", .readOnly), output: "", structured: false), "Returned nothing.")
+        XCTAssertEqual(ActionObservationPolicy.auditDetail(for: spec("click", .mutating), output: "Clicked Save", structured: false), "Clicked Save")
+        XCTAssertNil(ActionObservationPolicy.auditDetail(for: spec("get_window_state", .readOnly), output: copied, structured: true))
     }
 
     func testCompactObservationRequestsStructuredContentSkipsScreenshotsAndReturnsItWhole() async throws {

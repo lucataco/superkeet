@@ -39,7 +39,7 @@ final class InstalledAppInventory: ObservableObject {
             let started = ContinuousClock.now
             let resolver = makeResolver().memoized()
             let count = resolver.installedApplicationNames().count
-            inventoryLog.info("Scanned \(count) installed apps in \(started.duration(to: .now))")
+            inventoryLog.info("Scanned \(count) installed apps in \(started.duration(to: .now), privacy: .public)")
             await self?.finishRefresh(with: resolver)
         }
     }
@@ -67,8 +67,6 @@ final class InstalledAppInventory: ObservableObject {
         return resolver?.resolve(name, bundleLookup: bundleLookup)
     }
 
-    /// What the live-speech detectors resolve with: an exact name, or else a single installed app
-    /// whose name is spelled almost the same (the recogniser mishearing a word).
     func resolveWhileSpeaking(_ name: String) -> URL? {
         dispatchPrecondition(condition: .onQueue(.main))
         return resolve(name) ?? resolver?.uniqueNearMatch(name)

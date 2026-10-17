@@ -74,19 +74,26 @@ struct InstantAppLaunchSettingsView: View {
     private var statusText: String {
         guard settings.actionsEnabled else { return "Turn on Actions Mode to use instant launches." }
         guard settings.instantAppLaunchEnabled else { return "Off. Apps open only after the full command is transcribed and approved." }
+        guard settings.actionApprovalPolicy != .alwaysAsk else {
+            return "Paused while Ask Before Every Tool is on. Apps open after you approve them."
+        }
         guard let availability else { return "Checking the speech recogniser…" }
         if let message = availability.userFacingMessage { return message }
         let via = recognizerName.map { " Interim text comes from \($0)." } ?? ""
         return "Ready. Apps open about a second after you say their name.\(via)"
     }
 
+    private var isActive: Bool {
+        settings.actionsEnabled && settings.instantAppLaunchEnabled && settings.actionApprovalPolicy != .alwaysAsk
+    }
+
     private var statusSymbol: String {
-        guard settings.actionsEnabled, settings.instantAppLaunchEnabled, let availability else { return "info.circle" }
+        guard isActive, let availability else { return "info.circle" }
         return availability.isAvailable ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
     }
 
     private var statusColor: Color {
-        guard settings.actionsEnabled, settings.instantAppLaunchEnabled, let availability else { return .secondary }
+        guard isActive, let availability else { return .secondary }
         return availability.isAvailable ? .green : .orange
     }
 

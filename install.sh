@@ -182,7 +182,6 @@ SIGN_ARGS=(--force --sign "$CODESIGN_IDENTITY" --options runtime)
 if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
     :
 elif [[ "$AUTO_IDENTITY" == 1 ]]; then
-    # A local development install needs no trusted timestamp (and no network round-trip for one).
     SIGN_ARGS+=(--timestamp=none)
 else
     SIGN_ARGS+=(--timestamp)

@@ -83,6 +83,16 @@ final class AudioLevelMonitorTests: XCTestCase {
         XCTAssertFalse(AudioInputDeviceResolver.namesMatch("USB Microphone", "USB"))
     }
 
+    func testDeviceNamesSurviveRepeatedLookups() {
+        // Core Audio hands each name over retained; releasing it once too often would crash here.
+        let names = AudioInputDeviceResolver.availableDeviceNames()
+        for _ in 0..<200 {
+            autoreleasepool {
+                XCTAssertEqual(AudioInputDeviceResolver.availableDeviceNames(), names)
+            }
+        }
+    }
+
     private func makeBuffer(sampleValue: Float) throws -> AVAudioPCMBuffer {
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024))

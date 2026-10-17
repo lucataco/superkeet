@@ -4,7 +4,6 @@ enum CommandTranscriptDelivery: Equatable {
     case dictation
     case command(String)
     case empty
-    /// Speech that was only a reaction ("Great. Okay, thanks."): nothing to run, nothing to report.
     case ignored
     case failure(String)
 

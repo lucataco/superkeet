@@ -14,19 +14,14 @@ struct ObservationBinding: Equatable, Sendable {
     var pid: Int?
     var windowID: Int?
     var snapshotID: String?
-    /// A session label the server issued, used only without a per-command label.
     var session: String?
-    /// Superkeet's own label for every tool accepting a session in this command.
     var sessionLabel: String?
     var elementTokens: [Int: String] = [:]
-    /// Frontmost window per process, from `list_windows`.
     var windowsByPID: [Int: Int] = [:]
     var observedWindowsByPID: [Int: Set<Int>] = [:]
     var frontmost: WindowRef?
-    /// The active app from `list_apps`.
     var activePID: Int?
 
-    /// Learns from a structured observation result. Results of unknown shape leave the binding as it was.
     mutating func absorb(resultJSON: String, toolName: String) {
         guard let data = resultJSON.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
@@ -60,7 +55,6 @@ struct ObservationBinding: Equatable, Sendable {
     }
 
     private mutating func absorbWindows(_ windows: [[String: Any]]) {
-        // On-screen windows rank above off-screen ones; among those, the highest z-index is in front.
         var best: [Int: (windowID: Int, rank: Int)] = [:]
         var top: (ref: WindowRef, rank: Int)?
         for window in windows {
@@ -85,8 +79,6 @@ struct ObservationBinding: Equatable, Sendable {
         "sk-" + UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "").prefix(8)
     }
 
-    /// The pid whose window the call needs but Superkeet has not seen: the caller can fetch the
-    /// window list for it and complete the arguments again.
     func missingWindowPID(argumentsJSON: String, schemaJSON: String) -> Int? {
         guard let schemaData = schemaJSON.data(using: .utf8),
               let schema = try? JSONSerialization.jsonObject(with: schemaData) as? [String: Any],
@@ -98,9 +90,6 @@ struct ObservationBinding: Equatable, Sendable {
         return pid
     }
 
-    /// Fills in what the call needs and the model did not, or could not, supply. `currentPID` is
-    /// the app the command is acting in; it wins over stale observations unless the call names an
-    /// element, which belongs to the window the snapshot came from.
     func completing(argumentsJSON: String, schemaJSON: String, currentPID: Int?, toolName: String = "") -> String {
         guard let schemaData = schemaJSON.data(using: .utf8),
               let schema = try? JSONSerialization.jsonObject(with: schemaData) as? [String: Any],
@@ -133,7 +122,6 @@ struct ObservationBinding: Equatable, Sendable {
         let suppliedWindow = ActionJSON.integer(arguments["window_id"])
         let observedWindow = resolvedPID.flatMap { observedWindowsByPID[$0] }?.contains(suppliedWindow ?? 0) == true
         if accepts.contains("window_id"), let suppliedWindow, suppliedWindow > 0, !observedWindow {
-            // Leave it missing for the controller to fetch a fresh list before choosing a window.
             arguments.removeValue(forKey: "window_id")
         } else if accepts.contains("window_id"), !observedWindow {
             var candidate: Int?
@@ -167,17 +155,13 @@ struct ObservationBinding: Equatable, Sendable {
 }
 
 enum ObservationHandles {
-    /// Properties Superkeet manages on the model's behalf. They are removed from the schema the
-    /// model sees, so it cannot invent them, and filled in from the binding before the call.
     static let hidden: Set<String> = [
         "session", "element_token", "snapshot_id", "delivery_mode", "from_zoom", "debug_image_out",
         "capture_mode", "max_dimension", "screenshot_out_file"
     ]
 
-    /// Hidden properties that never get a value from Superkeet either; they are stripped.
     static let modelNeverSets: Set<String> = ["delivery_mode", "from_zoom", "debug_image_out", "capture_mode", "max_dimension", "screenshot_out_file"]
 
-    /// Whether a tool takes any handle Superkeet fills in, so the planner can be told so.
     static func managesHandles(in schemaJSON: String) -> Bool {
         guard let data = schemaJSON.data(using: .utf8),
               let schema = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

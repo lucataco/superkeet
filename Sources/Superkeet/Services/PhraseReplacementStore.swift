@@ -20,7 +20,7 @@ final class PhraseReplacementStore: ObservableObject, @unchecked Sendable {
             // Never let the next save silently replace a file we couldn't read: back it up first.
             storeFile.needsRecoveryBackup = true
             errorMessage = "Could not load phrase replacements. The original file will be preserved before any changes are saved. \(error.localizedDescription)"
-            log.error("Failed to load phrase replacements: \(error.localizedDescription)")
+            log.error("Failed to load phrase replacements: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -34,7 +34,7 @@ final class PhraseReplacementStore: ObservableObject, @unchecked Sendable {
             errorMessage = backup.map { "Earlier phrase replacements could not be loaded. The original file is preserved at \($0.path)." }
         } catch {
             errorMessage = "Could not save phrase replacements: \(error.localizedDescription)"
-            log.error("Failed to save phrase replacements: \(error.localizedDescription)")
+            log.error("Failed to save phrase replacements: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

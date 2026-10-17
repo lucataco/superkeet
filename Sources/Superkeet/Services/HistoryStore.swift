@@ -78,7 +78,7 @@ final class HistoryStore: ObservableObject, @unchecked Sendable {
         } catch {
             storeFile.needsRecoveryBackup = true
             persistenceIssue = "Could not load history. The original file will be preserved before any new history is saved. \(error.localizedDescription)"
-            historyLog.error("Failed to load history: \(error.localizedDescription)")
+            historyLog.error("Failed to load history: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -93,7 +93,7 @@ final class HistoryStore: ObservableObject, @unchecked Sendable {
             recoveryBackupURL = backup
             persistenceIssue = backup.map { "Earlier history could not be loaded. Its original file is preserved at \($0.path)." }
         case .failure(let error):
-            historyLog.error("Failed to save history: \(error.localizedDescription)")
+            historyLog.error("Failed to save history: \(error.localizedDescription, privacy: .public)")
             persistenceIssue = "Could not save history: \(error.localizedDescription)"
         }
     }

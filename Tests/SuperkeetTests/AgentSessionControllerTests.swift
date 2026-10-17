@@ -13,6 +13,7 @@ final class AgentSessionControllerTests: XCTestCase {
         var executionGates: [ActionTestGate<String>] = []
         private(set) var executed: [String] = []
         private(set) var arguments: [String] = []
+        private(set) var dictated: [Bool] = []
         private(set) var prepareCount = 0
         private(set) var plans: [ActionPlanApprovalRequest] = []
         private(set) var cancelledApprovals = 0
@@ -34,8 +35,13 @@ final class AgentSessionControllerTests: XCTestCase {
         }
 
         func execute(spec: ActionToolSpec, argumentsJSON: String) async throws -> String {
+            try await execute(spec: spec, argumentsJSON: argumentsJSON, dictated: false)
+        }
+
+        func execute(spec: ActionToolSpec, argumentsJSON: String, dictated: Bool) async throws -> String {
             executed.append(spec.toolName)
             arguments.append(argumentsJSON)
+            self.dictated.append(dictated)
             if let failure { throw failure }
             if executed.count <= executionGates.count { return try await executionGates[executed.count - 1].wait() }
             return outputs[spec.toolName] ?? "tool-output"
@@ -548,6 +554,7 @@ final class AgentSessionControllerTests: XCTestCase {
         await waitUntilFinished(controller)
 
         XCTAssertEqual(router.executed, ["open_app", "press_shortcut"])
+        XCTAssertEqual(router.dictated, [true, true], "Both steps come straight from the user's words.")
         XCTAssertEqual(try NativeOpenAction.decode(toolName: "press_shortcut", argumentsJSON: XCTUnwrap(router.arguments.last)),
                        .pressShortcut(app: "Notes", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))))
         XCTAssertFalse(plannerCreated, "Both steps are deterministic; no model is needed.")
@@ -556,6 +563,22 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.activityLog.filter { $0.hasPrefix("Step ") }, ["Step 1 of 2: open the notes app", "Step 2 of 2: create a new note"])
         XCTAssertTrue(controller.activityLog.contains("Using ⌘N to create a new note in Notes"))
         XCTAssertEqual(controller.stepIndex, 2)
+    }
+
+    func testRepeatedChangeInALaterStepRunsAgain() async throws {
+        let router = FakeRouter(specs: [])
+        router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        router.outputs["open_app"] = NativeLaunchedApp(name: "Notes", bundleIdentifier: "com.apple.Notes", processIdentifier: 91, windowReady: true).summary
+        router.outputs["press_shortcut"] = "Pressed ⌘N in Notes (pid 91)."
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                resolveApp: { [self] in fixtureResolver($0) })
+        controller.handleCommand("open the notes app and create a new note and open the notes app and create a new note")
+        await waitUntilFinished(controller)
+
+        XCTAssertEqual(router.executed, ["open_app", "press_shortcut", "press_shortcut"],
+                       "The second ⌘N is a new request; reopening an app that is already open is not.")
+        XCTAssertEqual(controller.activityLog.filter { $0 == "Reused Open App" }.count, 1)
+        if case .finished = controller.phase {} else { XCTFail("Expected success, got \(controller.phase)") }
     }
 
     func testSpeculativeLaunchSkipsTheOpenStepAndTheShortcutGoesToThatApp() async throws {
@@ -1144,6 +1167,7 @@ final class AgentSessionControllerTests: XCTestCase {
         await waitUntilFinished(controller)
 
         XCTAssertEqual(router.executed.count, 1, "Identical tool calls should be reused, not re-run.")
+        XCTAssertEqual(router.dictated, [false], "The model's own calls never inherit the dictated exemption.")
         XCTAssertEqual(controller.phase, .finished("done"))
         XCTAssertTrue(controller.activityLog.contains { $0.hasPrefix("Reused") })
     }
@@ -1236,11 +1260,14 @@ final class AgentSessionControllerTests: XCTestCase {
 
     func testStepBudgetStopsAtItsLimit() {
         let budget = AgentSessionController.StepBudget(limit: 3)
+        XCTAssertEqual(budget.remaining, 3)
         XCTAssertTrue(budget.consume())
+        XCTAssertEqual(budget.remaining, 2)
         XCTAssertTrue(budget.consume())
         XCTAssertTrue(budget.consume())
         XCTAssertFalse(budget.consume())
         XCTAssertEqual(budget.used, 3)
+        XCTAssertEqual(budget.remaining, 0)
     }
 
     func testSimpleOpenSkipsPlannerAndMCPPreparation() async throws {

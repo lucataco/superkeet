@@ -58,7 +58,6 @@ final class ActionAuditStoreTests: XCTestCase {
             XCTAssertLessThanOrEqual(store.entries().count, 3, "never exceeds the limit")
         }
 
-        // Pruning keeps a contiguous run of the newest entries.
         let names = store.entries().map(\.toolName)
         XCTAssertEqual(names.last, "tool5")
         XCTAssertEqual(names, (6 - names.count..<6).map { "tool\($0)" })

@@ -1,18 +1,19 @@
 import SwiftUI
 
-/// The recording dot's breathing animation. Held still when the user has Reduce Motion on.
 struct RecordingPulse: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The overlay is inserted already recording, so `isRecording` never changes while it is on
+    /// screen. Flipping this on appear gives the repeating animation a change to start from.
+    @State private var appeared = false
     let isRecording: Bool
     let scale: CGFloat
 
     func body(content: Content) -> some View {
+        let pulsing = appeared && isRecording && !reduceMotion
         content
-            .scaleEffect(isRecording && !reduceMotion ? scale : 1.0)
-            .animation(
-                reduceMotion ? nil : .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                value: isRecording
-            )
+            .scaleEffect(pulsing ? scale : 1.0)
+            .animation(pulsing ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .easeOut(duration: 0.2), value: pulsing)
+            .onAppear { appeared = true }
     }
 }
 

@@ -13,8 +13,6 @@ struct HomeTabView: View {
     @ObservedObject var modelProvisioning = ModelProvisioning.shared
 
     @State private var editingHotkey: EditingHotkey?
-    // Populated in onAppear; probing CoreAudio/AX/filesystem in the initializer would run on
-    // every tab switch and every parent re-render.
     @State private var readiness = AppReadinessReport.placeholder
     @State private var loginItemError: String?
     @State private var shortcutError: String?
@@ -107,7 +105,6 @@ struct HomeTabView: View {
             refreshReadiness()
         }
         .onChange(of: modelProvisioning.state.phase) {
-            // Re-probe only on state transitions, not on every download progress tick.
             refreshReadiness()
         }
         .alert("Re-download the speech model?", isPresented: $confirmRedownload) {
@@ -631,6 +628,12 @@ struct HomeTabView: View {
             editingHotkey = nil
             return false
         }
+        if let reserved = reservedShortcutName(keyCode: keyCode, modifiers: modifiers) {
+            let name = displayNameForHotkey(keyCode: keyCode, modifierFlags: modifiers)
+            shortcutError = "\(name) is the standard shortcut for \(reserved). Superkeet would take it over in every app; pick another."
+            editingHotkey = nil
+            return false
+        }
         let conflict = assignedShortcuts(excluding: slot).contains { assigned in
             hotkeyAssignmentsConflict(
                 firstKeyCode: keyCode,
@@ -656,7 +659,7 @@ struct HomeTabView: View {
             }
             loginItemError = nil
         } catch {
-            homeTabLog.error("Failed to update login item: \(error.localizedDescription)")
+            homeTabLog.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
             loginItemError = "Failed to update login item. Make sure you're running the installed .app bundle."
         }
     }
@@ -670,7 +673,7 @@ struct HomeTabView: View {
                     try await parakeetService.startDaemon()
                 }
             } catch {
-                homeTabLog.error("Failed to verify setup: \(error.localizedDescription)")
+                homeTabLog.error("Failed to verify setup: \(error.localizedDescription, privacy: .public)")
             }
             refreshReadiness()
         }

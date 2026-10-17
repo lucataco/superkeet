@@ -122,7 +122,6 @@ struct HistoryView: View {
                     }
                     .padding(.vertical, 4)
                 }
-                // Hidden ⌘C target so the selected row copies like any other list.
                 .background {
                     Button("Copy") {
                         if let selectedRecord { copy(selectedRecord) }

@@ -92,8 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.completeOnboarding()
             },
             onClose: { [weak self] in
-                // Closing Setup without finishing counts as "skip": start services anyway so the
-                // menu bar app is fully functional. Setup can be re-run from the menu.
                 appLog.info("Setup window closed before completion — skipping setup")
                 self?.completeOnboarding(closeWindow: false)
             }
@@ -119,11 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyManager.startRetryTimer()
         }
         Task { await SpeculativeLaunchCoordinator.shared.prepare() }
-        // Connect enabled MCP servers now rather than on the first command, so a cold `npx` start
-        // is not on the critical path of the first action.
         Task { await MCPClientManager.shared.connectEnabledServersIfNeeded() }
-        // Build the level-meter audio graph once startup has settled so the first recording's
-        // overlay appears without paying for HAL setup on the hot path.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             MicrophoneTapHub.shared.prewarm()
         }
@@ -138,9 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch is CancellationError {
                 appLog.info("Parakeet daemon start cancelled")
             } catch {
-                appLog.error("Failed to start daemon: \(error.localizedDescription)")
+                appLog.error("Failed to start daemon: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
-                    // Don't block quit with a modal, and don't report a failure caused by quitting.
                     guard !self.isTerminating else { return }
                     let alert = NSAlert()
                     alert.messageText = "Failed to start Parakeet"
@@ -205,7 +198,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return source
     }
 
-    /// Runs shutdown cleanup once, no matter how many quit paths (menu, SIGINT, SIGTERM) request it.
     private func shutdown() async {
         if let shutdownTask {
             await shutdownTask.value
@@ -216,8 +208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await task.value
     }
 
-    /// Races cleanup against a hard deadline so quitting can never hang (e.g. on a stuck model
-    /// download or an unresponsive engine). On timeout the engine is SIGKILLed so it isn't orphaned.
     private func performShutdownCleanupWithDeadline() async {
         let gate = ShutdownGate()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -251,8 +241,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// One-shot flag used to resume the shutdown continuation exactly once. Main-actor isolated, so
-/// no locking is needed.
 @MainActor
 private final class ShutdownGate {
     private var claimed = false

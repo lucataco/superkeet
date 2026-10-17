@@ -127,7 +127,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
     }
 
     func testANameThatIsAPrefixOfAnotherAppWaitsEvenWithoutASpace() {
-        // "Note" while "Notes" is installed: the recogniser may still be mid-word.
         var waiting = SpeculativeIntentDetector(environment: environment(installed: ["Note", "Notes", "Discord"]))
         XCTAssertNil(feed(&waiting, ["Open Note", "Open Note app"]))
         let settled = waiting.observe(PartialTranscript(text: "Open Note and", isFinal: false, sequence: 3))

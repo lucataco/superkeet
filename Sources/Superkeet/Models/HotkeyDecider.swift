@@ -1,8 +1,6 @@
 import CoreGraphics
 import Foundation
 
-/// Everything the hotkey state machine needs to know about the app, captured as a value so the
-/// event tap can evaluate keystrokes off the main thread without touching main-actor state.
 struct HotkeyConfig: Equatable, Sendable {
     var toggleKeyCode: Int
     var toggleModifiers: Int
@@ -15,14 +13,12 @@ struct HotkeyConfig: Equatable, Sendable {
     var actionsEnabled: Bool
     var isRecording: Bool
     var isActionSessionActive: Bool
-    /// A shortcut recorder is open; every key belongs to it.
     var captureActive: Bool
 
     static let fnKeyCode = 63
     static let escapeKeyCode = 53
 }
 
-/// Something the app should do in response to a keystroke. Performed on the main thread.
 enum HotkeyAction: Equatable, Sendable {
     case escape
     case toggle
@@ -34,7 +30,6 @@ enum HotkeyAction: Equatable, Sendable {
 }
 
 struct HotkeyDecision: Equatable, Sendable {
-    /// Whether the keystroke is swallowed so the focused app never sees it.
     var consume: Bool
     var actions: [HotkeyAction]
 
@@ -52,8 +47,6 @@ struct HotkeyDecider: Sendable {
     private(set) var commandPTTKeyDown = false
     private(set) var fnKeyDown = false
 
-    /// Releases a held push-to-talk key, e.g. when a shortcut recorder opens or the tap is disabled
-    /// mid-press. Returns the actions needed to stop the recordings those keys started.
     mutating func releasePushToTalk() -> [HotkeyAction] {
         fnKeyDown = false
         var actions: [HotkeyAction] = []

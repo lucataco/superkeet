@@ -25,7 +25,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @Published var lastDiagnosticsSummary: String?
     @Published var startupStatusDetail: String?
     @Published private(set) var daemonProtocolVersion: Int?
-    /// Fires once per finished take so the overlay can confirm what happened to the text.
     @Published private(set) var lastOutcome: TranscriptOutcomeEvent?
 
     static let supportedProtocolVersions: Set<Int> = [1, 2]
@@ -54,8 +53,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private var outputGate = TranscriptSessionGate()
     private var recordingDuration: TimeInterval = 0
     private var completionTimeout: DispatchWorkItem?
-    /// Auto-stops a take that was left running (e.g. a forgotten toggle) so the mic isn't held
-    /// open indefinitely and the take stays within the engine's transcription limits.
     static let maxRecordingDuration: TimeInterval = 15 * 60
     private var maxDurationStop: DispatchWorkItem?
     private var startRequestPending = false
@@ -333,8 +330,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             throw error
         }
 
-        // Reuse the pre-launch readiness scan; the only thing that can change during startup is
-        // the model install state, which we know succeeded if we got here.
         let finalReadiness = readiness.needsModelDownload
             ? AppReadiness.current(settings: settings)
             : readiness
@@ -406,7 +401,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         let process = lifecycleLock.withLock { daemonProcess }
         if let process, process.isRunning {
             sendSocketCommand("shutdown")
-            // Poll for a graceful exit instead of sleeping a fixed interval; escalate only if needed.
             if !(await waitForProcessToExit(process, timeoutNanoseconds: 1_000_000_000)) {
                 await terminateRunningProcess(process)
             }
@@ -447,14 +441,11 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     }
 
     enum EngineRestartRequest: Equatable {
-        /// The engine isn't running; the new setting is picked up at the next start.
         case notNeeded
         case restarting
         case deferredUntilIdle
     }
 
-    /// Restarts the engine so it picks up a launch-time setting, without interrupting a take: if
-    /// the engine is busy the restart runs as soon as it returns to idle.
     @MainActor
     @discardableResult
     func requestEngineRestartForSettingsChange() -> EngineRestartRequest {
@@ -476,7 +467,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         guard pendingEngineRestart else { return }
         switch daemonState {
         case .stopped:
-            // A stopped engine reads the new setting on its next start.
             pendingEngineRestart = false
         case .idle:
             pendingEngineRestart = false
@@ -501,7 +491,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             } catch is CancellationError {
                 return
             } catch {
-                parakeetLog.error("Engine restart after settings change failed: \(error.localizedDescription)")
+                parakeetLog.error("Engine restart after settings change failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
                     self.settings.runtimeIssue = "Couldn't restart the speech engine with the new settings: \(error.localizedDescription)"
                 }
@@ -531,7 +521,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         try? FileManager.default.removeItem(atPath: socketPath)
         try? FileManager.default.removeItem(atPath: pidPath)
 
-        // Only give the kernel time to release the socket if we actually tore down a process.
         if killedStaleProcess {
             try? await Task.sleep(for: .milliseconds(200))
         }
@@ -573,14 +562,15 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         let wantsInterim = commandModeArmed && daemonStreamsInterimText && speculation.wantsInterimTranscripts()
         let response = await sendSocketCommandAsync("start", sessionID: sessionID, partials: wantsInterim)
         guard outputGate.sessionID == sessionID else { return false }
-        guard let envelope = decodeSocketResponse(response ?? ""),
-              envelope.status == "ok",
-              envelope.state == "recording",
-              envelope.sessionID == sessionID else {
-            let message = "Couldn't start recording — is the speech engine running?"
+        let reply = EngineReply(decoding: response)
+        guard let reply, reply.isOK, reply.state == "recording", reply.sessionID == sessionID else {
             parakeetLog.error("start command failed: \(response ?? "nil", privacy: .public)")
-            failSession(message)
-            stopDaemon()
+            if let reason = reply?.rejection {
+                failSession("Couldn't start recording: \(reason)")
+                return false
+            }
+            failSession("Couldn't start recording — is the speech engine running?")
+            stopUnresponsiveEngine()
             return false
         }
 
@@ -610,8 +600,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + limit, execute: work)
     }
 
-    /// `keepMicWarm` is for a listening session about to start its next take: the engine keeps
-    /// the microphone open, so words spoken while this take finishes land in the next one.
     @MainActor
     func stopRecording(keepMicWarm: Bool = false) {
         maxDurationStop?.cancel()
@@ -625,14 +613,15 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         sendSocketCommand("stop", sessionID: sessionID, keepWarm: keepMicWarm) { [weak self] response in
             DispatchQueue.main.async {
                 guard let self, self.outputGate.sessionID == sessionID else { return }
-                guard let envelope = self.decodeSocketResponse(response),
-                       envelope.status == "ok", envelope.sessionID == sessionID else {
-                    parakeetLog.error("stop command failed: \(response, privacy: .public)")
-                    let message = "Couldn't confirm stop with the speech engine. Try recording again."
-                    self.failSession(message)
-                    self.stopDaemon()
+                let reply = EngineReply(decoding: response)
+                if let reply, reply.isOK, reply.sessionID == sessionID { return }
+                if let reason = reply?.rejection {
+                    parakeetLog.warning("stop was refused (\(reason, privacy: .public)); waiting for the session to complete")
                     return
                 }
+                parakeetLog.error("stop command failed: \(response, privacy: .public)")
+                self.failSession("Couldn't confirm stop with the speech engine. Try recording again.")
+                self.stopUnresponsiveEngine()
             }
         }
     }
@@ -655,23 +644,22 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let cancelResponse = await self.sendSocketCommandAsync("cancel", sessionID: sessionID)
-            guard let cancelEnvelope = self.decodeSocketResponse(cancelResponse ?? ""), cancelEnvelope.status == "ok" else {
+            guard let cancelReply = EngineReply(decoding: cancelResponse) else {
                 parakeetLog.error("cancel command failed: \(cancelResponse ?? "nil", privacy: .public)")
-                self.stopDaemon()
+                self.stopUnresponsiveEngine()
                 return
             }
+            if let reason = cancelReply.rejection {
+                parakeetLog.info("cancel was refused (\(reason, privacy: .public)); checking engine status")
+            }
 
-            // Confirm the engine is back at idle before reusing it. The cancel reply always reports
-            // "transcribing" (the engine flips the phase before its worker drains the audio), and
-            // older engines omit `state` entirely, so probe status for a moment and restart only
-            // if the engine is genuinely stuck.
-            var engineState = cancelEnvelope.state
+            var engineState = cancelReply.isOK ? cancelReply.state : nil
             var polls = 0
             while case .poll(let delay) = EngineCancelPolicy.nextStep(engineState: engineState, polls: polls) {
                 if let delay { try? await Task.sleep(for: delay) }
                 guard self.daemonState == .transcribing, self.outputGate.sessionID == nil else { return }
                 let statusResponse = await self.sendSocketCommandAsync("status")
-                engineState = self.decodeSocketResponse(statusResponse ?? "")?.state
+                engineState = EngineReply(decoding: statusResponse)?.state
                 polls += 1
             }
             guard self.daemonState == .transcribing, self.outputGate.sessionID == nil else { return }
@@ -685,7 +673,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 } catch is CancellationError {
                     return
                 } catch {
-                    parakeetLog.error("Engine restart after a stuck cancel failed: \(error.localizedDescription)")
+                    parakeetLog.error("Engine restart after a stuck cancel failed: \(error.localizedDescription, privacy: .public)")
                     self.settings.runtimeIssue = "The speech engine got stuck and couldn't restart: \(error.localizedDescription)"
                 }
             }
@@ -727,24 +715,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private struct SocketCommandResult: Sendable {
         let response: String?
         let runtimeIssue: String?
-    }
-
-    private struct SocketResponseEnvelope: Decodable {
-        let status: String
-        let state: String?
-        let sessionID: String?
-        let protocolVersion: Int?
-
-        enum CodingKeys: String, CodingKey {
-            case status, state
-            case sessionID = "session_id"
-            case protocolVersion = "protocol_version"
-        }
-    }
-
-    private func decodeSocketResponse(_ response: String) -> SocketResponseEnvelope? {
-        guard let data = response.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(SocketResponseEnvelope.self, from: data)
     }
 
     private func sendSocketCommand(
@@ -884,12 +854,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @MainActor
     private func handleDaemonOutput(_ data: Data) {
         dispatchPrecondition(condition: .onQueue(.main))
+        if data.isEmpty { return engineOutputEnded() }
         do {
-            if data.isEmpty {
-                try outputStream.finish()
-                if outputGate.sessionID != nil { throw TranscriptProtocolError.incompleteMessage }
-                return
-            }
             for event in try outputStream.append(data) where outputGate.accepts(event) {
                 switch event.kind {
                 case .sessionStarted: break
@@ -917,6 +883,32 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             stopDaemon()
         }
     }
+
+    @MainActor
+    private func engineOutputEnded() {
+        do {
+            try outputStream.finish()
+        } catch {
+            parakeetLog.error("Speech engine output ended mid-message: \(error.localizedDescription, privacy: .public)")
+        }
+        if outputGate.sessionID != nil { failSession("The speech engine exited before transcription completed.") }
+        stopUnresponsiveEngine()
+    }
+
+    /// A crashed engine closes its output and socket a moment before its exit is reported, and
+    /// stopping it in that moment cancels the restart the termination handler schedules. So this
+    /// waits, then stops the engine only if that same process is still running.
+    @MainActor
+    private func stopUnresponsiveEngine() {
+        guard let process = lifecycleLock.withLock({ daemonProcess }) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.unresponsiveEngineGrace) { [weak self] in
+            guard let self, self.lifecycleLock.withLock({ self.daemonProcess }) === process, process.isRunning else { return }
+            parakeetLog.warning("Speech engine stopped answering but is still running; stopping it")
+            self.stopDaemon()
+        }
+    }
+
+    static let unresponsiveEngineGrace: TimeInterval = 2
 
     @MainActor
     private func completeSession(_ event: TranscriptEvent) {
@@ -1025,10 +1017,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 }
             )
         } else if processedText.isEmpty {
-            // The take was only filler words; nothing was worth delivering.
             publishOutcome(.noSpeech)
         } else {
-            // Clipboard and paste are both off; the take finished but nothing left the app.
             publishOutcome(isPartial ? .partial : .done)
         }
     }
@@ -1058,9 +1048,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         finishSession()
     }
 
-    /// Inference on Apple Silicon runs well under real time, so a healthy engine finishes in a
-    /// fraction of the recording length. Scale the deadline with the take so a stuck engine is
-    /// detected in seconds for short dictation instead of holding recording hostage for minutes.
     static func completionTimeout(forRecordingDuration duration: TimeInterval) -> TimeInterval {
         min(max(20, duration * 2), 300)
     }
@@ -1093,7 +1080,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         lifecycleLock.withLock { isShuttingDown = true }
     }
 
-    /// Final shutdown: blocks any further engine starts, then stops the engine.
     func cleanupAndWait() async {
         beginShutdown()
         await stopDaemonAndWait()
@@ -1101,8 +1087,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         try? FileManager.default.removeItem(atPath: settings.pidFilePath)
     }
 
-    /// Last resort when graceful shutdown overran its deadline: SIGKILL the engine synchronously so
-    /// it cannot outlive the app. Safe to call more than once.
     func forceKillDaemonForExit() {
         beginShutdown()
         guard let process = lifecycleLock.withLock({ daemonProcess }), process.isRunning else { return }
@@ -1172,8 +1156,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             socketPath: settings.socketPath,
             timeout: timeout
         ).response
-        guard let envelope = decodeSocketResponse(response ?? ""), envelope.status == "ok" else { return false }
-        guard let version = envelope.protocolVersion, Self.supportedProtocolVersions.contains(version) else {
+        guard let reply = EngineReply(decoding: response), reply.isOK else { return false }
+        guard let version = reply.protocolVersion, Self.supportedProtocolVersions.contains(version) else {
             throw TranscriptProtocolError.invalidMessage
         }
         await MainActor.run { self.daemonProtocolVersion = version }

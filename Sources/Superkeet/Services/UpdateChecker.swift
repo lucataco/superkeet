@@ -3,8 +3,6 @@ import os.log
 
 private let updateLog = Logger(subsystem: "com.superkeet.app", category: "UpdateChecker")
 
-/// Asks GitHub for the latest Superkeet release. Only runs when the user clicks "Check for
-/// Updates"; nothing is sent except the request itself.
 enum UpdateChecker {
     static let latestReleaseURL = URL(string: "https://api.github.com/repos/lucataco/superkeet/releases/latest")
     static let releasesPageURL = URL(string: "https://github.com/lucataco/superkeet/releases/latest")
@@ -45,7 +43,7 @@ enum UpdateChecker {
             let release = try JSONDecoder().decode(Release.self, from: try await fetch(url))
             return evaluate(release: release, currentVersion: currentVersion)
         } catch {
-            updateLog.error("Update check failed: \(error.localizedDescription)")
+            updateLog.error("Update check failed: \(error.localizedDescription, privacy: .public)")
             return .failed("Couldn't check for updates. \(error.localizedDescription)")
         }
     }
@@ -57,7 +55,6 @@ enum UpdateChecker {
         return .available(version: latest, url: release.htmlURL)
     }
 
-    /// Numeric comparison of dotted versions: "1.10.0" is newer than "1.9.2".
     static func isVersion(_ candidate: String, newerThan current: String) -> Bool {
         func parts(_ version: String) -> [Int] {
             version.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }

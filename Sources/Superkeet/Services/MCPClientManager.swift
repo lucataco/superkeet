@@ -100,8 +100,6 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
         }
     }
 
-    /// Warm-up for app launch and for the moment Actions Mode or a server is switched on: connect
-    /// enabled servers that are not connected yet, and leave healthy connections alone.
     func connectEnabledServersIfNeeded(settings: AppSettings = .shared) async {
         guard settings.actionsEnabled else { return }
         for server in configStore.enabledServers {
@@ -429,7 +427,6 @@ final class MCPClientManager: ObservableObject, ActionMCPManaging {
             stderrPipe.fileHandleForReading.readabilityHandler = nil
             guard process.isRunning else { return }
             process.terminate()
-            // Escalate if the server ignores SIGTERM so it can't outlive Superkeet.
             let process = process
             let pid = process.processIdentifier
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) {

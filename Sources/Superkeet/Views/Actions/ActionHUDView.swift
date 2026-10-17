@@ -10,7 +10,6 @@ struct ActionHUDView: View {
     @State private var showDetails = false
 
     static let visibleChecklistRows = 6
-    /// Early steps shown under the live transcript while the user is still speaking.
     static let visibleEarlySteps = 4
     static let sessionPrompt = "Go ahead, I’m listening."
 
@@ -18,7 +17,6 @@ struct ActionHUDView: View {
         approvals.pending != nil || approvals.pendingPlan != nil || agent.phase.showsHUD
     }
 
-    /// Live text is flowing, or a listening session is between utterances.
     private var isListening: Bool { speculation.listening != nil || session.isActive }
 
     private var listeningPlaceholder: String { session.isActive ? Self.sessionPrompt : "Say a command…" }
@@ -165,7 +163,6 @@ struct ActionHUDView: View {
         } else if let listening = speculation.listening {
             listeningContent(listening)
         } else if session.isActive {
-            // Between utterances: the take just ended and the next one is opening.
             LiveTranscriptText(transcript: "", isRecording: false, placeholder: Self.sessionPrompt)
         }
     }
@@ -417,7 +414,6 @@ struct ActionHUDView: View {
                     .font(.system(size: 11))
                     .lineLimit(1)
             }
-            // Everything done while speaking, oldest first; the newest few fit in the pill.
             ForEach(Array(speculation.stepActivities.suffix(Self.visibleEarlySteps).enumerated()), id: \.element.step.index) { _, step in
                 stepStatus(step)
                     .font(.system(size: 11))

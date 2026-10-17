@@ -151,7 +151,7 @@ final class UsageStatsStore: ObservableObject, @unchecked Sendable {
         } catch {
             storeFile.needsRecoveryBackup = true
             persistenceIssue = "Could not load usage statistics. The original file will be preserved before any new statistics are saved. \(error.localizedDescription)"
-            usageStatsLog.error("Failed to load stats: \(error.localizedDescription)")
+            usageStatsLog.error("Failed to load stats: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -166,7 +166,7 @@ final class UsageStatsStore: ObservableObject, @unchecked Sendable {
             recoveryBackupURL = backup
             persistenceIssue = backup.map { "Earlier statistics could not be loaded. Their original file is preserved at \($0.path)." }
         case .failure(let error):
-            usageStatsLog.error("Failed to save stats: \(error.localizedDescription)")
+            usageStatsLog.error("Failed to save stats: \(error.localizedDescription, privacy: .public)")
             persistenceIssue = "Could not save usage statistics: \(error.localizedDescription)"
         }
     }

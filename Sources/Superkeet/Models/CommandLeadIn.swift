@@ -13,17 +13,13 @@ enum CommandLeadIn {
         "i want to", "i need to", "i'd like to", "i’d like to", "i would like to", "i want you to", "i need you to"
     ]
 
-    /// Politeness and hesitation people append after the command; never part of an argument.
     static let trailingPhrases: [String] = [
         "for me", "for us", "please", "thanks", "thank you", "ah", "uh", "um", "okay", "ok", "alright", "all right",
         "now", "real quick", "really quick", "quickly", "if you can", "if you could", "when you can", "right now",
         "if you don't mind", "if you don’t mind",
-        // A connector the speaker trailed off on: "open the Chrome browser. And" names Chrome.
         "and then", "and also", "and", "also", "then", "so"
     ]
 
-    /// An utterance made only of these words is a reaction to what just happened, not a command:
-    /// "Great. Great. Okay. Let's move on." runs nothing.
     static let acknowledgementWords: Set<String> = [
         "great", "nice", "cool", "awesome", "perfect", "good", "okay", "ok", "alright", "all", "right", "thanks", "thank",
         "you", "yes", "yeah", "yep", "yup", "no", "nope", "hmm", "hm", "um", "uh", "ah", "oh", "wow", "sweet", "excellent",
@@ -32,8 +28,6 @@ enum CommandLeadIn {
         "superkeet", "cheers", "hello", "hey", "hi", "that", "this", "is", "was", "it's", "it’s"
     ]
 
-    /// Verbs that make a clause an instruction even when it opens with a preposition ("on the
-    /// second line write hello"). Deliberately short: common nouns such as "new" or "set" are out.
     static let strongVerbs: Set<String> = [
         "open", "launch", "click", "type", "write", "press", "search", "google", "go", "create", "make", "save", "close",
         "quit", "scroll", "delete", "send", "play", "pause", "take", "enter", "put", "insert", "switch", "navigate", "visit",
@@ -62,7 +56,6 @@ enum CommandLeadIn {
         options: .caseInsensitive
     )
 
-    /// Removes leading filler and returns the remainder with its original casing.
     static func strip(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let pattern,
@@ -72,8 +65,6 @@ enum CommandLeadIn {
         return String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Removes trailing filler ("open Notes for me, please." becomes "open Notes"). Only applied to
-    /// arguments that name things, never to text the user wants typed.
     static func stripTrailing(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let trailingPattern,
@@ -88,9 +79,6 @@ enum CommandLeadIn {
         options: .caseInsensitive
     )
 
-    /// Removes reactions the recogniser glued onto the end of a command when the speaker didn't
-    /// pause: "open up x.com Nice, nice." becomes "open up x.com". Only for commands that name
-    /// something to open; typed text keeps every word.
     static func stripTrailingReactions(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let trailingReactionPattern,
@@ -100,21 +88,16 @@ enum CommandLeadIn {
         return String(trimmed[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Leading and trailing filler removed.
     static func trim(_ text: String) -> String {
         stripTrailing(strip(text))
     }
 
-    /// Whether the text is only a reaction ("Cool. Awesome. Thank you.") or empty.
     static func isAcknowledgement(_ text: String) -> Bool {
         let words = text.lowercased().split { !$0.isLetter && $0 != "'" && $0 != "’" }.map(String.init)
         guard !words.isEmpty else { return true }
         return words.allSatisfy { acknowledgementWords.contains($0) }
     }
 
-    /// Whether a clause only situates the next one ("inside this new note", "once you're there")
-    /// without asking for anything itself: it opens with a preposition, stays short, and contains
-    /// no instruction verb.
     static func isContextOnly(_ clause: String) -> Bool {
         let stripped = strip(clause)
         guard !stripped.isEmpty, let contextPattern,

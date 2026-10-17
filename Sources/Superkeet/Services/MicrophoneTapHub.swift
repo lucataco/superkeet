@@ -29,7 +29,6 @@ protocol MicrophoneCapturing: AnyObject {
         handler: @escaping MicrophoneTapHub.BufferHandler
     ) throws -> MicrophoneTapHub.CaptureInfo
     func stop()
-    /// Set up everything short of opening the device so the first `start` is fast. Optional.
     func prewarm(deviceName: String)
 }
 
@@ -75,8 +74,6 @@ final class MicrophoneTapHub: ObservableObject {
 
     var subscriberCount: Int { fanout.count }
 
-    /// Builds the audio graph ahead of time (no device IO, so no mic indicator) so the first
-    /// recording's level meter appears without a visible stall.
     func prewarm() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !isRunning, authorization() else { return }
@@ -142,9 +139,6 @@ final class BufferFanout: Sendable {
     }
 }
 
-/// Wraps one long-lived `AVAudioEngine`. Building the engine and touching `inputNode` sets up the
-/// HAL audio unit, which is the slow part of opening a microphone; keeping the engine between
-/// takes means each recording only pays for the device start itself.
 @MainActor
 final class AVAudioEngineMicrophone: MicrophoneCapturing {
     private var engine: AVAudioEngine?
@@ -204,7 +198,6 @@ final class AVAudioEngineMicrophone: MicrophoneCapturing {
         removeTap()
         guard let engine else { return }
         engine.stop()
-        // Keep the graph allocated so the next take starts quickly; the device itself is closed.
         engine.prepare()
     }
 

@@ -20,6 +20,21 @@ enum ActionObservationPolicy {
         return liveStateFragments.contains { name.contains($0) }
     }
 
+    private static let contentFragments = ["clipboard", "script", "snapshot", "screenshot"]
+
+    /// Reads return what is on screen, in a page or in the clipboard, which can include a copied
+    /// password, so the action log keeps only how much came back.
+    static func returnsUserContent(_ spec: ActionToolSpec) -> Bool {
+        let name = spec.toolName.lowercased()
+        return spec.risk == .readOnly || contentFragments.contains { name.contains($0) }
+    }
+
+    static func auditDetail(for spec: ActionToolSpec, output: String, structured: Bool) -> String? {
+        if structured { return nil }
+        guard returnsUserContent(spec) else { return output }
+        return output.isEmpty ? "Returned nothing." : "Returned \(output.count) characters."
+    }
+
     private static let projectedNames: Set<String> = ["get_window_state", "list_windows", "list_apps", "get_accessibility_tree"]
 
     static func projectsForPlanner(_ spec: ActionToolSpec) -> Bool {

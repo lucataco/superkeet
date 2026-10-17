@@ -8,6 +8,9 @@ final class RecoverableStoreFile {
     init(url: URL) { self.url = url }
 
     func write(_ data: Data) throws -> URL? {
+        if needsRecoveryBackup, (try? FileManager.default.attributesOfItem(atPath: url.path)) == nil {
+            needsRecoveryBackup = false
+        }
         if needsRecoveryBackup {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey])
             guard values.isRegularFile == true else {

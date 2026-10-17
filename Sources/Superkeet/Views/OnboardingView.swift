@@ -17,9 +17,6 @@ struct OnboardingView: View {
 
     var onComplete: () -> Void
 
-    /// Five screens on macOS 26, four elsewhere. The model download runs in the background from
-    /// the first screen and is shown as a footer progress bar rather than a step. The Actions step
-    /// only appears on systems that can run the on-device planner.
     private enum OnboardingStep: Int, CaseIterable {
         case welcome
         case permissions
@@ -102,8 +99,6 @@ struct OnboardingView: View {
             readiness = AppReadiness.current()
             microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             accessibilityGranted = hotkeyManager.checkAccessibilitySilently()
-            // Start the ~670 MB model download immediately so it is usually finished by the time
-            // the user reaches the model step, instead of making them sit and watch it.
             modelProvisioning.startDownloadIfNeeded()
         }
         .onChange(of: currentStep) {
@@ -124,7 +119,6 @@ struct OnboardingView: View {
             syncAccessibilityState(accessibilityGranted)
         }
         .onChange(of: modelProvisioning.state.phase) {
-            // Re-probe only on state transitions, not on every download progress tick.
             readiness = AppReadiness.current()
         }
         .onChange(of: settings.actionsEnabled) { _, enabled in
@@ -333,7 +327,6 @@ struct OnboardingView: View {
         .cornerRadius(10)
     }
 
-    /// Compact download status shown beneath every step after Welcome until the model is in place.
     @ViewBuilder
     private var modelDownloadBar: some View {
         HStack(spacing: 10) {
@@ -807,7 +800,6 @@ struct OnboardingView: View {
         }
     }
 
-    /// Show the system prompts one at a time: microphone first (if never asked), then Accessibility.
     private func requestPermissionsInSequence() {
         if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             AVCaptureDevice.requestAccess(for: .audio) { granted in

@@ -1,13 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// One Setup window for first launch and for "Run Setup Again...".
 @MainActor
 final class SetupWindowSession: NSObject {
     static let shared = SetupWindowSession()
 
     private var windowController: NSWindowController?
-    /// Called when the user closes the window without finishing setup (treated as "skip").
     private var onClose: (() -> Void)?
 
     private override init() {

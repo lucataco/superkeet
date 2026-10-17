@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Record Swift toolchain
         id: toolchain
@@ -38,7 +40,7 @@ jobs:
         run: ./scripts/install_swiftlint.sh
 
       - name: Lint
-        run: swiftlint lint --strict
+        run: '"$SWIFTLINT" lint --strict'
 
       - name: Build app
         run: swift build

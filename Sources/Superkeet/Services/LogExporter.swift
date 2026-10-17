@@ -5,8 +5,6 @@ import UniformTypeIdentifiers
 
 private let exportLog = Logger(subsystem: "com.superkeet.app", category: "LogExporter")
 
-/// Collects Superkeet's own unified-log messages since launch into a text file for bug reports.
-/// Values logged as private stay redacted, as they do in Console.
 enum LogExporter {
     static let subsystem = "com.superkeet.app"
 
@@ -31,7 +29,7 @@ enum LogExporter {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let body = lines.map { "\(formatter.string(from: $0.date)) [\($0.level)] \($0.category): \($0.message)" }
-        return ([header, "", "Log (\(lines.count) entries since launch)", String(repeating: "-", count: 40)] + body)
+        return ([header, "", "Log (\(lines.count) entries since launch, up to 24 hours)", String(repeating: "-", count: 40)] + body)
             .joined(separator: "\n") + "\n"
     }
 
@@ -46,7 +44,6 @@ enum LogExporter {
         }
     }
 
-    /// Asks where to save, then writes the diagnostics summary followed by the log.
     @MainActor
     static func exportWithSavePanel() -> String? {
         let panel = NSSavePanel()
@@ -61,7 +58,7 @@ enum LogExporter {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             return nil
         } catch {
-            exportLog.error("Log export failed: \(error.localizedDescription)")
+            exportLog.error("Log export failed: \(error.localizedDescription, privacy: .public)")
             return "Couldn't export logs: \(error.localizedDescription)"
         }
     }

@@ -1,10 +1,6 @@
 import Darwin
 import Foundation
 
-/// Decides whether a process named in Superkeet's pid file is a speech engine Superkeet started.
-/// Matching the exact binary path alone misses an engine left over from before the app was moved
-/// (or run from App Translocation), which then held the model in memory for good. A `parakeet`
-/// binary serving Superkeet's own socket is just as surely ours.
 enum StaleEngineMatcher {
     static func isOurEngine(executablePath: String, arguments: [String], expectedBinary: String, socketPath: String) -> Bool {
         let executable = URL(fileURLWithPath: executablePath).standardizedFileURL

@@ -1,7 +1,5 @@
 import Foundation
 
-/// The user-visible result of a finished dictation take. Drives the confirmation flash in the
-/// recording overlay so the user never has to guess whether their text actually landed.
 enum TranscriptOutcome: Equatable, Sendable {
     case copied
     case pasted
@@ -10,7 +8,6 @@ enum TranscriptOutcome: Equatable, Sendable {
     case noSpeech
     case failed
     case command
-    /// A command-mode take that was only a reaction ("Great, thanks."); nothing ran.
     case ignored
 
     var label: String {
@@ -51,8 +48,6 @@ enum TranscriptOutcome: Equatable, Sendable {
         }
     }
 
-    /// How long the overlay lingers on this result. Successes get out of the way quickly;
-    /// anything the user might need to act on stays a bit longer.
     var displayDuration: TimeInterval {
         switch severity {
         case .success: return 0.9
@@ -61,10 +56,8 @@ enum TranscriptOutcome: Equatable, Sendable {
         }
     }
 
-    /// Command takes hand off to the Actions HUD, which has its own progress UI.
     var showsInOverlay: Bool { self != .command }
 
-    /// Maps the paste service's report to the outcome shown to the user.
     static func forDictation(delivery: PasteDelivery, isPartial: Bool) -> TranscriptOutcome {
         if isPartial { return .partial }
         switch delivery {
@@ -74,7 +67,6 @@ enum TranscriptOutcome: Equatable, Sendable {
     }
 }
 
-/// A fresh identity per completion so observers react to back-to-back identical outcomes.
 struct TranscriptOutcomeEvent: Equatable, Sendable {
     let outcome: TranscriptOutcome
     let id: UUID
@@ -85,11 +77,12 @@ struct TranscriptOutcomeEvent: Equatable, Sendable {
     }
 }
 
-/// What the recording overlay is currently showing.
 enum OverlayPhase: Equatable, Sendable {
+    case starting
     case recording
     case transcribing
     case result(TranscriptOutcome)
+    case notice(RecordingStartFeedback)
 
     var isRecording: Bool { self == .recording }
 }

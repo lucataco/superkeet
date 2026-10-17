@@ -1,6 +1,5 @@
 import Foundation
 
-/// Persisted on MCP server configs. Local stdio is the only transport Superkeet launches.
 enum MCPTransportKind: String, Codable {
     case stdio
 }
@@ -160,6 +159,54 @@ enum MCPEnvironmentParser {
             environment[key] = value
         }
         return environment
+    }
+}
+
+/// Shell-style quoting for the one-line Arguments field, so a path like "/Users/me/My Docs"
+/// stays one argument through an edit.
+enum MCPArgumentParser {
+    static func split(_ text: String) -> [String] {
+        var arguments: [String] = []
+        var current = ""
+        var inToken = false
+        var quote: Character?
+        var characters = text.makeIterator()
+        while let character = characters.next() {
+            switch (quote, character) {
+            case (nil, _) where character.isWhitespace:
+                if inToken { arguments.append(current) }
+                current = ""
+                inToken = false
+            case (nil, "\""), (nil, "'"):
+                quote = character
+                inToken = true
+            case (nil, "\\"):
+                inToken = true
+                guard let next = characters.next() else { current.append(character); break }
+                if !(next.isWhitespace || next == "\"" || next == "'" || next == "\\") { current.append(character) }
+                current.append(next)
+            case ("\"", "\\"):
+                guard let next = characters.next() else { current.append(character); break }
+                if next != "\"" && next != "\\" { current.append(character) }
+                current.append(next)
+            case (let open?, _) where character == open:
+                quote = nil
+            default:
+                current.append(character)
+                inToken = true
+            }
+        }
+        if inToken { arguments.append(current) }
+        return arguments
+    }
+
+    static func join(_ arguments: [String]) -> String {
+        arguments.map { argument in
+            let needsQuotes = argument.isEmpty || argument.contains { $0.isWhitespace || $0 == "\"" || $0 == "'" || $0 == "\\" }
+            guard needsQuotes else { return argument }
+            let escaped = argument.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            return "\"\(escaped)\""
+        }.joined(separator: " ")
     }
 }
 
