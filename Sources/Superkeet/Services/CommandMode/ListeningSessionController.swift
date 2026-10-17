@@ -121,6 +121,15 @@ final class ListeningSessionController: ObservableObject {
         sessionLog.info("Listening session ended (\(String(describing: action), privacy: .public))")
     }
 
+    /// A take that never started brings no engine state change to re-arm on, so the session
+    /// would sit on "Listening…" with the microphone closed.
+    func startFailed() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isActive else { return }
+        sessionLog.warning("A take couldn't start; ending the listening session")
+        end(dispatchPending: false)
+    }
+
     private func observe(_ streams: Streams) {
         streams.transcript
             .receive(on: DispatchQueue.main)

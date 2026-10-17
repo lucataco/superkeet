@@ -44,7 +44,7 @@ final class RecordingOverlayWindowController: ObservableObject {
         case .transcribing:
             if phase == .recording { showTranscribing() }
         case .stopped, .stopping:
-            if case .result = phase { return }
+            guard phase == .recording || phase == .transcribing else { return }
             hide()
         case .starting, .idle, .recording:
             break
@@ -60,6 +60,7 @@ final class RecordingOverlayWindowController: ObservableObject {
 
     private func showOutcome(_ outcome: TranscriptOutcome) {
         guard window?.isVisible == true else { return }
+        if case .notice = phase { return }
         guard outcome.showsInOverlay else {
             hide()
             return
@@ -67,13 +68,16 @@ final class RecordingOverlayWindowController: ObservableObject {
         stopPointerTracking()
         cancelResultDismissal()
         setPhase(.result(outcome))
+        dismiss(.result(outcome), after: outcome.displayDuration)
+    }
 
+    private func dismiss(_ shown: OverlayPhase, after delay: TimeInterval) {
         let dismissal = DispatchWorkItem { [weak self] in
-            guard let self, case .result = self.phase else { return }
+            guard let self, self.phase == shown else { return }
             self.hide()
         }
         resultDismissal = dismissal
-        DispatchQueue.main.asyncAfter(deadline: .now() + outcome.displayDuration, execute: dismissal)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: dismissal)
     }
 
     private func cancelResultDismissal() {
@@ -117,27 +121,54 @@ final class RecordingOverlayWindowController: ObservableObject {
     }
 
     func show() {
+        present(.recording)
+    }
+
+    func showStarting() {
+        present(.starting)
+    }
+
+    func showNotice(_ feedback: RecordingStartFeedback) {
+        present(.notice(feedback))
+        guard window?.isVisible == true else { return }
+        dismiss(.notice(feedback), after: Self.noticeDuration)
+    }
+
+    nonisolated static let noticeDuration: TimeInterval = 2.5
+
+    private func present(_ newPhase: OverlayPhase) {
         dispatchPrecondition(condition: .onQueue(.main))
 
         let style = AppSettings.shared.overlayAnimationStyle
-        guard style.showsOverlay else { return }
+        guard style.showsOverlay else {
+            hide()
+            return
+        }
 
         cancelResultDismissal()
+        stopPointerTracking()
         sessionStart = Date()
-        phase = .recording
+        phase = newPhase
 
+        let overlayView = RecordingOverlayView(sessionStart: sessionStart, phase: newPhase)
         if let window {
-            hostingView?.rootView = RecordingOverlayView(sessionStart: sessionStart, phase: .recording)
+            if window.isVisible {
+                hostingView?.rootView = overlayView
+            } else {
+                // A hidden overlay still shows its last phase, and updating it in place would
+                // cross-fade from that (a stale "Transcription failed" under "Getting ready…").
+                let hosting = NSHostingView(rootView: overlayView)
+                hostingView = hosting
+                window.contentView = hosting
+            }
             applyChrome(window, style: style)
             if !window.isVisible {
                 window.orderFrontRegardless()
             }
-            stopPointerTracking()
-            startPointerTrackingIfNeeded(for: style)
+            if newPhase.isRecording { startPointerTrackingIfNeeded(for: style) }
             return
         }
 
-        let overlayView = RecordingOverlayView(sessionStart: sessionStart, phase: .recording)
         let hosting = NSHostingView(rootView: overlayView)
         self.hostingView = hosting
 
@@ -160,7 +191,7 @@ final class RecordingOverlayWindowController: ObservableObject {
         window.orderFrontRegardless()
         self.window = window
 
-        startPointerTrackingIfNeeded(for: style)
+        if newPhase.isRecording { startPointerTrackingIfNeeded(for: style) }
     }
 
     func hide() {

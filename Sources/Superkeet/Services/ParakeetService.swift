@@ -570,7 +570,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 return false
             }
             failSession("Couldn't start recording — is the speech engine running?")
-            stopDaemon()
+            stopUnresponsiveEngine()
             return false
         }
 
@@ -621,7 +621,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 }
                 parakeetLog.error("stop command failed: \(response, privacy: .public)")
                 self.failSession("Couldn't confirm stop with the speech engine. Try recording again.")
-                self.stopDaemon()
+                self.stopUnresponsiveEngine()
             }
         }
     }
@@ -646,7 +646,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             let cancelResponse = await self.sendSocketCommandAsync("cancel", sessionID: sessionID)
             guard let cancelReply = EngineReply(decoding: cancelResponse) else {
                 parakeetLog.error("cancel command failed: \(cancelResponse ?? "nil", privacy: .public)")
-                self.stopDaemon()
+                self.stopUnresponsiveEngine()
                 return
             }
             if let reason = cancelReply.rejection {
@@ -854,12 +854,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @MainActor
     private func handleDaemonOutput(_ data: Data) {
         dispatchPrecondition(condition: .onQueue(.main))
+        if data.isEmpty { return engineOutputEnded() }
         do {
-            if data.isEmpty {
-                try outputStream.finish()
-                if outputGate.sessionID != nil { throw TranscriptProtocolError.incompleteMessage }
-                return
-            }
             for event in try outputStream.append(data) where outputGate.accepts(event) {
                 switch event.kind {
                 case .sessionStarted: break
@@ -887,6 +883,32 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             stopDaemon()
         }
     }
+
+    @MainActor
+    private func engineOutputEnded() {
+        do {
+            try outputStream.finish()
+        } catch {
+            parakeetLog.error("Speech engine output ended mid-message: \(error.localizedDescription, privacy: .public)")
+        }
+        if outputGate.sessionID != nil { failSession("The speech engine exited before transcription completed.") }
+        stopUnresponsiveEngine()
+    }
+
+    /// A crashed engine closes its output and socket a moment before its exit is reported, and
+    /// stopping it in that moment cancels the restart the termination handler schedules. So this
+    /// waits, then stops the engine only if that same process is still running.
+    @MainActor
+    private func stopUnresponsiveEngine() {
+        guard let process = lifecycleLock.withLock({ daemonProcess }) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.unresponsiveEngineGrace) { [weak self] in
+            guard let self, self.lifecycleLock.withLock({ self.daemonProcess }) === process, process.isRunning else { return }
+            parakeetLog.warning("Speech engine stopped answering but is still running; stopping it")
+            self.stopDaemon()
+        }
+    }
+
+    static let unresponsiveEngineGrace: TimeInterval = 2
 
     @MainActor
     private func completeSession(_ event: TranscriptEvent) {

@@ -242,6 +242,19 @@ final class ListeningSessionControllerTests: XCTestCase {
         XCTAssertFalse(fixture.controller.isActive)
     }
 
+    func testATakeThatCannotStartEndsTheSession() {
+        let fixture = makeFixture()
+        fixture.controller.begin()
+        fixture.recorder.recording = false
+        fixture.controller.startFailed()
+        XCTAssertFalse(fixture.controller.isActive, "Nothing would re-arm it, so it must not stay on Listening.")
+        XCTAssertEqual(fixture.recorder.cancels, 0, "There is no take to cancel.")
+        XCTAssertEqual(fixture.recorder.sounds, [.start, .stop])
+        XCTAssertEqual(fixture.recorder.forgets, 1)
+        fixture.controller.startFailed()
+        XCTAssertEqual(fixture.recorder.sounds, [.start, .stop], "A closed session ignores later failures.")
+    }
+
     func testEngineStoppingEndsTheSession() async {
         let fixture = makeFixture()
         fixture.controller.begin()

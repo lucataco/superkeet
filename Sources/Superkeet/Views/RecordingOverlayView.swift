@@ -236,13 +236,21 @@ struct OverlayStatusPill: View {
             switch phase {
             case .recording:
                 EmptyView()
-            case .transcribing:
+            case .starting, .transcribing:
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 14, height: 14)
-                Text("Transcribing…")
+                Text(phase == .starting ? RecordingStartFeedback.waitingForEngine.notice : "Transcribing…")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.secondary)
+            case .notice(let feedback):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Self.tint(for: .warning))
+                    .frame(width: 14, height: 14)
+                Text(feedback.notice)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
             case .result(let outcome):
                 Image(systemName: outcome.symbolName)
                     .font(.system(size: 13, weight: .semibold))

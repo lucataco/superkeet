@@ -45,5 +45,7 @@ final class TranscriptOutcomeTests: XCTestCase {
         XCTAssertTrue(OverlayPhase.recording.isRecording)
         XCTAssertFalse(OverlayPhase.transcribing.isRecording)
         XCTAssertFalse(OverlayPhase.result(.copied).isRecording)
+        XCTAssertFalse(OverlayPhase.starting.isRecording)
+        XCTAssertFalse(OverlayPhase.notice(.engineFailed).isRecording)
     }
 }

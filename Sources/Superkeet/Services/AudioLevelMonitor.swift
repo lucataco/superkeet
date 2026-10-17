@@ -160,7 +160,7 @@ enum AudioInputDeviceResolver {
             AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, pointer)
         }
         guard status == noErr, let cfName else { return nil }
-        return cfName.takeUnretainedValue() as String
+        return cfName.takeRetainedValue() as String
     }
 
     private static func hasInputChannels(_ deviceID: AudioDeviceID) -> Bool {

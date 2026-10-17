@@ -78,9 +78,11 @@ struct TranscriptOutcomeEvent: Equatable, Sendable {
 }
 
 enum OverlayPhase: Equatable, Sendable {
+    case starting
     case recording
     case transcribing
     case result(TranscriptOutcome)
+    case notice(RecordingStartFeedback)
 
     var isRecording: Bool { self == .recording }
 }
