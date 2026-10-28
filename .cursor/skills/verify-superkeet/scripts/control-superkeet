@@ -9,6 +9,7 @@ STATE_FILE="$STATE_DIR/state"
 ARTIFACT_ROOT="${SUPERKEET_VERIFY_ARTIFACTS:-$ROOT/artifacts}"
 PROCESS_NAME="Superkeet"
 BUNDLE_ID="com.superkeet.app"
+CUA_HELPER="$ROOT/scripts/cua_superkeet.py"
 
 usage() {
   cat <<'EOF'
@@ -27,6 +28,10 @@ control-superkeet — drive Superkeet the way a user does
   screenshot [--path FILE] [--window TITLE]
                           Capture a Superkeet window (or the first visible one)
   close-window [--title T] Close a Superkeet window by title (or the front one)
+  desktop-screenshot --path FILE
+                          CuaDriver only: capture the desktop for menu coordinates
+  desktop-click --x N --y N
+                          CuaDriver only: click native desktop screenshot pixels
   quit                    Quit only the Superkeet process this run launched
   cleanup                 Close verify-opened windows and quit if we launched
 
@@ -34,6 +39,7 @@ Environment:
   SUPERKEET_APP                 Bundle path override
   SUPERKEET_VERIFY_STATE_DIR    Default: <skill>/.run
   SUPERKEET_VERIFY_ARTIFACTS    Default: <skill>/artifacts
+  SUPERKEET_VERIFY_DRIVER       system-events (default) or cua
 EOF
 }
 
@@ -48,11 +54,12 @@ RUN_ID=$1
 PID=$2
 BUNDLE=$3
 STARTED_AT=$4
+DRIVER=$5
 EOF
 }
 
 read_state() {
-  RUN_ID=""; PID=""; BUNDLE=""; STARTED_AT=""
+  RUN_ID=""; PID=""; BUNDLE=""; STARTED_AT=""; DRIVER=""
   if [[ -f "$STATE_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$STATE_FILE"
@@ -115,6 +122,16 @@ osascript_ok() {
   osascript -l AppleScript "$@"
 }
 
+cua_ready() {
+  command -v cua-driver >/dev/null 2>&1 || die "SUPERKEET_VERIFY_DRIVER=cua requires cua-driver on PATH"
+  cua-driver permissions status --json 2>/dev/null | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+if not data.get("accessibility") or not data.get("screen_recording"):
+    raise SystemExit(1)
+' || die "CuaDriver is not running with Accessibility and Screen Recording grants. Run: cua-driver permissions grant"
+}
+
 ax_process_exists() {
   osascript_ok -e "tell application \"System Events\" to exists process \"$PROCESS_NAME\"" 2>/dev/null | grep -qi true
 }
@@ -174,6 +191,12 @@ cmd_launch() {
   local version
   version="$(bundle_version "$bundle")"
 
+  local driver="${SUPERKEET_VERIFY_DRIVER:-system-events}"
+  [[ "$driver" == "system-events" || "$driver" == "cua" ]] || die "unknown driver: $driver"
+  if [[ "$driver" == "cua" ]]; then
+    cua_ready
+  fi
+
   local run_id
   run_id="$(date +%Y%m%dT%H%M%S)-$$"
   open "$bundle"
@@ -189,16 +212,18 @@ cmd_launch() {
   done
   [[ -n "$pid" ]] || die "launch timed out waiting for process $PROCESS_NAME"
 
-  for i in $(seq 1 40); do
-    if ax_process_exists; then
-      break
-    fi
-    sleep 0.25
-  done
-  ax_process_exists || die "System Events cannot see Superkeet. Grant Accessibility to the driving app (Cursor / Terminal), then re-run doctor."
+  if [[ "$driver" == "system-events" ]]; then
+    for i in $(seq 1 40); do
+      if ax_process_exists; then
+        break
+      fi
+      sleep 0.25
+    done
+    ax_process_exists || { kill "$pid" 2>/dev/null || true; die "System Events cannot see Superkeet. Grant Accessibility to the driving app, then re-run launch."; }
+  fi
 
-  write_state "$run_id" "$pid" "$bundle" "$(date +%Y-%m-%dT%H:%M:%S)"
-  printf 'launched pid=%s bundle=%s version=%s run=%s\n' "$pid" "$bundle" "$version" "$run_id"
+  write_state "$run_id" "$pid" "$bundle" "$(date +%Y-%m-%dT%H:%M:%S)" "$driver"
+  printf 'launched pid=%s bundle=%s version=%s run=%s driver=%s\n' "$pid" "$bundle" "$version" "$run_id" "$driver"
 }
 
 cmd_doctor() {
@@ -229,11 +254,16 @@ cmd_doctor() {
     die "pid $PID bundle $actual_bundle does not match launched $BUNDLE"
   fi
 
-  ax_process_exists || die "System Events cannot see Superkeet. Grant Accessibility to the driving app."
-
   local extra_loc menu_ok="no"
-  if extra_loc="$(find_status_extra)"; then
-    menu_ok="yes"
+  if [[ "${DRIVER:-system-events}" == "cua" ]]; then
+    cua_ready
+    menu_ok="visual-check-required"
+    extra_loc="CuaDriver cannot address NSStatusItem; use desktop-screenshot before menu recipes"
+  else
+    ax_process_exists || die "System Events cannot see Superkeet. Grant Accessibility to the driving app."
+    if extra_loc="$(find_status_extra)"; then
+      menu_ok="yes"
+    fi
   fi
 
   local version
@@ -246,10 +276,11 @@ cmd_doctor() {
   printf '  bundle: %s\n' "${BUNDLE:-unknown}"
   printf '  version: %s\n' "$version"
   printf '  run: %s\n' "${RUN_ID:-unknown}"
+  printf '  driver: %s\n' "${DRIVER:-system-events}"
   printf '  ax: reachable\n'
   printf '  menu-bar extra: %s (%s)\n' "$menu_ok" "${extra_loc:-missing}"
   printf '  hasCompletedOnboarding: %s\n' "$onboarding"
-  if [[ "$menu_ok" != "yes" ]]; then
+  if [[ "$menu_ok" == "no" ]]; then
     die "menu-bar extra is not visible. Look for an AX description that starts with Superkeet."
   fi
 }
@@ -257,7 +288,11 @@ cmd_doctor() {
 require_owned() {
   read_state
   [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null || die "no verify-owned Superkeet. Run launch, then doctor."
-  ax_process_exists || die "System Events cannot see Superkeet."
+  if [[ "${DRIVER:-system-events}" == "cua" ]]; then
+    cua_ready
+  else
+    ax_process_exists || die "System Events cannot see Superkeet."
+  fi
 }
 
 cmd_menu_open() {
@@ -677,7 +712,14 @@ cmd_quit() {
     sleep 0.25
   done
   kill "$PID" 2>/dev/null || true
-  sleep 0.5
+  for i in $(seq 1 40); do
+    if ! kill -0 "$PID" 2>/dev/null; then
+      rm -f "$STATE_FILE"
+      printf 'quit pid=%s (SIGTERM)\n' "$PID"
+      return 0
+    fi
+    sleep 0.25
+  done
   if kill -0 "$PID" 2>/dev/null; then
     die "pid $PID did not exit. Not sending KILL; inspect it by pid."
   fi
@@ -688,7 +730,10 @@ cmd_quit() {
 cmd_cleanup() {
   read_state
   if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
-    osascript_ok <<'APPLESCRIPT' 2>/dev/null || true
+    if [[ "${DRIVER:-system-events}" == "cua" ]]; then
+      python3 "$CUA_HELPER" close-window --pid "$PID" >/dev/null 2>&1 || true
+    else
+      osascript_ok <<'APPLESCRIPT' 2>/dev/null || true
 tell application "System Events"
   tell process "Superkeet"
     repeat with w in windows
@@ -699,6 +744,7 @@ tell application "System Events"
   end tell
 end tell
 APPLESCRIPT
+    fi
     cmd_quit
   else
     rm -f "$STATE_FILE"
@@ -710,6 +756,29 @@ APPLESCRIPT
 main() {
   local cmd="${1:-}"
   shift || true
+  read_state
+  if [[ "${DRIVER:-}" == "cua" ]]; then
+    case "$cmd" in
+      windows|exists|click|snapshot|screenshot|close-window)
+        require_owned
+        python3 "$CUA_HELPER" "$cmd" --pid "$PID" "$@"
+        return
+        ;;
+      desktop-screenshot)
+        require_owned
+        python3 "$CUA_HELPER" "$cmd" "$@"
+        return
+        ;;
+      desktop-click)
+        require_owned
+        python3 "$CUA_HELPER" "$cmd" "$@"
+        return
+        ;;
+      menu)
+        die "CuaDriver cannot enumerate NSStatusItem menus. Use desktop-screenshot and desktop-click for the menu entry, then window commands; menu dump requires the system-events driver."
+        ;;
+    esac
+  fi
   case "$cmd" in
     ""|-h|--help) usage ;;
     launch) cmd_launch "$@" ;;
@@ -729,6 +798,7 @@ main() {
     snapshot) cmd_snapshot "$@" ;;
     screenshot) cmd_screenshot "$@" ;;
     close-window) cmd_close_window "$@" ;;
+    desktop-screenshot|desktop-click) die "$cmd requires SUPERKEET_VERIFY_DRIVER=cua at launch" ;;
     quit) cmd_quit ;;
     cleanup) cmd_cleanup ;;
     *) die "unknown command: $cmd (see --help)" ;;

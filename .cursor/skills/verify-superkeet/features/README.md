@@ -6,16 +6,16 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - macOS 14 or later, Apple Silicon.
 - Superkeet is launched only by `control-superkeet launch` from this skill.
-- `control-superkeet doctor` reports a verify-owned pid, the launched bundle, Accessibility reachability, and a visible menu-bar extra.
+- `control-superkeet doctor` reports a verify-owned pid, the launched bundle, and driver permission reachability. System Events also verifies the menu-bar extra; CuaDriver explicitly requires a visual check instead.
 - Never drive `/Applications/Superkeet.app` (or any other copy) if this run did not start it.
-- Do not run `./install.sh` during a verify pass.
+- Do not install over the user's app. If a source build is needed, use `INSTALL_DIR="$PWD/.build/verification" CODESIGN_IDENTITY=- ./install.sh` and launch that exact bundle.
 - Put `control-superkeet` on `PATH` or invoke `.cursor/skills/verify-superkeet/scripts/control-superkeet`.
 - Artifact root is `.cursor/skills/verify-superkeet/artifacts/`. Cleanup must not delete it.
 
 ## Driving conventions
 
 - Start every recipe from the baseline unless its preconditions say otherwise.
-- Prefer AX names and exact menu titles over coordinates.
+- Prefer AX names and exact menu titles over coordinates. The sole exception is the CuaDriver fallback for opening the status-item menu, where fresh native screenshot coordinates are unavoidable; subsequent window actions still use AX tokens.
 - Treat every command as literal. Keep quoted titles unchanged, including `Settings...` (ASCII dots) and `Run an Action…` (unicode ellipsis).
 - Close windows you open before starting another feature, unless the recipe says to keep them.
 - Restore any setting you change. Prefer recipes that do not change settings.
@@ -24,7 +24,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - Capture the user action and the resulting state, not only the final screen.
 - Window proof includes an AX snapshot and a screenshot with Superkeet identity visible.
-- Menu proof includes `menu dump` output with the expected titles.
+- Menu proof includes `menu dump` output with the expected titles. A CuaDriver-only visual menu capture is not a substitute for a required textual dump.
 - Mutation proof includes a second read of the same UI after leaving and returning.
 - Record the feature ID and entry point used with every artifact.
 - Report an unreachable path with the attempted command and the unmet precondition.
