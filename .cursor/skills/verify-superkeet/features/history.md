@@ -1,40 +1,41 @@
 # History
 
-History lets a user browse saved transcriptions, search them, copy a row, and see a clear empty state when history is off or empty.
+History lets users browse saved transcriptions, search them, and copy a saved result. Its empty state distinguishes disabled history from an empty enabled history.
 
 ## Sub-features
 
-- `history-open` opens the History window from the menu.
-- `history-empty-off` shows `History is off` with a `Turn On History` button when Save History is disabled.
-- `history-empty-on` shows `No transcriptions yet` when Save History is on and the list is empty.
-- `history-search` filters rows from `Search transcriptions…` and shows `No results found` when nothing matches.
-- `history-copy` copies a row via double-click, ⌘C, or `Copy Text`.
+- `history-open` opens History from the status-item menu.
+- `history-empty-off` shows the disabled-history explanation.
+- `history-empty-on` shows an enabled history with no records.
+- `history-search` filters existing records and shows a search miss.
+- `history-copy` copies a selected record through the user interface.
 
 ## How to get to it (user POV)
 
 - Choose `History` in the Superkeet menu.
-- Press `h` while the Superkeet menu is open.
+- Use the menu's History keyboard equivalent.
+- Copy a row with its UI copy action, double-click, or the copy shortcut.
 
 ## Driving it with control-superkeet
 
 Preconditions:
 
-- `control-superkeet doctor` is clean.
-- Do not enable or disable `Save History` unless you restore it afterward.
+- Complete Launch and Doctor. Do not alter Save History or clear records to prepare a test.
+- Existing transcripts may be private. Keep snapshots local and do not publish their contents.
 
-- **Open History.** Choose `History`. With System Events, run `control-superkeet menu click "History"`. With CuaDriver, use the visual menu entry in SKILL.md. Then `control-superkeet windows` lists a window titled `Superkeet - History`.
-- **Identity.** Run `control-superkeet exists --surface history --name "History"`. Exit 0. The heading `History` is visible.
-- **Empty, history off.** If the snapshot contains `History is off`, it also contains `Turn it on to keep future transcriptions on this Mac.` and a `Turn On History` button. No `Clear All` button.
-- **Empty, history on.** If the snapshot contains `No transcriptions yet`, it also mentions the menu bar or the toggle-recording shortcut. No rows.
-- **Search field.** `Search transcriptions…` is present whether or not rows exist. If rows exist, `Clear All` also exists. Do not click `Clear All`.
-- **Rows.** When rows exist, each shows the app name, with no icon before it, and a named age such as `2 months ago` or `yesterday`. Ages do not read as a count of months and days.
-- **Search miss.** When rows exist, type a string that cannot match (use the search field only if you can clear it). The empty title becomes `No results found`. Clear the query afterward.
-- **Proof.** Run `control-superkeet snapshot --surface history --path artifacts/history/window.ax.txt` and `control-superkeet screenshot --path artifacts/history/window.png --window "Superkeet - History"`. Both show `Superkeet - History` or the `History` heading.
+1. Choose History through the real menu. System Events uses `"$CONTROL" menu click "History"`. CuaDriver uses the fresh-screenshot entry procedure.
+2. Wait until `"$CONTROL" windows` lists `Superkeet - History`. Check the `History` label with `exists --name`. Add `--surface history` only for CuaDriver.
+3. Save `$EVIDENCE/history.ax.txt` and `$EVIDENCE/history.png`. Use `snapshot --surface history` and `screenshot --surface history` under CuaDriver. Under System Events, use plain snapshot/screenshot commands while History is the sole window.
+4. If history is off, assert `History is off`, `Turn it on to keep future transcriptions on this Mac.`, and `Turn On History` in the AX tree. Do not press the button.
+5. If history is enabled but empty, assert `No transcriptions yet`. Do not claim the disabled state in the same proof.
+6. If records exist, assert `Search transcriptions…` and the visible records. Do not click `Clear All` or copy private text merely to complete an inspection.
+7. Mark search, row-copy, and keyboard-entry journeys BLOCKED unless a disposable transcript fixture and a driver supporting text entry, row selection, and clipboard observation are supplied. The current wrapper does not implement those operations. Prove a search miss and matching clipboard content before marking those IDs verified.
+8. Close History with `close-window --title "Superkeet - History"` under System Events or `close-window --window "Superkeet - History"` under CuaDriver. Confirm the window disappears.
 
 ## Gotchas
 
-- This machine's real history file is `~/Library/Application Support/Superkeet/history.json`. Do not delete it to force an empty state.
-- `Clear All` permanently deletes every record. Never use it in a verify run.
-- `Turn On History` changes the real `Save History` default. Never click it in a verify run.
-- Empty-state copy depends on `Save History`. Read the heading that is actually on screen; do not expect both empty states in one pass.
-- The window title includes a space-hyphen-space: `Superkeet - History`.
+- History uses `~/Library/Application Support/Superkeet/history.json`. Never remove or rewrite it to manufacture a fixture.
+- `Clear All` deletes records. It is outside this inspection journey.
+- `Turn On History` changes the real profile. Do not use it as setup.
+- A missing fixture is a failed precondition for search/copy, not permission to claim those features from an empty-state screenshot.
+- Opening History through the menu does not verify its keyboard equivalent.
