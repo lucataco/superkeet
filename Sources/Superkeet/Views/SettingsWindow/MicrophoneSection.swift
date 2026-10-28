@@ -29,7 +29,7 @@ struct MicrophoneSection: View {
             if let deviceChangeStatus {
                 Text(deviceChangeStatus).foregroundStyle(.secondary)
             } else {
-                Text("Leave as System Default to use your Mac's default input device. The speech engine restarts automatically when you change this.")
+                Text("Leave as System Default to use your Mac's default input device. Changes apply to your next recording.")
             }
         }
         .onAppear {
@@ -55,7 +55,7 @@ struct MicrophoneSection: View {
             deviceChangeStatus = nil
         case .restarting:
             microphoneLog.info("Restarting engine for microphone change")
-            deviceChangeStatus = "Restarting the speech engine with the new microphone…"
+            deviceChangeStatus = "Switching to the new microphone…"
         case .deferredUntilIdle:
             microphoneLog.info("Microphone change deferred until the current take finishes")
             deviceChangeStatus = "The new microphone will be used as soon as the current recording finishes."

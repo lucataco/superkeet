@@ -136,7 +136,7 @@ swift build -c release
 
 On first launch, Superkeet downloads the on-device speech model (~670 MB, INT8) once via the bundled engine's `parakeet download --progress json`. The download starts on the first onboarding screen and shows its progress in a footer bar while you grant permissions and pick an output mode, and the daemon start path provisions the model automatically if it is still missing (for example, if onboarding was skipped). The model is stored at `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3/` and verified by SHA-256, so subsequent launches reuse it and require no network.
 
-After the model is present, Superkeet starts the bundled Parakeet daemon in the background and waits for it to finish loading instead of failing after a fixed delay. If startup fails, the General tab shows the latest diagnostics and daemon stderr excerpt, and the Speech Model check offers a retry/re-download.
+After the model is present, Superkeet starts the bundled Parakeet daemon in the background and waits for it to finish loading instead of failing after a fixed delay. If startup fails, Settings > Advanced > Troubleshooting shows the latest diagnostics and daemon stderr excerpt, and the Speech Model check in General offers a retry/re-download.
 
 ## Usage
 
@@ -307,9 +307,9 @@ If needed:
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-### App says `Failed to start Parakeet`
+### App says `Superkeet couldn't start dictation`
 
-Open `Settings > General` and check the Setup Checklist and Diagnostics:
+Open `Settings > General` and check the Setup Checklist, then `Settings > Advanced > Troubleshooting`:
 
 - Speech engine path
 - Runtime directory status

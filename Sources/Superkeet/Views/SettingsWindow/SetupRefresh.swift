@@ -2,7 +2,6 @@ import AVFoundation
 
 @MainActor
 enum SetupRefresh {
-    /// Advanced calls this too, because the General tab's state is not alive while Advanced is shown.
     @discardableResult
     static func run() -> AppReadinessReport {
         let settings = AppSettings.shared
