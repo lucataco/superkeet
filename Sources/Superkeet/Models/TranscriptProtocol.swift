@@ -87,11 +87,11 @@ enum TranscriptProtocolError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidMessage:
-            return "The speech engine sent an invalid transcript message. Rebuild or reinstall the compatible speech engine."
+            return "Superkeet got a transcript it couldn't read. Reinstall Superkeet."
         case .messageTooLarge:
             return "The transcript exceeded the 8 MB message limit. It was not delivered because it could be incomplete."
         case .incompleteMessage:
-            return "The speech engine closed its output before the transcript message was complete."
+            return "The transcript was cut off. Try again."
         }
     }
 }

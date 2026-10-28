@@ -1,6 +1,6 @@
 enum SetupSummary: Equatable {
     case ready
-    case downloadingModel(percent: Int?, needsAccessibility: Bool)
+    case downloadingModel(percent: Int?, needsAccessibility: Bool, autoPaste: Bool)
     case needsAccessibility(autoPaste: Bool)
     case needsAttention([AppReadinessIssue])
 
@@ -13,7 +13,7 @@ enum SetupSummary: Equatable {
         }
         let needsAccessibility = shown.contains(.accessibility)
         if modelDownloading {
-            return .downloadingModel(percent: downloadPercent(model), needsAccessibility: needsAccessibility)
+            return .downloadingModel(percent: downloadPercent(model), needsAccessibility: needsAccessibility, autoPaste: autoPasteEnabled)
         }
         if needsAccessibility {
             return .needsAccessibility(autoPaste: autoPasteEnabled)
@@ -41,11 +41,16 @@ enum SetupSummary: Equatable {
         switch self {
         case .ready:
             return "Press \(toggleShortcut) to start dictating, then press it again to stop."
-        case .downloadingModel(let percent, let needsAccessibility):
+        case .downloadingModel(let percent, let needsAccessibility, let autoPaste):
             let progress = percent.map { " (\($0)%)" } ?? ""
-            let next = needsAccessibility
-                ? "Turn on Accessibility now so \(toggleShortcut) works when it finishes."
-                : "Dictation works as soon as it finishes."
+            let next: String
+            if !needsAccessibility {
+                next = "Dictation works as soon as it finishes."
+            } else if autoPaste {
+                next = "Turn on Accessibility now so \(toggleShortcut) and automatic paste work when it finishes."
+            } else {
+                next = "Turn on Accessibility now so \(toggleShortcut) works when it finishes."
+            }
             return "The speech model is downloading\(progress). \(next)"
         case .needsAccessibility(autoPaste: false):
             return "Turn on Accessibility so \(toggleShortcut) works in every app. Until then, click the menu bar icon and choose Start Recording."

@@ -510,7 +510,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         if active {
             setStatusImage("wand.and.stars", tint: .systemPurple, description: "Superkeet - Working")
         } else if isWaitingForEngine {
-            setStatusImage("hourglass", tint: .systemOrange, description: "Superkeet - Starting speech engine")
+            setStatusImage("hourglass", tint: .systemOrange, description: "Superkeet - Getting ready")
         } else if listening {
             setStatusImage("waveform", tint: .systemBlue, description: "Superkeet - Listening")
         } else if parakeetService.daemonState == .transcribing {

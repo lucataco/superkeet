@@ -144,7 +144,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         await MainActor.run {
             self.lastUserFacingError = nil
             self.lastDiagnosticsSummary = nil
-            self.startupStatusDetail = "Starting daemon"
+            self.startupStatusDetail = "Starting"
             self.outputStream = TranscriptEventStream()
             self.autoRestartTask?.cancel()
             self.autoRestartTask = nil
@@ -276,9 +276,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     self.startupStatusDetail = "Startup failed"
                     self.settings.runtimeIssue = self.lastUserFacingError
                 } else if previousState == .idle || previousState == .recording || previousState == .transcribing {
-                    let message = "Speech engine exited unexpectedly (code \(proc.terminationStatus)). Restarting..."
-                    parakeetLog.warning("\(message, privacy: .public)")
-                    self.settings.runtimeIssue = message
+                    parakeetLog.warning("Speech engine exited unexpectedly (code \(proc.terminationStatus, privacy: .public)). Restarting...")
+                    self.settings.runtimeIssue = "Dictation stopped unexpectedly. Restarting…"
                 }
 
                 self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
@@ -293,7 +292,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 self.settings.isDaemonRunning = false
                 self.settings.isRecording = false
                 if self.outputGate.sessionID != nil {
-                    self.failSession("The speech engine exited before transcription completed.")
+                    self.failSession("Dictation stopped before the transcript was ready. Try again.")
                 }
 
                 if previousState == .idle || previousState == .recording || previousState == .transcribing {
@@ -389,7 +388,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             self.autoRestartTask?.cancel()
             self.autoRestartTask = nil
             if self.outputGate.sessionID != nil {
-                self.failSession("Transcription interrupted because the speech engine stopped.")
+                self.failSession("Dictation stopped before the transcript was ready. Try again.")
             }
             self.daemonState = .stopping
             self.outputStream = TranscriptEventStream()
@@ -494,7 +493,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             } catch {
                 parakeetLog.error("Engine restart after settings change failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
-                    self.settings.runtimeIssue = "Couldn't restart the speech engine with the new settings: \(error.localizedDescription)"
+                    self.settings.runtimeIssue = "Couldn't apply the new settings: \(error.localizedDescription)"
                 }
             }
         }
@@ -570,7 +569,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 failSession("Couldn't start recording: \(reason)")
                 return false
             }
-            failSession("Couldn't start recording — is the speech engine running?")
+            failSession("Couldn't start recording. Try again.")
             stopUnresponsiveEngine()
             return false
         }
@@ -621,7 +620,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     return
                 }
                 parakeetLog.error("stop command failed: \(response, privacy: .public)")
-                self.failSession("Couldn't confirm stop with the speech engine. Try recording again.")
+                self.failSession("Couldn't stop the recording cleanly. Try again.")
                 self.stopUnresponsiveEngine()
             }
         }
@@ -675,7 +674,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     return
                 } catch {
                     parakeetLog.error("Engine restart after a stuck cancel failed: \(error.localizedDescription, privacy: .public)")
-                    self.settings.runtimeIssue = "The speech engine got stuck and couldn't restart: \(error.localizedDescription)"
+                    self.settings.runtimeIssue = "Dictation got stuck and couldn't restart: \(error.localizedDescription)"
                 }
             }
         }
@@ -789,7 +788,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
 
         guard connectResult == 0 else {
             parakeetLog.error("Failed to connect to socket at \(socketPath, privacy: .public): \(errno)")
-            return SocketCommandResult(response: nil, runtimeIssue: "Superkeet could not reach the speech engine. Try relaunching the app.")
+            return SocketCommandResult(response: nil, runtimeIssue: "Dictation isn't responding. Quit and reopen Superkeet.")
         }
 
         let request = SocketCommand(
@@ -892,7 +891,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         } catch {
             parakeetLog.error("Speech engine output ended mid-message: \(error.localizedDescription, privacy: .public)")
         }
-        if outputGate.sessionID != nil { failSession("The speech engine exited before transcription completed.") }
+        if outputGate.sessionID != nil { failSession("Dictation stopped before the transcript was ready. Try again.") }
         stopUnresponsiveEngine()
     }
 
@@ -1139,7 +1138,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             try await Task.sleep(nanoseconds: Self.startupPollIntervalNanoseconds)
         }
 
-        let detail = "Parakeet did not become ready within \(Self.startupTimeoutNanoseconds / 1_000_000_000) seconds."
+        let detail = "Dictation took more than \(Self.startupTimeoutNanoseconds / 1_000_000_000) seconds to start."
         let diagnostics = await MainActor.run { self.recentStderrExcerpt() }
         await publishStartupFailure(detail, diagnostics: diagnostics)
         throw NSError(domain: "ParakeetService", code: 6, userInfo: [
@@ -1196,7 +1195,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             return "Ready"
         }
         if stderr.contains("listening on socket") {
-            return "Waiting for daemon response"
+            return "Almost ready"
         }
         if stderr.contains("loading parakeet model") {
             return "Loading model"
@@ -1204,7 +1203,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         if stderr.contains("silero") {
             return "Loading VAD"
         }
-        return "Starting daemon"
+        return "Starting"
     }
 
     private func terminateProcess(pid: pid_t) async {
@@ -1245,14 +1244,13 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @MainActor
     private func scheduleAutoRestart(afterUnexpectedExitOf process: Process) {
         guard let delay = autoRestartPolicy.nextDelay() else {
-            settings.runtimeIssue = "Speech engine exited repeatedly. Open Settings to review diagnostics before restarting it again."
+            settings.runtimeIssue = "Dictation keeps stopping. Open Settings > Advanced > Troubleshooting for details."
             startupStatusDetail = "Restart paused"
             return
         }
 
-        let message = "Speech engine exited unexpectedly (code \(process.terminationStatus)). Restarting in \(Int(delay))s..."
-        parakeetLog.info("\(message, privacy: .public)")
-        settings.runtimeIssue = message
+        parakeetLog.info("Speech engine exited unexpectedly (code \(process.terminationStatus, privacy: .public)). Restarting in \(Int(delay), privacy: .public)s...")
+        settings.runtimeIssue = "Dictation stopped unexpectedly. Restarting in \(Int(delay))s…"
 
         autoRestartTask?.cancel()
         autoRestartTask = Task { [weak self] in
@@ -1265,7 +1263,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 }
             } catch {
                 await MainActor.run {
-                    self?.settings.runtimeIssue = "Failed to restart speech engine: \(error.localizedDescription)"
+                    self?.settings.runtimeIssue = "Couldn't restart dictation: \(error.localizedDescription)"
                 }
             }
         }
