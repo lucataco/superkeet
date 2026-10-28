@@ -11,20 +11,27 @@ Never drive an instance this run did not start. Superkeet has one UserDefaults d
 
 ## Launch
 
-Prefer the already-installed bundle. Do not run `./install.sh` as part of a verify run — that overwrites the user's app.
+Prefer the already-installed bundle. Override it with `SUPERKEET_APP=/path/to/Superkeet.app` or `--app`. Candidates, in order: `$SUPERKEET_APP`, `/Applications/Superkeet.app`, `~/Applications/Superkeet.app`.
 
 ```bash
 CONTROL=".cursor/skills/verify-superkeet/scripts/control-superkeet"
 "$CONTROL" launch
 ```
 
-Override the bundle with `SUPERKEET_APP=/path/to/Superkeet.app` or `--app`. Candidates, in order: `$SUPERKEET_APP`, `/Applications/Superkeet.app`, `~/Applications/Superkeet.app`.
+If no bundle exists, or the proof must cover uncommitted source, build into the ignored verification directory (never over the user's installed app), then launch that exact bundle:
+
+```bash
+INSTALL_DIR="$PWD/.build/verification" CODESIGN_IDENTITY=- ./install.sh
+"$CONTROL" launch --app "$PWD/.build/verification/Superkeet.app"
+```
+
+`install.sh` requires Swift, Rust/Cargo, and a protocol-1 or protocol-2 `parakeet` engine; it builds the pinned engine when none is available.
 
 Ready when `launch` prints `launched pid=…` and `doctor` prints `doctor ok`. First-run onboarding opens a window titled `Superkeet Setup`; that is still a healthy launch. The speech model (~670 MB) lives at `~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3/` and is not re-downloaded by launch.
 
 If Superkeet is already running and `.run/state` does not own that pid, `launch` exits non-zero. Quit the foreign instance yourself, or stop. Do not `killall Superkeet`.
 
-To verify uncommitted source changes, the operator installs a current bundle first (`./install.sh`), then this skill launches that bundle. `swift run` is not the verify path: it is unbundled, misses TCC (Microphone / Accessibility), and still shares UserDefaults.
+`swift run` is not the verify path: it is unbundled, misses TCC (Microphone / Accessibility), and still shares UserDefaults. There is no supported isolated data-directory override. Verification therefore uses the real local profile read-only where possible; never reset UserDefaults or delete history/model files to manufacture a first-run or empty state.
 
 ## Doctor
 
@@ -34,11 +41,31 @@ Run this first whenever anything looks off:
 "$CONTROL" doctor
 ```
 
-It checks: a verify-owned pid is live, no extra Superkeet processes, bundle path matches launch, System Events can see the process, and a status extra whose AX description starts with `Superkeet` exists (usually menu bar 1 on this LSUIElement). It prints version and `hasCompletedOnboarding`. A foreign instance fails doctor on purpose.
+It checks: a verify-owned pid is live, no extra Superkeet processes, bundle path matches launch, the selected driver has its permissions, and (with System Events) a status extra whose AX description starts with `Superkeet` exists. It prints version and `hasCompletedOnboarding`. A foreign instance fails doctor on purpose.
+
+If the host cannot automate System Events (common over SSH), use the installed [CuaDriver](https://github.com/trycua/cua) as the AX backend:
+
+```bash
+cua-driver permissions grant
+SUPERKEET_VERIFY_DRIVER=cua "$CONTROL" launch --app "$PWD/.build/verification/Superkeet.app"
+"$CONTROL" doctor
+```
+
+CuaDriver cannot enumerate an `NSStatusItem` menu. In this mode doctor prints `menu-bar extra: visual-check-required`; it does not claim the menu was verified. Window commands use CuaDriver's AX tokens. For the initial menu entry only, capture the desktop, locate Superkeet's waveform and then the desired menu title in the images, and click their **native screenshot pixel** coordinates:
+
+```bash
+"$CONTROL" desktop-screenshot --path .cursor/skills/verify-superkeet/artifacts/settings/desktop.png
+"$CONTROL" desktop-click --x 2790 --y 40
+"$CONTROL" desktop-screenshot --path .cursor/skills/verify-superkeet/artifacts/settings/menu.png
+"$CONTROL" desktop-click --x 2920 --y 565
+"$CONTROL" windows
+```
+
+Prefer the System Events exact-title path whenever available. Do not reuse the example coordinates on another display or after the menu layout changes.
 
 ## Drive
 
-Harness: `control-superkeet`. Stable handles are menu titles, window titles, and AX names. Do not click by coordinate or tab order.
+Harness: `control-superkeet`. Stable handles are menu titles, window titles, and AX names. Do not click by coordinate or tab order except for the documented CuaDriver status-item fallback and the numbered Settings sidebar rows.
 
 ```bash
 "$CONTROL" menu dump
@@ -61,9 +88,9 @@ Windows:
 - History: `Superkeet - History`
 - Setup: `Superkeet Setup`
 
-Sidebar tabs in Settings (`SettingsView`): `General`, `Output & Privacy`, `Actions` (hidden below macOS 26), `Advanced`, `About`. Click the row name. `exists` and `click` walk the SwiftUI tree (the Settings window title is empty and labels sit several AX groups deep). General must show `Setup Checklist` items `Microphone access`, `Speech engine`, `Speech model`, `Input device`, `Runtime directory`, `Accessibility access`. About must show `Version <short> (<build>)` and `100% Private & Offline`.
+Sidebar tabs in Settings (`SettingsView`): `General`, `Output & Privacy`, `Actions` (hidden below macOS 26), `Advanced`, `About`. Click the row name. `exists` and `click` walk the SwiftUI tree (the Settings window title is empty and labels sit several AX groups deep). General must show `Setup Checklist`; incomplete checks are shown by default and `Show all` reveals the rest. About must show `Version <short> (<build>)`, `On-device speech recognition`, and the privacy explanation beginning `Your audio and transcripts are processed on your Mac`.
 
-Read the feature map under `features/` before driving. Start every recipe from the baseline there.
+Read the feature map under `features/` before driving. Start every recipe from the baseline there. With the CuaDriver backend, `menu dump` / `menu click` are unavailable; use the visual menu entry above, then the same `windows`, `exists`, `click`, `snapshot`, and `screenshot` commands. Features that require textual menu dumps remain unverified in CuaDriver-only mode.
 
 ## Evidence
 
@@ -89,7 +116,7 @@ If this run did not launch Superkeet, cleanup only clears stale state and leaves
 
 ## Helpers
 
-`scripts/control-superkeet` is executable. From the repo root:
+`scripts/control-superkeet` and its CuaDriver backend `scripts/cua_superkeet.py` are executable. Invoke the backend through `control-superkeet`, not directly. From the repo root:
 
 ```bash
 .cursor/skills/verify-superkeet/scripts/control-superkeet --help
