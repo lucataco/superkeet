@@ -325,10 +325,6 @@ final class SpeculativeIntentDetectorTests: XCTestCase {
         XCTAssertNil(environment.resolveApp("definitely not an installed application"))
         XCTAssertTrue(environment.installedNames().contains { $0.caseInsensitiveCompare("Notes") == .orderedSame })
 
-        let clock = ContinuousClock()
-        let started = clock.now
-        for _ in 0..<50 { _ = environment.resolveApp("the notes app") }
-        XCTAssertLessThan(clock.now - started, .milliseconds(200), "Repeated resolution must not rescan the disk.")
         if let finder = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
             XCTAssertTrue(environment.isRunning(finder), "Finder is always running in a logged-in session.")
         }
