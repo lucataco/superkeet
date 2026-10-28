@@ -951,9 +951,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         let partial = event.isPartial && !raw.isEmpty
         if !raw.isEmpty { processTranscription(raw, isPartial: partial) }
         if partial {
-            let detail = event.message ?? "\(event.failedSegments ?? 0) failed segments, \(event.droppedSamples ?? 0) dropped samples"
-            parakeetLog.warning("Partial transcript: \(detail, privacy: .public)")
-            sessionStatus = "Part of the recording couldn't be transcribed. The rest was copied."
+            parakeetLog.warning("Partial transcript: \(event.failedSegments ?? 0, privacy: .public) failed segments, \(event.droppedSamples ?? 0, privacy: .public) dropped samples, engine message: \(event.message ?? "none", privacy: .private)")
+            sessionStatus = "Part of the recording couldn't be transcribed."
             lastUserFacingError = sessionStatus
             settings.runtimeIssue = sessionStatus
         } else if event.status == "error" || (event.isPartial && raw.isEmpty) {
