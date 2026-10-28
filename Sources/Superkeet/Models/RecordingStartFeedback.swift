@@ -12,11 +12,11 @@ enum RecordingStartFeedback: Equatable {
     /// Spoken by VoiceOver and shown as the menu bar tooltip.
     var status: String {
         switch self {
-        case .waitingForEngine: return "Starting speech engine…"
+        case .waitingForEngine: return "Getting ready…"
         case .microphoneDenied: return "Microphone access needed"
-        case .engineFailed: return "Couldn't start the speech engine. See Settings for details."
+        case .engineFailed: return "Couldn't start dictation. Open Settings for details."
         case .notStarted: return "Recording didn't start"
-        case .releasedEarly: return "Released before recording started. Hold the shortcut until you hear the start sound."
+        case .releasedEarly: return "Released before recording started. Hold the shortcut until recording begins."
         }
     }
 
@@ -25,7 +25,7 @@ enum RecordingStartFeedback: Equatable {
         switch self {
         case .waitingForEngine: return "Getting ready…"
         case .microphoneDenied: return "Mic access needed"
-        case .engineFailed: return "Engine didn't start"
+        case .engineFailed: return "Couldn't start"
         case .notStarted: return "Recording didn't start"
         case .releasedEarly: return "Released too early"
         }

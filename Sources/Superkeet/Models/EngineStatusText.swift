@@ -15,13 +15,13 @@ enum EngineStatusText {
             break
         }
         switch daemonState {
-        case .starting: return "Starting speech engine…"
-        case .stopping: return "Stopping speech engine…"
+        case .starting: return "Getting ready…"
+        case .stopping: return "Stopping…"
         default: break
         }
-        if case .notInstalled = model { return "Speech model not installed — run Setup" }
-        if case .failed = model { return "Speech model download failed — see Settings" }
-        if runtimeIssue != nil { return "Speech engine stopped — see Settings" }
-        return "Ready — the engine starts when you record"
+        if case .notInstalled = model { return "Speech model missing. Open Settings to download it." }
+        if case .failed = model { return "Speech model download failed. Open Settings to retry." }
+        if runtimeIssue != nil { return "Dictation stopped. Open Settings for details." }
+        return "Ready"
     }
 }
