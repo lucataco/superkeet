@@ -186,7 +186,7 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testShortcutAgainRunsPendingSpeechAndCloses() async {
-        let fixture = makeFixture()
+        let fixture = makeFixture(silence: .milliseconds(300))
         fixture.controller.toggle()
         fixture.transcript.send("open Notes")
         await settle()
@@ -195,7 +195,7 @@ final class ListeningSessionControllerTests: XCTestCase {
         XCTAssertEqual(fixture.recorder.stops, 1)
         XCTAssertEqual(fixture.recorder.warmStops, 0, "Closing the session releases the microphone.")
         XCTAssertEqual(fixture.recorder.cancels, 0)
-        await settle(.milliseconds(120))
+        await settle(.milliseconds(600))
         XCTAssertEqual(fixture.recorder.stops, 1, "The pause timer died with the session.")
         fixture.daemonState.send(.idle)
         await settle()
