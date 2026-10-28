@@ -16,6 +16,16 @@ final class RecordingStartFeedbackTests: XCTestCase {
         }
     }
 
+    func testOutcomeLabelsFitTheNarrowestOverlay() {
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let room = min(RecordingOverlayWindowController.gradientIslandSize.width, 180)
+        let outcomes: [TranscriptOutcome] = [.copied, .pasted, .done, .partial, .noSpeech, .failed, .command, .ignored]
+        for outcome in outcomes {
+            let width = (outcome.label as NSString).size(withAttributes: [.font: font]).width + 14 + 8 + 28
+            XCTAssertLessThanOrEqual(width, room, "\(outcome.label) would be cut off")
+        }
+    }
+
     func testEveryProblemSaysSomethingDifferent() {
         XCTAssertEqual(Set(all.map(\.notice)).count, all.count)
         XCTAssertEqual(Set(all.map(\.status)).count, all.count)

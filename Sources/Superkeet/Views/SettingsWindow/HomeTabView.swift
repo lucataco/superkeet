@@ -306,8 +306,8 @@ struct HomeTabView: View {
             }
             if isReadyForSelectedConfiguration {
                 return parakeetService.daemonState == .starting
-                    ? "Starting the speech engine…"
-                    : "Start the speech engine from Troubleshooting in Advanced to finish setup."
+                    ? "Getting ready…"
+                    : "Click Start Speech Engine in Advanced > Troubleshooting to finish setup."
             }
             if configuredOutputBlocked {
                 return "Grant Accessibility to enable \(selectedOutputModeName)."

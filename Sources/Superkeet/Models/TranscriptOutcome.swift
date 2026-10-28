@@ -15,7 +15,7 @@ enum TranscriptOutcome: Equatable, Sendable {
         case .copied: return "Copied"
         case .pasted: return "Pasted"
         case .done: return "Done"
-        case .partial: return "Some speech was missed"
+        case .partial: return "Some speech missed"
         case .noSpeech: return "No speech detected"
         case .failed: return "Transcription failed"
         case .command: return "Working on it…"

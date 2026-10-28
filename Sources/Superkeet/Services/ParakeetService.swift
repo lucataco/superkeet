@@ -269,7 +269,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 let previousState = self.daemonState
 
                 if previousState == .starting {
-                    let detail = "Parakeet exited during startup with code \(proc.terminationStatus)."
+                    parakeetLog.error("Engine exited during startup with code \(proc.terminationStatus, privacy: .public)")
+                    let detail = "Dictation couldn't start. Try again."
                     let diagnostics = self.recentStderrExcerpt()
                     self.lastUserFacingError = diagnostics.map { "\(detail)\n\n\($0)" } ?? detail
                     self.lastDiagnosticsSummary = diagnostics
@@ -305,7 +306,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         do {
             try process.run()
         } catch {
-            let detail = "Superkeet could not launch Parakeet at \(binaryPath). \(error.localizedDescription)"
+            parakeetLog.error("Could not launch engine at \(binaryPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            let detail = "A required part of Superkeet couldn't open. Reinstall Superkeet."
             await publishStartupFailure(detail, diagnostics: diagnosticSummary(readiness: readiness))
             throw error
         }
@@ -1123,7 +1125,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             }
 
             if !process.isRunning {
-                let detail = "Parakeet exited during startup with code \(process.terminationStatus)."
+                parakeetLog.error("Engine exited during startup with code \(process.terminationStatus, privacy: .public)")
+                let detail = "Dictation couldn't start. Try again."
                 let diagnostics = await MainActor.run { self.recentStderrExcerpt() }
                 await publishStartupFailure(detail, diagnostics: diagnostics)
                 throw NSError(domain: "ParakeetService", code: 5, userInfo: [

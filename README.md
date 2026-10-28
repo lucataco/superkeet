@@ -153,7 +153,7 @@ Click the menu bar icon to:
 
 For dictation, the icon turns red while recording and orange while transcribing.
 The recording overlay stays up through “Transcribing…” and then flashes the
-result — Copied, Pasted, Partial transcript, No speech, or Failed — before
+result (Copied, Pasted, Some speech missed, No speech detected, or Transcription failed) before
 hiding. A new recording waits for that completion. Escape cancels without
 restarting the engine. Recovery and text-processing settings live in
 Output & Privacy. See [transcription preservation](docs/transcription-preservation.md)

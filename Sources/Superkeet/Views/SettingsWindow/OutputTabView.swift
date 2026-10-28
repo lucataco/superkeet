@@ -105,7 +105,7 @@ struct OutputTabView: View {
 
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
-                        behaviorRow("After recording", detail: "Transcription is processed by Parakeet")
+                        behaviorRow("After recording", detail: "Speech is turned into text on your Mac")
                         if settings.saveHistoryEnabled {
                             behaviorRow("Then", detail: "Text is saved in local history")
                         }
