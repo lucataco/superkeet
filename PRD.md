@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Product** | Superkeet, a macOS menu bar app for local voice-to-text and voice-driven actions |
-| **Current version** | 1.9.3 (`Resources/Info.plist`), with the next release in progress on `main` |
+| **Current version** | 1.9.4 (`Resources/Info.plist`), with the next release in progress on `main` |
 | **Document date** | 2026-09-20 |
 | **Status** | Living document. Derived from the shipped app, `README.md`, `docs/actions-mode.md`, `docs/transcription-preservation.md`, the release notes under `docs/releases/`, and the current source tree. Items marked *Proposed* are not yet committed to and are for discussion. |
 | **License** | MIT |
@@ -351,10 +351,10 @@ Requirement IDs are stable handles for discussion and issue tracking. "Must" is 
 
 | Tab | Contents | Status |
 |---|---|---|
-| General | Usage header (words, WPM, time saved, streak), appearance, launch at login, setup checklist, four shortcut rows with interactive recorders, recording feedback (overlay style, sounds), engine diagnostics | Shipped / In progress (fourth shortcut) |
+| General | Usage header (words, WPM, time saved, streak), appearance, launch at login, setup checklist, four shortcut rows with interactive recorders, microphone picker, recording feedback (overlay style, sounds) | Shipped / In progress (fourth shortcut) |
 | Output & Privacy | Filler removal, spoken corrections, auto-paste and clipboard behaviour, history retention, usage-stat retention and reset, last transcript recovery | Shipped |
 | Actions (macOS 26 only) | Actions Mode toggle and availability card, approval policy, "Keep listening between commands", Instant App Launch (with recogniser shown), MCP server list with Test/Reconnect/Add Default Servers, Keep Action Log, audit viewer | Shipped / In progress |
-| Advanced | Audio input device, phrase replacements (app-scoped), model directory override, idle engine shutdown, Actions step budget, tool timeout, command deadline | Shipped |
+| Advanced | Phrase replacements (app-scoped), model directory override, idle engine shutdown, Actions step budget, tool timeout, command deadline, troubleshooting (diagnostics, logs, engine restart) | Shipped |
 | About | Version, engine label (Parakeet TDT 0.6B v3, ONNX), credits | Shipped |
 
 ---
