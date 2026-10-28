@@ -18,6 +18,16 @@ final class TranscriptProtocolTests: XCTestCase {
         try stream.finish()
     }
 
+    func testCompletionWithStageTimingsStillDecodes() throws {
+        var stream = TranscriptEventStream()
+        let wire = #"{"type":"complete","session_id":"one","status":"ok","text":"Hello.","failed_segments":0,"dropped_samples":0,"duration":1.0,"inference_time":0.2,"stages":{"vad":0.02,"mel":0.01,"encoder":0.15,"decoder":0.02},"message":null}"# + "\n"
+        let events = try stream.append(Data(wire.utf8))
+        XCTAssertEqual(events.map(\.kind), [.complete])
+        XCTAssertEqual(events.first?.text, "Hello.")
+        XCTAssertEqual(events.first?.status, "ok")
+        try stream.finish()
+    }
+
     func testProtocolTwoPartialEventsCarryInterimTranscripts() throws {
         var stream = TranscriptEventStream()
         let wire = #"{"sequence":1,"session_id":"one","text":"Open the notes up","truncated":false,"type":"partial"}"# + "\n"
