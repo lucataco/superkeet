@@ -83,6 +83,13 @@ final class FillerWordCleanerTests: XCTestCase {
 
     func testPunctuationWithoutFillersIsKept() {
         XCTAssertEqual(FillerWordCleaner.clean("."), ".")
+        XCTAssertEqual(FillerWordCleaner.clean(" ."), ".")
+        XCTAssertEqual(FillerWordCleaner.clean(". "), ".")
         XCTAssertEqual(FillerWordCleaner.clean("Um, 42."), "42.")
+    }
+
+    func testSymbolsLeftAfterFillersAreKept() {
+        XCTAssertEqual(FillerWordCleaner.clean("um 🙂"), "🙂")
+        XCTAssertEqual(FillerWordCleaner.clean("um #"), "#")
     }
 }

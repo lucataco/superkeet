@@ -16,7 +16,13 @@ enum FillerWordCleaner {
             options: .regularExpression
         )
         result = result.trimmingCharacters(in: .whitespaces)
-        if result != text, !result.contains(where: { $0.isLetter || $0.isNumber }) { return "" }
+        if removedFiller(from: text), result.allSatisfy({ trailingPunctuation.contains($0) }) { return "" }
         return result
+    }
+
+    private static let trailingPunctuation: Set<Character> = [".", ",", "!", "?", "…", ";", ":"]
+
+    private static func removedFiller(from text: String) -> Bool {
+        text.range(of: fillerPattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 }
