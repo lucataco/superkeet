@@ -22,14 +22,14 @@ Preconditions:
 - `control-superkeet doctor` is clean.
 - Do not enable or disable `Save History` unless you restore it afterward.
 
-- **Open History.** Choose `History`. Run `control-superkeet menu click "History"`. `control-superkeet windows` lists a window titled `Superkeet - History`.
-- **Identity.** Run `control-superkeet exists --name "History"`. Exit 0. The heading `History` is visible.
+- **Open History.** Choose `History`. With System Events, run `control-superkeet menu click "History"`. With CuaDriver, use the visual menu entry in SKILL.md. Then `control-superkeet windows` lists a window titled `Superkeet - History`.
+- **Identity.** Run `control-superkeet exists --surface history --name "History"`. Exit 0. The heading `History` is visible.
 - **Empty, history off.** If the snapshot contains `History is off`, it also contains `Turn it on to keep future transcriptions on this Mac.` and a `Turn On History` button. No `Clear All` button.
 - **Empty, history on.** If the snapshot contains `No transcriptions yet`, it also mentions the menu bar or the toggle-recording shortcut. No rows.
 - **Search field.** `Search transcriptions…` is present whether or not rows exist. If rows exist, `Clear All` also exists. Do not click `Clear All`.
 - **Rows.** When rows exist, each shows the app name, with no icon before it, and a named age such as `2 months ago` or `yesterday`. Ages do not read as a count of months and days.
 - **Search miss.** When rows exist, type a string that cannot match (use the search field only if you can clear it). The empty title becomes `No results found`. Clear the query afterward.
-- **Proof.** Run `control-superkeet snapshot --path artifacts/history/window.ax.txt` and `control-superkeet screenshot --path artifacts/history/window.png --window "Superkeet - History"`. Both show `Superkeet - History` or the `History` heading.
+- **Proof.** Run `control-superkeet snapshot --surface history --path artifacts/history/window.ax.txt` and `control-superkeet screenshot --path artifacts/history/window.png --window "Superkeet - History"`. Both show `Superkeet - History` or the `History` heading.
 
 ## Gotchas
 

@@ -24,16 +24,23 @@ control-superkeet — drive Superkeet the way a user does
   exists --name <name>    Exit 0 if an AX element with that name exists
   click --name <name>     Click a named AX element (walks the SwiftUI tree)
   click --row <n>         Click outline row n (Settings sidebar: 1-based)
-  snapshot [--path FILE]  Dump the AX tree of Superkeet windows
-  screenshot [--path FILE] [--window TITLE]
-                          Capture a Superkeet window (or the first visible one)
-  close-window [--title T] Close a Superkeet window by title (or the front one)
+  snapshot [--path FILE]  Dump the AX tree of a Superkeet window
+  screenshot [--path FILE] [--window TITLE | --surface S]
+                          Capture a Superkeet window
+  close-window [--window TITLE | --surface S]
+                          Close a Superkeet window
+  expand --name NAME      CuaDriver only: expand a disclosure, such as "Diagnostic details"
   desktop-screenshot --path FILE
                           CuaDriver only: capture the desktop for menu coordinates
   desktop-click --x N --y N
                           CuaDriver only: click native desktop screenshot pixels
-  quit                    Quit only the Superkeet process this run launched
-  cleanup                 Close verify-opened windows and quit if we launched
+  quit                    Quit the pid this run launched (SIGTERM, then SIGKILL after 5s)
+  cleanup                 quit, if this run launched Superkeet
+
+Window selectors (windows, exists, click, snapshot, screenshot, close-window, expand):
+  --window TITLE          Exact window title
+  --surface S             settings, history, or setup (Settings has an empty title)
+  neither                 Largest on-screen Superkeet window. click --row defaults to settings.
 
 Environment:
   SUPERKEET_APP                 Bundle path override
@@ -47,19 +54,22 @@ die() { printf 'control-superkeet: %s\n' "$*" >&2; exit 1; }
 
 ensure_state_dir() { mkdir -p "$STATE_DIR"; }
 
+# Values are %q-quoted so the file stays safe to source, and a start time with spaces survives.
 write_state() {
   ensure_state_dir
-  cat >"$STATE_FILE" <<EOF
-RUN_ID=$1
-PID=$2
-BUNDLE=$3
-STARTED_AT=$4
-DRIVER=$5
-EOF
+  {
+    printf 'RUN_ID=%q\n' "$1"
+    printf 'PID=%q\n' "$2"
+    printf 'BUNDLE=%q\n' "$3"
+    printf 'STARTED_AT=%q\n' "$4"
+    printf 'DRIVER=%q\n' "$5"
+    printf 'EXEC=%q\n' "$6"
+    printf 'START=%q\n' "$7"
+  } >"$STATE_FILE"
 }
 
 read_state() {
-  RUN_ID=""; PID=""; BUNDLE=""; STARTED_AT=""; DRIVER=""
+  RUN_ID=""; PID=""; BUNDLE=""; STARTED_AT=""; DRIVER=""; EXEC=""; START=""
   if [[ -f "$STATE_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$STATE_FILE"
@@ -111,6 +121,40 @@ live_pids() {
     return 0
   fi
   die "cannot list Superkeet processes (pgrep exit $rc: ${out:-no output}). Fail closed — do not launch."
+}
+
+# Identity of a pid, so a recycled pid is never mistaken for the launched app.
+process_exec_path() {
+  ps -o comm= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || true
+}
+
+process_start_time() {
+  ps -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || true
+}
+
+# A zombie has exited, but kill -0 still succeeds on it until its parent reaps it.
+pid_alive() {
+  local state
+  kill -0 "$1" 2>/dev/null || return 1
+  state="$(ps -o stat= -p "$1" 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$state" != Z* ]]
+}
+
+# Prints why the recorded pid is not the Superkeet this run launched. Prints nothing when it is.
+identity_problem() {
+  local expected=""
+  if [[ -d "$BUNDLE" ]]; then
+    expected="$(cd -P "$BUNDLE" && pwd -P)/Contents/MacOS/$PROCESS_NAME"
+  fi
+  if [[ -z "${EXEC:-}" || -z "${START:-}" ]]; then
+    printf 'no recorded executable or start time'
+  elif [[ -z "$expected" || "$EXEC" != "$expected" ]]; then
+    printf 'recorded executable %s is not %s' "${EXEC:-empty}" "${expected:-the launched bundle}"
+  elif [[ "$(process_exec_path "$PID")" != "$EXEC" ]]; then
+    printf 'pid now runs %s' "$(process_exec_path "$PID")"
+  elif [[ "$(process_start_time "$PID")" != "$START" ]]; then
+    printf 'start time changed since launch'
+  fi
 }
 
 pid_bundle() {
@@ -222,7 +266,8 @@ cmd_launch() {
     ax_process_exists || { kill "$pid" 2>/dev/null || true; die "System Events cannot see Superkeet. Grant Accessibility to the driving app, then re-run launch."; }
   fi
 
-  write_state "$run_id" "$pid" "$bundle" "$(date +%Y-%m-%dT%H:%M:%S)" "$driver"
+  write_state "$run_id" "$pid" "$bundle" "$(date +%Y-%m-%dT%H:%M:%S)" "$driver" \
+    "$(process_exec_path "$pid")" "$(process_start_time "$pid")"
   printf 'launched pid=%s bundle=%s version=%s run=%s driver=%s\n' "$pid" "$bundle" "$version" "$run_id" "$driver"
 }
 
@@ -693,58 +738,48 @@ end run
 APPLESCRIPT
 }
 
+# Quit by the recorded pid only. AppleEvents to the app hang while a menu is open, and a
+# name-based kill could hit a Superkeet this run never started.
 cmd_quit() {
   read_state
   [[ -n "${PID:-}" ]] || die "no verify-owned Superkeet to quit"
-  if ! kill -0 "$PID" 2>/dev/null; then
+  if ! pid_alive "$PID"; then
     rm -f "$STATE_FILE"
     printf 'already exited pid=%s\n' "$PID"
     return 0
   fi
-  osascript_ok -e "tell application \"$PROCESS_NAME\" to quit" 2>/dev/null || true
-  local i
-  for i in $(seq 1 20); do
-    if ! kill -0 "$PID" 2>/dev/null; then
-      rm -f "$STATE_FILE"
-      printf 'quit pid=%s\n' "$PID"
-      return 0
-    fi
-    sleep 0.25
-  done
-  kill "$PID" 2>/dev/null || true
-  for i in $(seq 1 40); do
-    if ! kill -0 "$PID" 2>/dev/null; then
+  local problem
+  problem="$(identity_problem)"
+  if [[ -n "$problem" ]]; then
+    rm -f "$STATE_FILE"
+    printf 'pid %s: state cleared, nothing signalled (%s)\n' "$PID" "$problem"
+    return 0
+  fi
+  kill -TERM "$PID" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    if ! pid_alive "$PID"; then
       rm -f "$STATE_FILE"
       printf 'quit pid=%s (SIGTERM)\n' "$PID"
       return 0
     fi
     sleep 0.25
   done
-  if kill -0 "$PID" 2>/dev/null; then
-    die "pid $PID did not exit. Not sending KILL; inspect it by pid."
-  fi
-  rm -f "$STATE_FILE"
-  printf 'quit pid=%s (SIGTERM)\n' "$PID"
+  kill -KILL "$PID" 2>/dev/null || true
+  for _ in $(seq 1 8); do
+    if ! pid_alive "$PID"; then
+      rm -f "$STATE_FILE"
+      printf 'quit pid=%s (SIGKILL after 5s)\n' "$PID"
+      return 0
+    fi
+    sleep 0.25
+  done
+  die "pid $PID survived SIGKILL. State kept; inspect it by pid."
 }
 
+# No scripted window closes first: they can block on an open menu, and quitting closes the windows anyway.
 cmd_cleanup() {
   read_state
-  if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
-    if [[ "${DRIVER:-system-events}" == "cua" ]]; then
-      python3 "$CUA_HELPER" close-window --pid "$PID" >/dev/null 2>&1 || true
-    else
-      osascript_ok <<'APPLESCRIPT' 2>/dev/null || true
-tell application "System Events"
-  tell process "Superkeet"
-    repeat with w in windows
-      try
-        click button 1 of w
-      end try
-    end repeat
-  end tell
-end tell
-APPLESCRIPT
-    fi
+  if [[ -n "${PID:-}" ]] && pid_alive "$PID"; then
     cmd_quit
   else
     rm -f "$STATE_FILE"
@@ -759,7 +794,7 @@ main() {
   read_state
   if [[ "${DRIVER:-}" == "cua" ]]; then
     case "$cmd" in
-      windows|exists|click|snapshot|screenshot|close-window)
+      windows|exists|click|snapshot|screenshot|close-window|expand)
         require_owned
         python3 "$CUA_HELPER" "$cmd" --pid "$PID" "$@"
         return
@@ -798,6 +833,7 @@ main() {
     snapshot) cmd_snapshot "$@" ;;
     screenshot) cmd_screenshot "$@" ;;
     close-window) cmd_close_window "$@" ;;
+    expand) die "expand requires SUPERKEET_VERIFY_DRIVER=cua at launch" ;;
     desktop-screenshot|desktop-click) die "$cmd requires SUPERKEET_VERIFY_DRIVER=cua at launch" ;;
     quit) cmd_quit ;;
     cleanup) cmd_cleanup ;;

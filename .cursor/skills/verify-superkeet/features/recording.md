@@ -25,9 +25,9 @@ Preconditions:
 - Overlay style is not hidden if you need overlay proof. Do not change the style unless you restore it.
 - This uses the real microphone. Do not start a take you cannot stop immediately.
 
-- **Start.** Choose `Start Recording`. Run `control-superkeet menu click "Start Recording"`.
-- **Live menu.** Run `control-superkeet menu dump`. Output includes `Stop Recording` and a `Recording…` status, or `Cancel Starting Recording` if the daemon is still coming up.
-- **Stop.** Run `control-superkeet menu click "Stop Recording"` (or `Cancel Starting Recording` if that is what appeared).
+- **Start.** Choose `Start Recording`. Run `control-superkeet menu click "Start Recording"` (System Events only).
+- **Live menu.** Run `control-superkeet menu dump` (System Events only). Output includes `Stop Recording` and a `Recording…` status, or `Cancel Starting Recording` if the daemon is still coming up.
+- **Stop.** Run `control-superkeet menu click "Stop Recording"` (System Events only) (or `Cancel Starting Recording` if that is what appeared).
 - **Outcome.** After stop, the extra returns to the idle waveform, or shows an orange transcribing state, then an overlay label from `Copied`, `Pasted`, `Some speech missed`, `No speech detected`, `Transcription failed`, or the overlay hides when there is nothing to show.
 - **Proof.** Capture `artifacts/recording/menu-live.txt` from the live dump and `artifacts/recording/after.ax.txt` plus `artifacts/recording/after.png` after stop. The live dump must contain `Stop Recording` or `Cancel Starting Recording`. Do not claim a specific transcript string unless you spoke it and it appears in History or on the clipboard.
 

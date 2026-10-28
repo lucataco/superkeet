@@ -2,7 +2,36 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
+import tempfile
+import time
+
+CALL_TIMEOUT_SECONDS = 45
+MAX_SCROLLS = 6
+EDGE_PT = 8.0
+TOLERANCE_PT = 2.0
+INDEX_RE = re.compile(r"\[(\d+)\]")
+NON_TARGET_ROLES = {"AXWindow", "AXOutline", "AXScrollArea", "AXScrollBar", "AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem"}
+SURFACES = {
+    # Settings has a hidden titlebar, so its title is empty.
+    "settings": "",
+    "history": "Superkeet - History",
+    "setup": "Superkeet Setup",
+}
+DISCLOSURES = {
+    # CuaDriver gives the disclosure triangle no element index and no frame, so its point is
+    # measured from the "Refresh" button above it. dx and dy are points from that button's
+    # top-left frame corner.
+    "Diagnostic details": {
+        "section": "Troubleshooting",
+        "label": "Diagnostic details",
+        "anchor": "Refresh",
+        "dx": 3.6,
+        "dy": 38.0,
+        "open_markers": ('AXStaticText = "Status:', 'AXStaticText = "Diagnostics:'),
+    },
+}
 
 
 def fail(message):
@@ -10,12 +39,16 @@ def fail(message):
 
 
 def call(tool, payload):
-    result = subprocess.run(
-        ["cua-driver", "call", tool, json.dumps(payload)],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["cua-driver", "call", tool, json.dumps(payload)],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=CALL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        fail(f"{tool} did not return within {CALL_TIMEOUT_SECONDS}s")
     if result.returncode != 0:
         fail(result.stderr.strip() or f"cua-driver {tool} exited {result.returncode}")
     try:
@@ -31,18 +64,61 @@ def windows(pid):
     return call("list_windows", {"pid": pid}).get("windows", [])
 
 
-def select_window(pid, title=None):
-    candidates = windows(pid)
+def window_area(window):
+    bounds = window.get("bounds") or {}
+    return float(bounds.get("width", 0)) * float(bounds.get("height", 0))
+
+
+def z_rank(window):
+    z = window.get("z_index")
+    return z if isinstance(z, int) else -1
+
+
+def pick_window(candidates, title=None, surface=None):
+    # Offscreen panels can carry the highest z_index, so only on-screen windows qualify.
+    # z_index only breaks ties, and a null z_index ranks lowest, so array order never decides.
+    eligible = [w for w in candidates if w.get("is_on_screen") is True and window_area(w) > 0]
     if title is not None:
-        candidates = [window for window in candidates if window.get("title", "") == title]
-    if not candidates:
-        suffix = f" titled {title!r}" if title is not None else ""
-        fail(f"no Superkeet window{suffix}; run windows and open the required feature first")
-    return max(candidates, key=lambda window: window.get("z_index") or -1)
+        eligible = [w for w in eligible if (w.get("title") or "") == title]
+    elif surface is not None:
+        expected = SURFACES[surface]
+        eligible = [w for w in eligible if (w.get("title") or "") == expected]
+    if not eligible:
+        return None
+    return max(eligible, key=lambda w: (window_area(w), z_rank(w), -int(w.get("window_id", 0))))
 
 
-def snapshot(pid, title=None):
-    window = select_window(pid, title)
+def select_window(pid, title=None, surface=None):
+    window = pick_window(windows(pid), title, surface)
+    if window is None:
+        if title is not None:
+            wanted = f"titled {title!r}"
+        elif surface is not None:
+            wanted = f"for surface {surface!r}"
+        else:
+            wanted = "on screen"
+        fail(f"no Superkeet window {wanted}; run windows, then open that window from the menu")
+    return window
+
+
+def describe(window):
+    bounds = window.get("bounds", {})
+    return (
+        f"window {window.get('window_id')} {window.get('title', '')!r} "
+        f"{bounds.get('width')}x{bounds.get('height')}"
+    )
+
+
+def tree_text(data):
+    text = data.get("tree_markdown")
+    if isinstance(text, str) and text.strip():
+        return text
+    reason = data.get("degraded_reason") or "no tree_markdown in the response"
+    fail(f"window {data.get('window_id')} returned no accessibility tree: {reason[:240]}")
+
+
+def snapshot(pid, title=None, surface=None):
+    window = select_window(pid, title, surface)
     data = call(
         "get_window_state",
         {
@@ -51,32 +127,38 @@ def snapshot(pid, title=None):
             "include_screenshot": False,
         },
     )
+    tree_text(data)
     return window, data
 
 
-def write_snapshot(pid, path, title=None):
-    _, data = snapshot(pid, title)
-    tree = data.get("tree_markdown", "")
+def write_snapshot(pid, path, title=None, surface=None):
+    window, data = snapshot(pid, title, surface)
+    text = tree_text(data)
     if path:
         destination = Path(path).expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(tree + "\n", encoding="utf-8")
-        print(f"wrote {destination}")
+        destination.write_text(text + "\n", encoding="utf-8")
+        print(f"wrote {destination} from {describe(window)}")
     else:
-        print(tree)
+        print(text)
 
 
-def exists(pid, name):
-    _, data = snapshot(pid)
-    tree = data.get("tree_markdown", "")
-    found = f'"{name}"' in tree or f"({name})" in tree
+def tree_has_name(text, name):
+    return f'"{name}"' in text or f"({name})" in text
+
+
+def exists(pid, name, title=None, surface=None):
+    _, data = snapshot(pid, title, surface)
+    found = tree_has_name(tree_text(data), name)
     print("yes" if found else "no")
     if not found:
         raise SystemExit(1)
 
 
-def click(pid, name=None, row=None):
-    window, data = snapshot(pid)
+def click(pid, name=None, row=None, title=None, surface=None):
+    if row is not None and title is None and surface is None:
+        surface = "settings"
+    window, data = snapshot(pid, title, surface)
     elements = data.get("elements", [])
     if row is not None:
         rows = [element for element in elements if element.get("role") == "AXRow"]
@@ -103,8 +185,151 @@ def click(pid, name=None, row=None):
     print(json.dumps(result, ensure_ascii=False))
 
 
-def screenshot(pid, path, title=None):
-    window = select_window(pid, title)
+def disclosure_open(text, spec):
+    return any(marker in text for marker in spec["open_markers"])
+
+
+def section_span(lines, heading):
+    marker = f"AXHeading ({heading})"
+    start = next((i for i, line in enumerate(lines) if marker in line), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if "AXHeading (" in lines[i]), len(lines))
+    return start + 1, end
+
+
+def section_indexes(lines, span):
+    first, last = span
+    return {int(match.group(1)) for line in lines[first:last] for match in INDEX_RE.finditer(line)}
+
+
+def covers(frame, x, y):
+    return (
+        frame["x"] - TOLERANCE_PT <= x <= frame["x"] + frame["w"] + TOLERANCE_PT
+        and frame["y"] - TOLERANCE_PT <= y <= frame["y"] + frame["h"] + TOLERANCE_PT
+    )
+
+
+def disclosure_check(text, elements, spec, bounds):
+    """Return (window_point, None) when the aim is safe, or (None, reason) to refuse the click.
+
+    The window point is in points, measured from the window's top-left corner.
+    """
+    lines = text.split("\n")
+    span = section_span(lines, spec["section"])
+    if span is None:
+        return None, f"no {spec['section']} section in the tree"
+    first, last = span
+    if not any(f"AXDisclosureTriangle ({spec['label']})" in line for line in lines[first:last]):
+        return None, f"{spec['label']!r} is not in the {spec['section']} section"
+    by_index = {element.get("element_index"): element for element in elements}
+    in_section = [
+        by_index[index]
+        for index in section_indexes(lines, span)
+        if index in by_index and by_index[index].get("frame")
+    ]
+    anchors = [
+        element
+        for element in in_section
+        if element.get("role") == "AXButton" and element.get("label") == spec["anchor"]
+    ]
+    if not anchors:
+        return None, f"no {spec['anchor']!r} button in the {spec['section']} section"
+    anchor_frame = anchors[0]["frame"]
+    row = [
+        element
+        for element in in_section
+        if element.get("role") == "AXButton" and abs(element["frame"]["y"] - anchor_frame["y"]) <= TOLERANCE_PT
+    ]
+    if len(row) < 2:
+        return None, f"{spec['anchor']!r} is not in a row of buttons"
+    screen_x = anchor_frame["x"] + spec["dx"]
+    screen_y = anchor_frame["y"] + spec["dy"]
+    for element in elements:
+        frame = element.get("frame")
+        if not frame or element.get("role") in NON_TARGET_ROLES:
+            continue
+        if covers(frame, screen_x, screen_y):
+            label = element.get("label") or element.get("role")
+            return None, f"the aim point would land on {label!r}"
+    return (screen_x - bounds["x"], screen_y - bounds["y"]), None
+
+
+def disclosure_scroll_direction(y_pt, height):
+    """Return the scroll that brings the triangle inside the window, or None when it is visible."""
+    if y_pt < EDGE_PT:
+        return "up"
+    if y_pt > height - EDGE_PT:
+        return "down"
+    return None
+
+
+def expand(pid, name, title=None, surface=None):
+    spec = DISCLOSURES.get(name)
+    if spec is None:
+        fail(f"no known disclosure {name!r}; known: {', '.join(sorted(DISCLOSURES))}")
+    window = select_window(pid, title, None if title is not None else (surface or "settings"))
+    window_id = window["window_id"]
+    bounds = window["bounds"]
+    height = bounds["height"]
+    with tempfile.TemporaryDirectory() as scratch:
+        shot = Path(scratch) / "window.png"
+        for _ in range(MAX_SCROLLS + 1):
+            data = call(
+                "get_window_state",
+                {"pid": pid, "window_id": window_id, "screenshot_out_file": str(shot)},
+            )
+            text = tree_text(data)
+            if disclosure_open(text, spec):
+                print(f"{name} already expanded in {describe(window)}")
+                return
+            width_px = data.get("screenshot_width")
+            if not width_px:
+                fail(f"no screenshot size for {describe(window)}; cannot aim a pixel click")
+            scale = width_px / bounds["width"]
+            point, reason = disclosure_check(text, data.get("elements", []), spec, bounds)
+            if reason:
+                fail(f"refusing to click {name} in {describe(window)}: {reason}. Nothing was clicked.")
+            x_pt, y_pt = point
+            direction = disclosure_scroll_direction(y_pt, height)
+            if direction is None:
+                break
+            call(
+                "scroll",
+                {
+                    "pid": pid,
+                    "window_id": window_id,
+                    "x": round(bounds["width"] * 0.6 * scale),
+                    "y": round(height * 0.5 * scale),
+                    "direction": direction,
+                    "amount": 5,
+                    "by": "page",
+                },
+            )
+        else:
+            fail(f"could not scroll {name} into view in {describe(window)}")
+
+    call(
+        "click",
+        {
+            "pid": pid,
+            "window_id": window_id,
+            "x": round(x_pt * scale),
+            "y": round(y_pt * scale),
+            "delivery_mode": "foreground",
+        },
+    )
+    for _ in range(8):
+        time.sleep(0.25)
+        after = call("get_window_state", {"pid": pid, "window_id": window_id, "include_screenshot": False})
+        if disclosure_open(tree_text(after), spec):
+            print(f"expanded {name} in {describe(window)}")
+            return
+    fail(f"clicked {name} at window point ({x_pt:.1f}, {y_pt:.1f}) but it did not expand")
+
+
+def screenshot(pid, path, title=None, surface=None):
+    window = select_window(pid, title, surface)
     destination = Path(path).expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     result = call(
@@ -118,11 +343,11 @@ def screenshot(pid, path, title=None):
     )
     if not destination.is_file():
         fail(f"screenshot was not written: {json.dumps(result, ensure_ascii=False)}")
-    print(f"wrote {destination}")
+    print(f"wrote {destination} from {describe(window)}")
 
 
-def close_window(pid, title=None):
-    window = select_window(pid, title)
+def close_window(pid, title=None, surface=None):
+    window = select_window(pid, title, surface)
     result = call(
         "hotkey",
         {
@@ -154,7 +379,9 @@ def main():
     parser.add_argument("command")
     parser.add_argument("--pid", type=int, required=False)
     parser.add_argument("--path")
-    parser.add_argument("--window", "--title", dest="window")
+    selector = parser.add_mutually_exclusive_group()
+    selector.add_argument("--window", "--title", dest="window")
+    selector.add_argument("--surface", choices=sorted(SURFACES))
     parser.add_argument("--name")
     parser.add_argument("--row", type=int)
     parser.add_argument("--x", type=float)
@@ -181,26 +408,31 @@ def main():
         for window in found:
             bounds = window.get("bounds", {})
             print(
-                f"{window.get('window_id')}\t{window.get('title', '')}\t"
+                f"{window.get('window_id')}\t{window.get('title', '')!r}\t"
                 f"{bounds.get('x')},{bounds.get('y')}\t"
-                f"{bounds.get('width')}x{bounds.get('height')}"
+                f"{bounds.get('width')}x{bounds.get('height')}\t"
+                f"on_screen={window.get('is_on_screen')}\tz={window.get('z_index')}"
             )
     elif args.command == "snapshot":
-        write_snapshot(args.pid, args.path, args.window)
+        write_snapshot(args.pid, args.path, args.window, args.surface)
     elif args.command == "exists":
         if not args.name:
             fail("exists requires --name")
-        exists(args.pid, args.name)
+        exists(args.pid, args.name, args.window, args.surface)
     elif args.command == "click":
         if args.row is None and not args.name:
             fail("click requires --name or --row")
-        click(args.pid, args.name, args.row)
+        click(args.pid, args.name, args.row, args.window, args.surface)
+    elif args.command == "expand":
+        if not args.name:
+            fail("expand requires --name, for example --name \"Diagnostic details\"")
+        expand(args.pid, args.name, args.window, args.surface)
     elif args.command == "screenshot":
         if not args.path:
             fail("screenshot requires --path")
-        screenshot(args.pid, args.path, args.window)
+        screenshot(args.pid, args.path, args.window, args.surface)
     elif args.command == "close-window":
-        close_window(args.pid, args.window)
+        close_window(args.pid, args.window, args.surface)
     else:
         fail(f"unknown command: {args.command}")
 
