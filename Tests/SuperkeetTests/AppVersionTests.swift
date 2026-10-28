@@ -7,12 +7,17 @@ final class AppVersionTests: XCTestCase {
             bundleInfo: ["CFBundleShortVersionString": "2.0"],
             developmentInfo: ["CFBundleShortVersionString": "3.0", "CFBundleVersion": "30"]
         )
-        XCTAssertEqual(version.displayString, "2.0 (2.0)")
+        XCTAssertEqual(version.displayString, "2.0")
+    }
+
+    func testDisplayStringShowsBuildOnlyWhenItDiffersFromVersion() {
+        XCTAssertEqual(AppVersion.resolve(bundleInfo: ["CFBundleShortVersionString": "1.9.3", "CFBundleVersion": "1.9.3"]).displayString, "1.9.3")
+        XCTAssertEqual(AppVersion.resolve(bundleInfo: ["CFBundleShortVersionString": "1.9.3", "CFBundleVersion": "42"]).displayString, "1.9.3 (42)")
     }
 
     func testDevelopmentFallbackAndUnknownVersion() {
         XCTAssertEqual(AppVersion.resolve(bundleInfo: [:], developmentInfo: ["CFBundleShortVersionString": "2.1", "CFBundleVersion": "21"]).displayString, "2.1 (21)")
-        XCTAssertEqual(AppVersion.resolve(bundleInfo: ["CFBundleShortVersionString": ""]).displayString, "1.0 (1.0)")
+        XCTAssertEqual(AppVersion.resolve(bundleInfo: ["CFBundleShortVersionString": ""]).displayString, "1.0")
     }
 
     func testCurrentVersionUsesRepositoryPlistWhenMainMetadataIsAbsent() throws {

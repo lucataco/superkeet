@@ -4,7 +4,9 @@ struct AppVersion: Equatable {
     let shortVersion: String
     let buildVersion: String
 
-    var displayString: String { "\(shortVersion) (\(buildVersion))" }
+    var displayString: String {
+        buildVersion == shortVersion ? shortVersion : "\(shortVersion) (\(buildVersion))"
+    }
 
     static var current: AppVersion {
         let mainInfo = Bundle.main.infoDictionary ?? [:]

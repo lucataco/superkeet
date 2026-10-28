@@ -80,7 +80,7 @@ Harness: `control-superkeet`. Stable handles are menu titles, window titles, and
 "$CONTROL" screenshot --path .cursor/skills/verify-superkeet/artifacts/<feature>/window.png --window "Superkeet - History"
 ```
 
-Exact menu titles from `MenuBarManager.swift`: `Start Recording`, `Stop Recording`, `Copy Last Transcript`, `Copy Original Transcript`, `Undo Text Changes and Copy`, `History`, `Settings...` (ASCII dots), `Run Setup Again...`, `Quit Superkeet`. When Actions Mode is on: `Start Listening for Actions` or `Run an Action…` (unicode ellipsis) or `Stop Listening`, plus `Auto-Approve Actions`. Status lines such as `Listening…` / `Recording...` / `Daemon not running` are disabled items — do not click them.
+Exact menu titles from `MenuBarManager.swift`: `Start Recording`, `Stop Recording`, `Copy Last Transcript`, `Copy Original Transcript`, `Undo Text Changes and Copy`, `History`, `Settings...` (ASCII dots), `Run Setup Again...`, `Quit Superkeet`. When Actions Mode is on: `Start Listening for Actions` or `Run an Action…` (unicode ellipsis) or `Stop Listening`, plus `Auto-Approve Actions`. Status lines such as `Listening…` / `Recording…` / `Shortcuts are off. Turn on Accessibility.` are disabled items — do not click them.
 
 Windows:
 
@@ -88,7 +88,7 @@ Windows:
 - History: `Superkeet - History`
 - Setup: `Superkeet Setup`
 
-Sidebar tabs in Settings (`SettingsView`): `General`, `Output & Privacy`, `Actions` (hidden below macOS 26), `Advanced`, `About`. Click the row name. `exists` and `click` walk the SwiftUI tree (the Settings window title is empty and labels sit several AX groups deep). General must show `Setup Checklist`; incomplete checks are shown by default and `Show all` reveals the rest. About must show `Version <short> (<build>)`, `On-device speech recognition`, and the privacy explanation beginning `Your audio and transcripts are processed on your Mac`.
+Sidebar tabs in Settings (`SettingsView`): `General`, `Output & Privacy`, `Actions` (hidden below macOS 26), `Advanced`, `About`. Click the row name. `exists` and `click` walk the SwiftUI tree (the Settings window title is empty and labels sit several AX groups deep). General must show `Setup Checklist`; incomplete checks are shown by default and `Show all` reveals the rest. About must show `Version <short>` (the build is added in parentheses only when it differs from the short version), `On-device speech recognition`, and the privacy explanation beginning `Your audio and transcripts are processed on your Mac`.
 
 Read the feature map under `features/` before driving. Start every recipe from the baseline there. With the CuaDriver backend, `menu dump` / `menu click` are unavailable; use the visual menu entry above, then the same `windows`, `exists`, `click`, `snapshot`, and `screenshot` commands. Features that require textual menu dumps remain unverified in CuaDriver-only mode.
 

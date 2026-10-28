@@ -5,9 +5,9 @@ History lets a user browse saved transcriptions, search them, copy a row, and se
 ## Sub-features
 
 - `history-open` opens the History window from the menu.
-- `history-empty-off` shows `History is off` when Save History is disabled.
+- `history-empty-off` shows `History is off` with a `Turn On History` button when Save History is disabled.
 - `history-empty-on` shows `No transcriptions yet` when Save History is on and the list is empty.
-- `history-search` filters rows from `Search transcriptions...` and shows `No results found` when nothing matches.
+- `history-search` filters rows from `Search transcriptions…` and shows `No results found` when nothing matches.
 - `history-copy` copies a row via double-click, ⌘C, or `Copy Text`.
 
 ## How to get to it (user POV)
@@ -24,9 +24,10 @@ Preconditions:
 
 - **Open History.** Choose `History`. Run `control-superkeet menu click "History"`. `control-superkeet windows` lists a window titled `Superkeet - History`.
 - **Identity.** Run `control-superkeet exists --name "History"`. Exit 0. The heading `History` is visible.
-- **Empty, history off.** If the snapshot contains `History is off`, it also contains `Turn on Save History in Settings > Output & Privacy`. No `Clear All` button.
+- **Empty, history off.** If the snapshot contains `History is off`, it also contains `Turn it on to keep future transcriptions on this Mac.` and a `Turn On History` button. No `Clear All` button.
 - **Empty, history on.** If the snapshot contains `No transcriptions yet`, it also mentions the menu bar or the toggle-recording shortcut. No rows.
-- **Search field.** `Search transcriptions...` is present whether or not rows exist. If rows exist, `Clear All` also exists. Do not click `Clear All`.
+- **Search field.** `Search transcriptions…` is present whether or not rows exist. If rows exist, `Clear All` also exists. Do not click `Clear All`.
+- **Rows.** When rows exist, each shows the app name, with no icon before it, and a named age such as `2 months ago` or `yesterday`. Ages do not read as a count of months and days.
 - **Search miss.** When rows exist, type a string that cannot match (use the search field only if you can clear it). The empty title becomes `No results found`. Clear the query afterward.
 - **Proof.** Run `control-superkeet snapshot --path artifacts/history/window.ax.txt` and `control-superkeet screenshot --path artifacts/history/window.png --window "Superkeet - History"`. Both show `Superkeet - History` or the `History` heading.
 
@@ -34,5 +35,6 @@ Preconditions:
 
 - This machine's real history file is `~/Library/Application Support/Superkeet/history.json`. Do not delete it to force an empty state.
 - `Clear All` permanently deletes every record. Never use it in a verify run.
+- `Turn On History` changes the real `Save History` default. Never click it in a verify run.
 - Empty-state copy depends on `Save History`. Read the heading that is actually on screen; do not expect both empty states in one pass.
 - The window title includes a space-hyphen-space: `Superkeet - History`.

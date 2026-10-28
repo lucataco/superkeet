@@ -9,7 +9,13 @@ struct AboutTabView: View {
     private let licenseURL = URL(string: "https://creativecommons.org/licenses/by/4.0/")
 
     var body: some View {
-        VStack(spacing: 24) {
+        ScrollView {
+            aboutContent
+        }
+    }
+
+    private var aboutContent: some View {
+        VStack(spacing: 16) {
             Spacer()
 
             AppIconView()
@@ -25,10 +31,11 @@ struct AboutTabView: View {
 
             updateSection
 
-            Text("Voice-to-text powered by Parakeet — an on-device speech recognition engine using NVIDIA's Parakeet TDT 0.6B model.")
+            Text("Voice-to-text powered by Parakeet, an on-device speech recognition engine using NVIDIA's Parakeet TDT 0.6B model.")
                 .font(.body)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 40)
 
             Divider()
@@ -53,10 +60,11 @@ struct AboutTabView: View {
                 .padding(.horizontal, 60)
 
             VStack(spacing: 8) {
-                Text("Your audio and transcripts are processed on your Mac and never sent to the cloud. Superkeet goes online only to download the speech model, and to run any MCP servers you enable in Actions Mode.")
+                Text("Your audio and transcripts are processed on your Mac and never sent to the cloud. Superkeet goes online only to download the speech model, to run any MCP servers you enable in Actions Mode, and to check for updates when you ask.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 40)
 
                 HStack(spacing: 16) {

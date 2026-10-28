@@ -5,7 +5,7 @@ Recording lets a user capture a take from the menu, watch the extra and overlay 
 ## Sub-features
 
 - `record-start` starts a take from `Start Recording`.
-- `record-status` shows `Recording...` in the menu while the take is live.
+- `record-status` shows `Recording…` in the menu while the take is live.
 - `record-stop` stops from `Stop Recording` and leaves the overlay up through `Transcribing…` if speech was captured.
 - `record-cancel` cancels a start or a live take without producing a kept result.
 - `record-outcome` flashes `Copied`, `Pasted`, `Partial transcript copied`, `No speech detected`, or `Transcription failed`.
@@ -26,7 +26,7 @@ Preconditions:
 - This uses the real microphone. Do not start a take you cannot stop immediately.
 
 - **Start.** Choose `Start Recording`. Run `control-superkeet menu click "Start Recording"`.
-- **Live menu.** Run `control-superkeet menu dump`. Output includes `Stop Recording` and a `Recording...` status, or `Cancel Starting Recording` if the daemon is still coming up.
+- **Live menu.** Run `control-superkeet menu dump`. Output includes `Stop Recording` and a `Recording…` status, or `Cancel Starting Recording` if the daemon is still coming up.
 - **Stop.** Run `control-superkeet menu click "Stop Recording"` (or `Cancel Starting Recording` if that is what appeared).
 - **Outcome.** After stop, the extra returns to the idle waveform, or shows an orange transcribing state, then an overlay label from `Copied`, `Pasted`, `Partial transcript copied`, `No speech detected`, `Transcription failed`, or the overlay hides when there is nothing to show.
 - **Proof.** Capture `artifacts/recording/menu-live.txt` from the live dump and `artifacts/recording/after.ax.txt` plus `artifacts/recording/after.png` after stop. The live dump must contain `Stop Recording` or `Cancel Starting Recording`. Do not claim a specific transcript string unless you spoke it and it appears in History or on the clipboard.

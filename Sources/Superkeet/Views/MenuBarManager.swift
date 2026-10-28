@@ -85,9 +85,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         } else if parakeetService.daemonState == .transcribing {
             statusText = "Transcribing…"
         } else if settings.isRecording {
-            statusText = "Recording..."
+            statusText = "Recording…"
         } else if !hotkeyManager.isListening {
-            statusText = "Hotkeys not active — grant Accessibility"
+            statusText = "Shortcuts are off. Turn on Accessibility."
         } else if !settings.isDaemonRunning {
             statusText = EngineStatusText.whileStopped(
                 daemonState: parakeetService.daemonState, model: ModelProvisioning.shared.state, runtimeIssue: settings.runtimeIssue
@@ -192,9 +192,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func addRecoveryItems(to menu: NSMenu) {
+        let raw = parakeetService.lastRawTranscription
         let actions: [(String, Selector, Bool)] = [
             ("Copy Last Transcript", #selector(copyLastTranscript), !parakeetService.lastTranscription.isEmpty),
-            ("Copy Original Transcript", #selector(copyOriginalTranscript), !parakeetService.lastRawTranscription.isEmpty),
+            ("Copy Original Transcript", #selector(copyOriginalTranscript), !raw.isEmpty && raw != parakeetService.lastTranscription),
             ("Undo Text Changes and Copy", #selector(undoTextChanges), parakeetService.canUndoTextChanges)
         ]
         for (title, action, enabled) in actions {
