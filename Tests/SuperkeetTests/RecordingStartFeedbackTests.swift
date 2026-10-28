@@ -19,6 +19,6 @@ final class RecordingStartFeedbackTests: XCTestCase {
     func testEveryProblemSaysSomethingDifferent() {
         XCTAssertEqual(Set(all.map(\.notice)).count, all.count)
         XCTAssertEqual(Set(all.map(\.status)).count, all.count)
-        XCTAssertTrue(RecordingStartFeedback.releasedEarly.status.contains("start sound"), "Says how to avoid it next time.")
+        XCTAssertTrue(RecordingStartFeedback.releasedEarly.status.contains("Hold the shortcut"), "Says how to avoid it next time.")
     }
 }

@@ -136,13 +136,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await MainActor.run {
                     guard !self.isTerminating else { return }
                     let alert = NSAlert()
-                    alert.messageText = "Failed to start Parakeet"
+                    alert.messageText = "Superkeet couldn't start dictation"
                     let diagnosticMessage = parakeetService.lastUserFacingError ?? error.localizedDescription
-                    alert.informativeText = "Could not start the Parakeet speech engine.\n\n\(diagnosticMessage)"
+                    alert.informativeText = "\(diagnosticMessage)\n\nOpen Settings for details, or try again later."
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "Open Settings")
                     alert.addButton(withTitle: "Quit")
-                    alert.addButton(withTitle: "Continue Without Daemon")
+                    alert.addButton(withTitle: "Not Now")
 
                     // Accessory apps aren't frontmost; without this the alert can open behind other windows.
                     NSApp.activate(ignoringOtherApps: true)

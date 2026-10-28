@@ -318,7 +318,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             try await waitForDaemonReadiness(process: process)
 
             guard FileManager.default.fileExists(atPath: settings.socketPath) else {
-                let message = "Parakeet launched but never created its socket at \(settings.socketPath)."
+                parakeetLog.error("Engine socket missing after launch at \(self.settings.socketPath, privacy: .public)")
+                let message = "Dictation didn't finish starting. Try again."
                 let diagnostics = await MainActor.run { self.recentStderrExcerpt() }
                 await publishStartupFailure(message, diagnostics: diagnostics)
                 throw NSError(domain: "ParakeetService", code: 2, userInfo: [
@@ -775,7 +776,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         guard let addr = unixSocketAddress(for: socketPath) else {
             let message = "Superkeet's runtime socket path is too long for macOS Unix sockets. Move the app/runtime directory to a shorter path."
             parakeetLog.error("\(message, privacy: .public) Path: \(socketPath, privacy: .public)")
-            return SocketCommandResult(response: nil, runtimeIssue: message)
+            return SocketCommandResult(response: nil, runtimeIssue: "A folder path is too long for dictation. Move Superkeet to a shorter path.")
         }
 
         let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -951,7 +952,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         if !raw.isEmpty { processTranscription(raw, isPartial: partial) }
         if partial {
             let detail = event.message ?? "\(event.failedSegments ?? 0) failed segments, \(event.droppedSamples ?? 0) dropped samples"
-            sessionStatus = "Partial transcript — \(detail)"
+            parakeetLog.warning("Partial transcript: \(detail, privacy: .public)")
+            sessionStatus = "Part of the recording couldn't be transcribed. The rest was copied."
             lastUserFacingError = sessionStatus
             settings.runtimeIssue = sessionStatus
         } else if event.status == "error" || (event.isPartial && raw.isEmpty) {
@@ -1057,7 +1059,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         completionTimeout?.cancel()
         let task = DispatchWorkItem { [weak self] in
             guard let self, self.outputGate.sessionID == sessionID else { return }
-            self.failSession("Transcription timed out. The speech engine will restart.")
+            self.failSession("Transcription took too long. Try again.")
             self.stopDaemon()
         }
         completionTimeout = task
