@@ -40,7 +40,7 @@ final class SetupVerificationTests: XCTestCase {
     }
 
     func testStatusTextDoesNotTreatRecordingBlockersAsReady() {
-        XCTAssertEqual(makeReport(issues: [.accessibility]).statusText, "Ready with limited automation")
+        XCTAssertEqual(makeReport(issues: [.accessibility]).statusText, "Ready. Shortcuts need Accessibility.")
         XCTAssertEqual(makeReport(issues: [.model]).statusText, "Setup needs attention")
         XCTAssertEqual(makeReport(issues: [.microphone]).statusText, "Setup needs attention")
     }

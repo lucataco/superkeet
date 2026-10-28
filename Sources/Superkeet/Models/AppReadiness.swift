@@ -17,15 +17,15 @@ enum AppReadinessIssue: String {
         case .microphone:
             return "Grant microphone access so Superkeet can record your voice."
         case .inputDevice:
-            return "Connect or enable a microphone so Parakeet has an input device to record from."
+            return "Connect or turn on a microphone."
         case .engine:
-            return "Point Superkeet at a working Parakeet engine build before recording."
+            return "A required part of Superkeet is missing. Reinstall Superkeet."
         case .model:
-            return "Download the on-device speech model so Superkeet can transcribe locally."
+            return "Download the speech model so Superkeet can transcribe on your Mac."
         case .runtimeDirectory:
-            return "Superkeet needs a writable runtime directory for its local socket and PID file."
+            return "Superkeet can't save its working files. Restart your Mac or reinstall Superkeet."
         case .accessibility:
-            return "Accessibility enables global shortcuts and automatic paste."
+            return "Turn on Accessibility so your shortcuts and automatic paste work."
         case .architecture:
             return "Superkeet's bundled speech engine is built for Apple Silicon. An Intel Mac cannot run it."
         case .appleIntelligence:
@@ -104,7 +104,7 @@ struct AppReadinessReport {
             return "Ready to record"
         }
         if isReadyForBasicRecording {
-            return "Ready with limited automation"
+            return "Ready. Shortcuts need Accessibility."
         }
         if isReadyForDaemon {
             return "Setup needs attention"

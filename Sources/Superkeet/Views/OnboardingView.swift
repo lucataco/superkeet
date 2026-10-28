@@ -11,7 +11,7 @@ struct OnboardingView: View {
 
     @State private var accessibilityPollingTimer: Timer?
     @State private var accessibilityGranted: Bool = false
-    @State private var didTriggerAccessibilityPrompt: Bool = false
+    @State private var accessibilitySettingsOpened = false
 
     @State private var microphoneGranted: Bool = false
 
@@ -87,7 +87,7 @@ struct OnboardingView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
-                    Button(completionButtonTitle) {
+                    Button(setupSummary.completionButtonTitle) {
                         onComplete()
                     }
                     .buttonStyle(.borderedProminent)
@@ -103,7 +103,6 @@ struct OnboardingView: View {
         }
         .onChange(of: currentStep) {
             if currentStep == .permissions {
-                requestPermissionsInSequence()
                 startAccessibilityPolling()
             } else {
                 stopAccessibilityPolling()
@@ -141,14 +140,14 @@ struct OnboardingView: View {
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
-                Text("Local voice-to-text powered by Parakeet.\nFast, private, and on-device.")
+                Text("Dictation that runs entirely on your Mac.\nFast and private.")
                     .font(.title3)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
             }
 
             VStack(spacing: 6) {
-                featureRow(icon: "mic.fill", text: "Press a hotkey to start recording")
+                featureRow(icon: "mic.fill", text: "Press a shortcut to start dictating")
                 featureRow(icon: "text.cursor", text: "Your speech is transcribed locally")
                 featureRow(icon: "clipboard", text: "Text is copied or pasted automatically")
                 featureRow(icon: "lock.shield.fill", text: "Your audio never leaves your Mac")
@@ -157,12 +156,14 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Text("Superkeet is downloading its on-device speech model (about 670 MB) in the background. After that, speech recognition runs entirely on your Mac.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 8)
+            if !modelProvisioning.state.isInstalled {
+                Text("Superkeet is downloading its on-device speech model (about 670 MB) in the background. After that, speech recognition runs entirely on your Mac.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 8)
+            }
         }
         .padding(24)
     }
@@ -277,11 +278,13 @@ struct OnboardingView: View {
                     Button("Open System Settings") { openAccessibilitySettings() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Waiting…")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    if accessibilitySettingsOpened {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Waiting…")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
                 Text("You can skip this, but shortcuts won't work until it's granted. Recording from the menu bar still works.")
@@ -552,22 +555,18 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(readyStepTitle)
+                    Text(setupSummary.title)
                         .font(.title)
                         .fontWeight(.bold)
-                    Text(readyStepSubtitle)
+                    Text(setupSummary.message(toggleShortcut: settings.toggleHotkeyDisplayName))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
 
-                if !isReadyForSelectedConfiguration {
+                if case .needsAttention(let issues) = setupSummary {
                     VStack(alignment: .leading, spacing: 10) {
-                        Label(blockingIssueTitle, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.orange)
-
-                        ForEach(blockingIssueDetails, id: \.self) { detail in
-                            Text(detail)
+                        ForEach(issues, id: \.self) { issue in
+                            Text(issue.detail)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -609,25 +608,6 @@ struct OnboardingView: View {
                         description: "Press Escape while recording to cancel",
                         displayName: "Esc"
                     )
-                }
-
-                if !readiness.diagnostics.engineBinaryExists {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                            .font(.system(size: 16))
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Speech engine not found")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("Reinstall Superkeet to restore the engine binary. Voice transcription won't work until this is resolved.")
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.orange.opacity(0.08))
-                    .cornerRadius(10)
                 }
 
                 VStack(spacing: 8) {
@@ -676,7 +656,7 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Text(readyStepFooter)
+            Text("Superkeet lives in the menu bar. Look for the waveform icon.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
@@ -723,62 +703,16 @@ struct OnboardingView: View {
         }
     }
 
-    private var completionButtonTitle: String {
-        isReadyForSelectedConfiguration ? "Start Using Superkeet" : "Continue to Superkeet"
+    private var setupSummary: SetupSummary {
+        SetupSummary.make(report: readiness, model: modelProvisioning.state, autoPasteEnabled: settings.autoPasteEnabled)
     }
 
     private var selectedOutputMode: OnboardingOutputMode {
         settings.autoPasteEnabled ? .autoPaste : .clipboard
     }
 
-    private var isReadyForSelectedConfiguration: Bool {
-        readiness.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled)
-    }
-
-    private var readyStepTitle: String {
-        isReadyForSelectedConfiguration ? "You're All Set!" : "Setup Still Needs Attention"
-    }
-
-    private var readyStepSubtitle: String {
-        if isReadyForSelectedConfiguration {
-            return "Here are your default keyboard shortcuts. You can change them anytime in Settings."
-        }
-        if selectedOutputMode == .autoPaste && readiness.issues.contains(.accessibility) {
-            return "Recording is nearly ready, but the selected auto-paste flow still needs Accessibility access before Superkeet can finish setup for your chosen output mode."
-        }
-        return "Superkeet can finish onboarding now, but recording will stay unavailable until the blocking setup items below are resolved in Settings."
-    }
-
-    private var readyStepFooter: String {
-        if isReadyForSelectedConfiguration {
-            return "Click \"Start Using Superkeet\" to launch the speech engine and begin."
-        }
-        if selectedOutputMode == .autoPaste && readiness.issues.contains(.accessibility) {
-            return "Continue to Superkeet to access the menu bar app. Setup will remain unverified until Accessibility is granted for automatic paste."
-        }
-        return "Continue to Superkeet to access the menu bar app. Setup will remain unverified until recording is ready."
-    }
-
     private var inputDeviceReady: Bool {
         readiness.diagnostics.hasInputDevice && readiness.diagnostics.configuredInputDeviceFound
-    }
-
-    private var blockingIssueDetails: [String] {
-        readiness.issues
-            .filter { issue in
-                if issue == .accessibility {
-                    return selectedOutputMode == .autoPaste
-                }
-                return true
-            }
-            .map(\.detail)
-    }
-
-    private var blockingIssueTitle: String {
-        if selectedOutputMode == .autoPaste && readiness.issues == [.accessibility] {
-            return "Automatic paste is still blocked"
-        }
-        return "Setup still needs attention"
     }
 
     private func selectOutputMode(_ mode: OnboardingOutputMode) {
@@ -800,33 +734,14 @@ struct OnboardingView: View {
         }
     }
 
-    private func requestPermissionsInSequence() {
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                DispatchQueue.main.async {
-                    microphoneGranted = granted
-                    readiness = AppReadiness.current()
-                    triggerAccessibilityPromptIfNeeded()
-                }
-            }
-        } else {
-            triggerAccessibilityPromptIfNeeded()
-        }
-    }
-
     private func openMicrophoneSettings() {
         SystemSettingsLinks.openMicrophone()
     }
 
-    private func triggerAccessibilityPromptIfNeeded() {
-        guard !didTriggerAccessibilityPrompt && !accessibilityGranted else { return }
-        didTriggerAccessibilityPrompt = true
-
-        hotkeyManager.checkAccessibility()
-    }
-
     private func openAccessibilitySettings() {
+        hotkeyManager.checkAccessibility()
         SystemSettingsLinks.openAccessibility()
+        accessibilitySettingsOpened = true
     }
 
     private func startAccessibilityPolling() {
