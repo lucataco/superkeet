@@ -25,7 +25,7 @@ enum AppReadinessIssue: String {
         case .runtimeDirectory:
             return "Superkeet can't save its working files. Restart your Mac or reinstall Superkeet."
         case .accessibility:
-            return "Accessibility enables global shortcuts and automatic paste."
+            return "Turn on Accessibility so your shortcuts and automatic paste work."
         case .architecture:
             return "Superkeet's bundled speech engine is built for Apple Silicon. An Intel Mac cannot run it."
         case .appleIntelligence:
