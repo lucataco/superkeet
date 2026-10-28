@@ -1158,7 +1158,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         ).response
         guard let reply = EngineReply(decoding: response), reply.isOK else { return false }
         guard let version = reply.protocolVersion, Self.supportedProtocolVersions.contains(version) else {
-            throw TranscriptProtocolError.invalidMessage
+            parakeetLog.error("Engine protocol \(reply.protocolVersion ?? -1, privacy: .public) is not supported")
+            throw TranscriptProtocolError.unsupportedEngine
         }
         await MainActor.run { self.daemonProtocolVersion = version }
         parakeetLog.info("Speech engine ready with protocol \(version)")

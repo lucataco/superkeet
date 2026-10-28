@@ -82,7 +82,7 @@ struct TranscriptEventStream {
 }
 
 enum TranscriptProtocolError: LocalizedError {
-    case invalidMessage, messageTooLarge, incompleteMessage
+    case invalidMessage, messageTooLarge, incompleteMessage, unsupportedEngine
 
     var errorDescription: String? {
         switch self {
@@ -92,6 +92,8 @@ enum TranscriptProtocolError: LocalizedError {
             return "The transcript exceeded the 8 MB message limit. It was not delivered because it could be incomplete."
         case .incompleteMessage:
             return "The transcript was cut off. Try again."
+        case .unsupportedEngine:
+            return "Part of Superkeet is out of date. Reinstall Superkeet."
         }
     }
 }
