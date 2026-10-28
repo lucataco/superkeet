@@ -90,9 +90,8 @@ struct HistoryView: View {
                         .foregroundColor(.secondary.opacity(0.7))
                         .multilineTextAlignment(.center)
                     if showsTurnOnHistory {
-                        // The ObservedObject binding publishes the change, so this view re-renders.
                         Button("Turn On History") {
-                            $settings.saveHistoryEnabled.wrappedValue = true
+                            settings.saveHistoryEnabled = true
                         }
                     }
                 }

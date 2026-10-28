@@ -9,7 +9,6 @@ struct AboutTabView: View {
     private let licenseURL = URL(string: "https://creativecommons.org/licenses/by/4.0/")
 
     var body: some View {
-        // Fixed-size text overflows a plain stack at the default height and blanks the sidebar.
         ScrollView {
             aboutContent
         }
