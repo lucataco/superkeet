@@ -8,7 +8,7 @@ Setup walks a user through welcome, permissions, output mode, optional Actions M
 - `setup-rerun` opens the same window from the menu after onboarding.
 - `setup-welcome` shows `Welcome to Superkeet` and `Continue`.
 - `setup-permissions` shows `Two Permissions` with Microphone and Accessibility.
-- `setup-finish` offers `Start Using Superkeet` or `Continue to Superkeet` on the last step.
+- `setup-finish` offers `Start Using Superkeet` on the last step. It offers `Continue to Superkeet` only when the Ready heading is `Setup needs attention`.
 
 ## How to get to it (user POV)
 
@@ -25,8 +25,9 @@ Preconditions:
 
 - **Re-run entry.** Choose `Run Setup Again...`. Run `control-superkeet menu click "Run Setup Again..."`. `control-superkeet windows` lists `Superkeet Setup`.
 - **Welcome.** Run `control-superkeet exists --name "Welcome to Superkeet"`. Exit 0. A `Continue` button exists. A `Back` button does not.
-- **Permissions.** Run `control-superkeet click --name "Continue"`. The heading `Two Permissions` appears with `Microphone` and `Accessibility`. `Continue` and `Back` both exist.
+- **Permissions.** Run `control-superkeet click --name "Continue"`. The heading `Two Permissions` appears with `Microphone` and `Accessibility`. `Continue` and `Back` both exist. The step does not prompt for a permission when it appears. `Waiting…` shows under Accessibility only after `Open System Settings` is clicked.
 - **Do not grant.** Do not click `Grant Microphone Access` or `Open System Settings` unless the operator asked to change TCC.
+- **Ready.** Run `control-superkeet click --name "Continue"` on each step until the last step shows, passing `Output` and `Actions` if they appear. The heading is `You're all set`, `Almost ready`, or `Setup needs attention`. The footer reads `Superkeet lives in the menu bar. Look for the waveform icon.` Run `control-superkeet click --name "Back"` until `Two Permissions` returns.
 - **Back to welcome.** Run `control-superkeet click --name "Back"`. `Welcome to Superkeet` returns.
 - **Proof.** Run `control-superkeet snapshot --path artifacts/setup/welcome.ax.txt` and `control-superkeet screenshot --path artifacts/setup/welcome.png --window "Superkeet Setup"`. Both show `Welcome to Superkeet`.
 - **Close.** Run `control-superkeet close-window --title "Superkeet Setup"`. The window is gone. Onboarding remains completed.
@@ -34,6 +35,6 @@ Preconditions:
 ## Gotchas
 
 - First-run completion writes `hasCompletedOnboarding` and starts the daemon. Re-run is the safe path on a machine that already uses Superkeet.
-- The last-step button is `Start Using Superkeet` when checks pass, otherwise `Continue to Superkeet`.
+- The last-step button is `Start Using Superkeet`. It is `Continue to Superkeet` only when the Ready heading is `Setup needs attention`.
 - The Actions step appears only when the OS supports Actions Mode. Do not fail the recipe if `Continue` from output skips straight to ready.
 - Closing Setup with the window close button is enough. Do not quit Superkeet to dismiss it.
