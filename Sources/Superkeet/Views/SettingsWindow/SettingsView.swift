@@ -42,7 +42,6 @@ struct SettingsView: View {
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 220, max: 260)
             .safeAreaInset(edge: .top, spacing: 0) { sidebarHeader }
-            .safeAreaInset(edge: .bottom, spacing: 0) { sidebarFooter }
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -78,24 +77,18 @@ struct SettingsView: View {
     private var sidebarHeader: some View {
         HStack(spacing: 8) {
             AppIconView(size: 24, cornerRadius: 6)
-            Text("Superkeet")
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Superkeet")
+                    .font(.headline)
+                Text("Version \(AppVersion.current.shortVersion)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 6)
-    }
-
-    private var sidebarFooter: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Divider()
-            Text("Version \(AppVersion.current.shortVersion)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-        }
     }
 
 }
