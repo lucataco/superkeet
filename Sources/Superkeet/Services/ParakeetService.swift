@@ -595,7 +595,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             parakeetLog.warning("Recording reached the \(minutes)-minute limit; stopping automatically")
             self.stopRecording()
             CaptureSoundPlayer.play(.stop)
-            self.settings.runtimeIssue = "Recording stopped automatically after \(minutes) minutes. The audio so far is being transcribed."
+            self.lastUserFacingError = "Recording stopped automatically after \(minutes) minutes. The audio so far is being transcribed."
         }
         maxDurationStop = work
         DispatchQueue.main.asyncAfter(deadline: .now() + limit, execute: work)
@@ -949,20 +949,17 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         case .dictation: break
         }
         let partial = event.isPartial && !raw.isEmpty
-        if !raw.isEmpty { processTranscription(raw, isPartial: partial) }
+        let processedText = raw.isEmpty ? "" : processTranscription(raw, isPartial: partial)
         if partial {
             parakeetLog.warning("Partial transcript: \(event.failedSegments ?? 0, privacy: .public) failed segments, \(event.droppedSamples ?? 0, privacy: .public) dropped samples, engine message: \(event.message ?? "none", privacy: .private)")
-            sessionStatus = "Part of the recording couldn't be transcribed."
-            lastUserFacingError = sessionStatus
-            settings.runtimeIssue = sessionStatus
         } else if event.status == "error" || (event.isPartial && raw.isEmpty) {
             return failSession(event.message ?? "Transcription failed.")
         } else if raw.isEmpty {
-            sessionStatus = "No speech detected"
             publishOutcome(.noSpeech)
-        } else {
-            sessionStatus = "Transcription complete"
         }
+        let notice = TakeCompletionNotice.resolve(isPartial: partial, processedText: processedText)
+        sessionStatus = notice.statusText
+        if let detail = notice.settingsDetail { lastUserFacingError = detail }
         finishSession()
     }
 
@@ -972,7 +969,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     }
 
     @MainActor
-    private func processTranscription(_ text: String, isPartial: Bool) {
+    private func processTranscription(_ text: String, isPartial: Bool) -> String {
         let appInfo = activeAppAtRecordingStart ?? (name: "Unknown", bundleId: "", processIdentifier: nil)
         let processedText = TranscriptTextProcessor.process(
             text, removeFillers: settings.fillerWordRemovalEnabled,
@@ -1022,6 +1019,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         } else {
             publishOutcome(isPartial ? .partial : .done)
         }
+        return processedText
     }
 
     @MainActor
@@ -1044,7 +1042,6 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         commandModeArmed = false
         sessionStatus = "Transcription failed"
         lastUserFacingError = message
-        settings.runtimeIssue = message
         if outputGate.sessionID != nil { publishOutcome(.failed) }
         finishSession()
     }
