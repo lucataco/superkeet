@@ -776,7 +776,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         guard let addr = unixSocketAddress(for: socketPath) else {
             let message = "Superkeet's runtime socket path is too long for macOS Unix sockets. Move the app/runtime directory to a shorter path."
             parakeetLog.error("\(message, privacy: .public) Path: \(socketPath, privacy: .public)")
-            return SocketCommandResult(response: nil, runtimeIssue: "A folder path is too long for dictation. Move Superkeet to a shorter path.")
+            return SocketCommandResult(response: nil, runtimeIssue: "Couldn't start dictation because your home folder's path is too long.")
         }
 
         let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
