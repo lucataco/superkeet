@@ -1,7 +1,5 @@
 import Foundation
 
-/// Judges the text after cleanup, the same text the overlay outcome judges, so the status line and
-/// the overlay cannot disagree.
 enum TakeCompletionNotice: Equatable {
     case transcribed
     case partial

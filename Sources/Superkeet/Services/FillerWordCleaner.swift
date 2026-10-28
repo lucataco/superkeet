@@ -15,6 +15,8 @@ enum FillerWordCleaner {
             with: " ",
             options: .regularExpression
         )
-        return result.trimmingCharacters(in: .whitespaces)
+        result = result.trimmingCharacters(in: .whitespaces)
+        if result != text, !result.contains(where: { $0.isLetter || $0.isNumber }) { return "" }
+        return result
     }
 }
