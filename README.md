@@ -307,7 +307,7 @@ If needed:
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-### App says `Superkeet couldn't start dictation`
+### Dictation won't start
 
 Open `Settings > General` and check the Setup Checklist, then `Settings > Advanced > Troubleshooting`:
 
