@@ -17,8 +17,6 @@ struct HomeTabView: View {
     @State private var loginItemError: String?
     @State private var shortcutError: String?
     @State private var showAllChecks = false
-    @State private var diagnosticsCopied = false
-    @State private var logExportError: String?
     @State private var confirmRedownload = false
 
     enum EditingHotkey {
@@ -32,7 +30,7 @@ struct HomeTabView: View {
         VStack(spacing: 0) {
             SettingsTabHeader(
                 title: "General",
-                subtitle: "Set up Superkeet, choose how it looks, and pick your shortcuts."
+                subtitle: "Your shortcuts, microphone, and how Superkeet looks and sounds."
             )
 
             Form {
@@ -88,13 +86,9 @@ struct HomeTabView: View {
                     }
                 }
 
-                RecordingFeedbackSection()
+                MicrophoneSection()
 
-                Section {
-                    diagnosticsContent
-                } header: {
-                    Text("Diagnostics")
-                }
+                RecordingFeedbackSection()
             }
             .formStyle(.grouped)
         }
@@ -119,7 +113,7 @@ struct HomeTabView: View {
         [
             SetupCheck(
                 title: "Microphone access",
-                detail: microphoneDetail,
+                detail: SetupRefresh.microphoneDetail(for: readiness.diagnostics.microphoneStatus),
                 isComplete: !readiness.issues.contains(.microphone),
                 buttonTitle: microphoneButtonTitle,
                 action: { openMicrophoneSettings() }
@@ -278,76 +272,6 @@ struct HomeTabView: View {
         }
     }
 
-    @ViewBuilder
-    private var diagnosticsContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Button("Refresh") {
-                    parakeetService.refreshDiagnostics()
-                    refreshReadiness()
-                }
-
-                Button("Copy Diagnostics") {
-                    DiagnosticsExporter.copyToClipboard()
-                    diagnosticsCopied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        diagnosticsCopied = false
-                    }
-                }
-
-                Button("Export Logs…") {
-                    logExportError = LogExporter.exportWithSavePanel()
-                }
-                .help("Save diagnostics and Superkeet's log since launch to a text file for a bug report")
-
-                Button(settings.isDaemonRunning ? "Restart Speech Engine" : "Start Speech Engine") {
-                    runSetupVerification()
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            if let issue = settings.runtimeIssue ?? parakeetService.lastUserFacingError {
-                Text(issue)
-                    .font(.caption)
-                    .foregroundColor(.orange)
-            }
-
-            if let logExportError {
-                Text(logExportError)
-                    .font(.caption)
-                    .foregroundColor(.orange)
-            }
-
-            if diagnosticsCopied {
-                Text("Diagnostics copied to the clipboard.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            DisclosureGroup("Diagnostic details") {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let startupStatus = parakeetService.startupStatusDetail {
-                        Text("Daemon status: \(startupStatus)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    if let diagnostics = parakeetService.lastDiagnosticsSummary {
-                        Text(diagnostics)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(.top, 6)
-            }
-            .font(.caption)
-        }
-        .padding(.vertical, 2)
-    }
-
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
             get: { settings.launchAtLoginEnabled },
@@ -383,7 +307,7 @@ struct HomeTabView: View {
             if isReadyForSelectedConfiguration {
                 return parakeetService.daemonState == .starting
                     ? "Starting the speech engine…"
-                    : "Start the speech engine from Diagnostics below to finish setup."
+                    : "Start the speech engine from Troubleshooting in Advanced to finish setup."
             }
             if configuredOutputBlocked {
                 return "Grant Accessibility to enable \(selectedOutputModeName)."
@@ -461,21 +385,6 @@ struct HomeTabView: View {
         return "Needed for global shortcuts. Without it, record from the menu bar."
     }
 
-    private var microphoneDetail: String {
-        switch readiness.diagnostics.microphoneStatus {
-        case .authorized:
-            return "Access granted."
-        case .denied:
-            return "Denied. Re-enable it in System Settings."
-        case .restricted:
-            return "Restricted by the system."
-        case .notDetermined:
-            return "Not requested yet."
-        @unknown default:
-            return "Status unknown."
-        }
-    }
-
     private var microphoneButtonTitle: String? {
         switch readiness.diagnostics.microphoneStatus {
         case .notDetermined:
@@ -540,26 +449,7 @@ struct HomeTabView: View {
     }
 
     private func refreshReadiness() {
-        modelProvisioning.refreshInstalledState()
-        let refreshed = AppReadiness.current()
-        readiness = refreshed
-        syncAccessibilityState(isGranted: !refreshed.issues.contains(.accessibility))
-        if settings.isDaemonRunning,
-           refreshed.isReadyForSelectedConfiguration(autoPasteEnabled: settings.autoPasteEnabled) {
-            settings.hasVerifiedSetup = true
-        }
-        parakeetService.lastDiagnosticsSummary = parakeetService.lastDiagnosticsSummary ?? diagnosticsSummary
-    }
-
-    private func syncAccessibilityState(isGranted: Bool) {
-        hotkeyManager.accessibilityGranted = isGranted
-        if isGranted {
-            if !hotkeyManager.isListening {
-                hotkeyManager.startListening()
-            }
-        } else if !hotkeyManager.isListening {
-            hotkeyManager.startRetryTimer()
-        }
+        readiness = SetupRefresh.run()
     }
 
     private func assignToggleHotkey(keyCode: Int, modifiers: Int) {
@@ -664,21 +554,6 @@ struct HomeTabView: View {
         }
     }
 
-    private func runSetupVerification() {
-        Task {
-            do {
-                if settings.isDaemonRunning {
-                    try await parakeetService.restartDaemon()
-                } else {
-                    try await parakeetService.startDaemon()
-                }
-            } catch {
-                homeTabLog.error("Failed to verify setup: \(error.localizedDescription, privacy: .public)")
-            }
-            refreshReadiness()
-        }
-    }
-
     private func openMicrophoneSettings() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .notDetermined:
@@ -705,19 +580,6 @@ struct HomeTabView: View {
                 hotkeyManager.startRetryTimer()
             }
         }
-    }
-
-    private var diagnosticsSummary: String {
-        let devices = readiness.diagnostics.availableInputDeviceNames.isEmpty
-            ? "none"
-            : readiness.diagnostics.availableInputDeviceNames.joined(separator: ", ")
-        return """
-        Diagnostics:
-        - Microphone: \(microphoneDetail)
-        - Input devices: \(devices)
-        - Engine path: \(settings.parakeetBinaryPath)
-        - Runtime directory: \(readiness.diagnostics.runtimeDirectory.path)
-        """
     }
 }
 
