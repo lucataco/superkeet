@@ -1,34 +1,29 @@
 enum SetupSummary: Equatable {
     case ready
-    case downloadingModel(percent: Int?)
+    case downloadingModel(percent: Int?, needsAccessibility: Bool)
     case needsAccessibility(autoPaste: Bool)
     case needsAttention([AppReadinessIssue])
 
     static func make(report: AppReadinessReport, model: ModelProvisionState, autoPasteEnabled: Bool) -> SetupSummary {
-        let issues = report.issues
-        let hasModelIssue = issues.contains(.model)
-        let hasBlockingIssue = issues.contains { $0 != .model && $0 != .accessibility }
-
-        if hasBlockingIssue || (hasModelIssue && !model.isBusy) {
-            let shown = issues.filter { issue in
-                switch issue {
-                case .accessibility: return autoPasteEnabled
-                case .model: return !model.isBusy
-                default: return true
-                }
-            }
+        let issues = report.issues.filter { $0 != .appleIntelligence }
+        let modelDownloading = issues.contains(.model) && model.isBusy
+        let shown = issues.filter { $0 != .model || !modelDownloading }
+        if shown.contains(where: { $0 != .accessibility }) {
             return .needsAttention(shown)
         }
-        if hasModelIssue {
-            if case .downloading(let progress) = model {
-                return .downloadingModel(percent: Int((progress.overallFraction * 100).rounded()))
-            }
-            return .downloadingModel(percent: nil)
+        let needsAccessibility = shown.contains(.accessibility)
+        if modelDownloading {
+            return .downloadingModel(percent: downloadPercent(model), needsAccessibility: needsAccessibility)
         }
-        if issues.contains(.accessibility) {
+        if needsAccessibility {
             return .needsAccessibility(autoPaste: autoPasteEnabled)
         }
         return .ready
+    }
+
+    private static func downloadPercent(_ model: ModelProvisionState) -> Int? {
+        guard case .downloading(let progress) = model else { return nil }
+        return Int((progress.overallFraction * 100).rounded())
     }
 
     var title: String {
@@ -46,10 +41,12 @@ enum SetupSummary: Equatable {
         switch self {
         case .ready:
             return "Press \(toggleShortcut) to start dictating, then press it again to stop."
-        case .downloadingModel(let percent?):
-            return "The speech model is downloading (\(percent)%). Dictation works as soon as it finishes."
-        case .downloadingModel(nil):
-            return "The speech model is downloading. Dictation works as soon as it finishes."
+        case .downloadingModel(let percent, let needsAccessibility):
+            let progress = percent.map { " (\($0)%)" } ?? ""
+            let next = needsAccessibility
+                ? "Turn on Accessibility now so \(toggleShortcut) works when it finishes."
+                : "Dictation works as soon as it finishes."
+            return "The speech model is downloading\(progress). \(next)"
         case .needsAccessibility(autoPaste: false):
             return "Turn on Accessibility so \(toggleShortcut) works in every app. Until then, click the menu bar icon and choose Start Recording."
         case .needsAccessibility(autoPaste: true):
