@@ -6,8 +6,6 @@ private let advancedTabLog = Logger(subsystem: "com.superkeet.app", category: "A
 struct RecordingTabView: View {
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var parakeetService = ParakeetService.shared
-    @State private var availableDevices: [String] = []
-    @State private var deviceChangeStatus: String?
     /// The folder as typed. It only becomes the model folder on Return, focus loss or Browse, so a
     /// half-typed path never becomes the place the engine downloads ~670 MB into.
     @State private var modelDirectoryDraft = ""
@@ -17,33 +15,10 @@ struct RecordingTabView: View {
         VStack(spacing: 0) {
             SettingsTabHeader(
                 title: "Advanced",
-                subtitle: "Audio input, phrase replacements, engine behavior, and Actions Mode limits."
+                subtitle: subtitle
             )
 
             Form {
-                Section {
-                    Picker("Microphone", selection: $settings.audioInputDevice) {
-                        Text("System Default").tag("")
-                        ForEach(availableDevices, id: \.self) { device in
-                            Text(device).tag(device)
-                        }
-                        if !settings.audioInputDevice.isEmpty, !availableDevices.contains(settings.audioInputDevice) {
-                            Text("\(settings.audioInputDevice) (Unavailable)").tag(settings.audioInputDevice)
-                        }
-                    }
-                    Button(action: refreshDevices) {
-                        Label("Refresh Devices", systemImage: "arrow.clockwise")
-                    }
-                } header: {
-                    Text("Audio Input")
-                } footer: {
-                    if let deviceChangeStatus {
-                        Text(deviceChangeStatus).foregroundStyle(.secondary)
-                    } else {
-                        Text("Leave as System Default to use your Mac's default input device. The speech engine restarts automatically when you change this.")
-                    }
-                }
-
                 PhraseReplacementsView()
 
                 Section {
@@ -108,11 +83,12 @@ struct RecordingTabView: View {
                         Text("Safety rails for a runaway command. The defaults suit most MCP servers.")
                     }
                 }
+
+                TroubleshootingSection()
             }
             .formStyle(.grouped)
         }
         .onAppear {
-            refreshDevices()
             modelDirectoryDraft = settings.modelDirectory
         }
         .onChange(of: modelDirectoryFocused) { _, focused in
@@ -121,18 +97,12 @@ struct RecordingTabView: View {
         .onChange(of: settings.modelDirectory) {
             ModelProvisioning.shared.refreshInstalledState()
         }
-        .onChange(of: settings.audioInputDevice) {
-            applyMicrophoneChange()
-        }
-        .onChange(of: parakeetService.daemonState) { _, state in
-            guard state == .idle, !parakeetService.hasPendingEngineRestart else { return }
-            deviceChangeStatus = nil
-        }
     }
 
-    private func refreshDevices() {
-        dispatchPrecondition(condition: .onQueue(.main))
-        availableDevices = AudioInputDeviceResolver.availableDeviceNames()
+    private var subtitle: String {
+        AppleIntelligenceAvailability.osSupportsActionsMode
+            ? "Phrase replacements, storage, Actions Mode limits, and troubleshooting."
+            : "Phrase replacements, storage, and troubleshooting."
     }
 
     private func commitModelDirectory() {
@@ -142,18 +112,5 @@ struct RecordingTabView: View {
         advancedTabLog.info("Model directory changed")
         settings.modelDirectory = trimmed
         parakeetService.requestEngineRestartForSettingsChange()
-    }
-
-    private func applyMicrophoneChange() {
-        switch parakeetService.requestEngineRestartForSettingsChange() {
-        case .notNeeded:
-            deviceChangeStatus = nil
-        case .restarting:
-            advancedTabLog.info("Restarting engine for microphone change")
-            deviceChangeStatus = "Restarting the speech engine with the new microphone…"
-        case .deferredUntilIdle:
-            advancedTabLog.info("Microphone change deferred until the current take finishes")
-            deviceChangeStatus = "The new microphone will be used as soon as the current recording finishes."
-        }
     }
 }
