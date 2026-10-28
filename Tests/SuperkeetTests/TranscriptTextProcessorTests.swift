@@ -104,4 +104,12 @@ final class TranscriptTextProcessorTests: XCTestCase {
         let decoded = try JSONDecoder().decode([PhraseReplacement].self, from: json)
         XCTAssertEqual(decoded, [PhraseReplacement(id: id, phrase: "x", replacement: "y", bundleID: "app")])
     }
+
+    func testFillerRemovalKeepsReplacedSymbols() {
+        let smiley = PhraseReplacement(phrase: "smiley", replacement: "🙂")
+        XCTAssertEqual(
+            TranscriptTextProcessor.process("um smiley", removeFillers: true, replacements: [smiley], bundleID: "", spokenCommands: false),
+            "🙂"
+        )
+    }
 }

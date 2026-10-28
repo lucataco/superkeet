@@ -75,4 +75,21 @@ final class FillerWordCleanerTests: XCTestCase {
     func testDoesNotRemovePartialMatches() {
         XCTAssertEqual(FillerWordCleaner.clean("grab the umbrella"), "grab the umbrella")
     }
+
+    func testFillerOnlyTextWithPunctuationCleansToEmpty() {
+        XCTAssertEqual(FillerWordCleaner.clean("Um, uh."), "")
+        XCTAssertEqual(FillerWordCleaner.clean("Umm..."), "")
+    }
+
+    func testPunctuationWithoutFillersIsKept() {
+        XCTAssertEqual(FillerWordCleaner.clean("."), ".")
+        XCTAssertEqual(FillerWordCleaner.clean(" ."), ".")
+        XCTAssertEqual(FillerWordCleaner.clean(". "), ".")
+        XCTAssertEqual(FillerWordCleaner.clean("Um, 42."), "42.")
+    }
+
+    func testSymbolsLeftAfterFillersAreKept() {
+        XCTAssertEqual(FillerWordCleaner.clean("um 🙂"), "🙂")
+        XCTAssertEqual(FillerWordCleaner.clean("um #"), "#")
+    }
 }

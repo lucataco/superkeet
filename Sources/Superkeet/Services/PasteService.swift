@@ -36,7 +36,7 @@ final class PasteService: @unchecked Sendable {
         var schedule: (TimeInterval, @escaping @Sendable () -> Void) -> Void = { delay, action in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
         }
-        var reportIssue: (String) -> Void = { AppSettings.shared.runtimeIssue = $0 }
+        var reportIssue: (String) -> Void = { ParakeetService.shared.lastUserFacingError = $0 }
     }
 
     private let pasteboard: NSPasteboard
