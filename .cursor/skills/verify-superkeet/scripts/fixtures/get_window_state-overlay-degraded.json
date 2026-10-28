@@ -1,0 +1,40 @@
+{
+  "app_name": "Superkeet",
+  "background_input": {
+    "exact_window": {
+      "pid": 1234,
+      "status": "ax_unresolved",
+      "window_id": 13
+    },
+    "observation": {
+      "frame_freshness": "unknown",
+      "one_shot_capture": "unavailable"
+    },
+    "routes": [
+      {
+        "reason": "off_space_or_ax_unresolved",
+        "route": "accessibility",
+        "status": "refused"
+      },
+      {
+        "reason": "off_space_or_ax_unresolved",
+        "route": "window_pointer",
+        "status": "refused"
+      }
+    ]
+  },
+  "degraded": true,
+  "degraded_reason": "ax_window_unresolved: window_id 13 exists and is owned by pid 1234, but none of the 2 AXWindow element(s) under that pid reports this CGWindowID. The tree is returned EMPTY on purpose: the accessibility elements reachable under this pid belong to other surfaces, not to the requested window, so presenting them would misground the next action.",
+  "element_count": 0,
+  "elements": [],
+  "elements_complete": false,
+  "escalation": {
+    "recommended": "foreground",
+    "reason": "observation-only: background input is refused while the AX surface is unresolved."
+  },
+  "pid": 1234,
+  "returned_element_count": 0,
+  "total_element_count": 0,
+  "tree_markdown": "",
+  "window_id": 13
+}

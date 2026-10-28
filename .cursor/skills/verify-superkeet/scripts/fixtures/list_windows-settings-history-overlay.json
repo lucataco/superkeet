@@ -1,0 +1,63 @@
+{
+  "current_space_id": 3,
+  "windows": [
+    {
+      "app_name": "Superkeet",
+      "bounds": {
+        "height": 500.0,
+        "width": 500.0,
+        "x": 0.0,
+        "y": 829.0
+      },
+      "current_space_id": null,
+      "is_on_screen": false,
+      "layer": 0,
+      "on_current_space": null,
+      "pid": 1234,
+      "space_ids": null,
+      "title": "",
+      "window_id": 13,
+      "z_index": 57
+    },
+    {
+      "app_name": "Superkeet",
+      "bounds": {
+        "height": 548.0,
+        "width": 480.0,
+        "x": 788.0,
+        "y": 225.0
+      },
+      "current_space_id": 3,
+      "is_on_screen": true,
+      "layer": 0,
+      "on_current_space": true,
+      "pid": 1234,
+      "space_ids": [
+        3
+      ],
+      "title": "Superkeet - History",
+      "window_id": 12,
+      "z_index": 54
+    },
+    {
+      "app_name": "Superkeet",
+      "bounds": {
+        "height": 648.0,
+        "width": 800.0,
+        "x": 500.0,
+        "y": 200.0
+      },
+      "current_space_id": 3,
+      "is_on_screen": true,
+      "layer": 0,
+      "on_current_space": true,
+      "pid": 1234,
+      "space_ids": [
+        3
+      ],
+      "title": "",
+      "window_id": 11,
+      "z_index": 41
+    }
+  ]
+}

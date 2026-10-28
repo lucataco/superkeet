@@ -23,13 +23,13 @@ Preconditions:
 - Prefer `Run Setup Again...`. Do not reset `hasCompletedOnboarding`.
 - Do not click `Start Using Superkeet` or `Continue to Superkeet` unless the recipe is specifically proving first-run completion and you intend to finish setup.
 
-- **Re-run entry.** Choose `Run Setup Again...`. Run `control-superkeet menu click "Run Setup Again..."`. `control-superkeet windows` lists `Superkeet Setup`.
-- **Welcome.** Run `control-superkeet exists --name "Welcome to Superkeet"`. Exit 0. A `Continue` button exists. A `Back` button does not.
-- **Permissions.** Run `control-superkeet click --name "Continue"`. The heading `Two Permissions` appears with `Microphone` and `Accessibility`. `Continue` and `Back` both exist. The step does not prompt for a permission when it appears. `Waiting…` shows under Accessibility only after `Open System Settings` is clicked.
+- **Re-run entry.** Choose `Run Setup Again...`. With System Events, run `control-superkeet menu click "Run Setup Again..."`. With CuaDriver, use the visual menu entry in SKILL.md. Then `control-superkeet windows` lists `Superkeet Setup`.
+- **Welcome.** Run `control-superkeet exists --surface setup --name "Welcome to Superkeet"`. Exit 0. A `Continue` button exists. A `Back` button does not.
+- **Permissions.** Run `control-superkeet click --surface setup --name "Continue"`. The heading `Two Permissions` appears with `Microphone` and `Accessibility`. `Continue` and `Back` both exist. The step does not prompt for a permission when it appears. `Waiting…` shows under Accessibility only after `Open System Settings` is clicked.
 - **Do not grant.** Do not click `Grant Microphone Access` or `Open System Settings` unless the operator asked to change TCC.
 - **Ready.** Run `control-superkeet click --name "Continue"` on each step until the last step shows, passing `Output` and `Actions` if they appear. The heading is `You're all set`, `Almost ready`, or `Setup needs attention`. The footer reads `Superkeet lives in the menu bar. Look for the waveform icon.` Run `control-superkeet click --name "Back"` until `Two Permissions` returns.
-- **Back to welcome.** Run `control-superkeet click --name "Back"`. `Welcome to Superkeet` returns.
-- **Proof.** Run `control-superkeet snapshot --path artifacts/setup/welcome.ax.txt` and `control-superkeet screenshot --path artifacts/setup/welcome.png --window "Superkeet Setup"`. Both show `Welcome to Superkeet`.
+- **Back to welcome.** Run `control-superkeet click --surface setup --name "Back"`. `Welcome to Superkeet` returns.
+- **Proof.** Run `control-superkeet snapshot --surface setup --path artifacts/setup/welcome.ax.txt` and `control-superkeet screenshot --path artifacts/setup/welcome.png --window "Superkeet Setup"`. Both show `Welcome to Superkeet`.
 - **Close.** Run `control-superkeet close-window --title "Superkeet Setup"`. The window is gone. Onboarding remains completed.
 
 ## Gotchas

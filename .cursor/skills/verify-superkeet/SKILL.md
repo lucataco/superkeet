@@ -65,13 +65,13 @@ Prefer the System Events exact-title path whenever available. Do not reuse the e
 
 ## Drive
 
-Harness: `control-superkeet`. Stable handles are menu titles, window titles, and AX names. Do not click by coordinate or tab order except for the documented CuaDriver status-item fallback and the numbered Settings sidebar rows.
+Harness: `control-superkeet`. Stable handles are menu titles, window titles, and AX names. Do not click by coordinate or tab order except for the documented CuaDriver status-item fallback, the numbered Settings sidebar rows, and the CuaDriver `expand` step below.
 
 ```bash
-"$CONTROL" menu dump
-"$CONTROL" menu click "Settings..."
-"$CONTROL" menu click "History"
-"$CONTROL" menu click "Run Setup Again..."
+"$CONTROL" menu dump                                   # system-events only
+"$CONTROL" menu click "Settings..."                    # system-events only
+"$CONTROL" menu click "History"                        # system-events only
+"$CONTROL" menu click "Run Setup Again..."             # system-events only
 "$CONTROL" windows
 "$CONTROL" exists --name "General"
 "$CONTROL" click --name "About"
@@ -79,6 +79,14 @@ Harness: `control-superkeet`. Stable handles are menu titles, window titles, and
 "$CONTROL" snapshot --path .cursor/skills/verify-superkeet/artifacts/<feature>/ui.ax.txt
 "$CONTROL" screenshot --path .cursor/skills/verify-superkeet/artifacts/<feature>/window.png --window "Superkeet - History"
 ```
+
+Window selection (CuaDriver). `exists`, `click`, `snapshot`, `screenshot`, `close-window`, and `expand` act on one window, chosen in this order:
+
+1. `--window "<exact title>"` names it.
+2. `--surface settings`, `--surface history`, or `--surface setup` names the surface. Settings has an empty title, so it matches on the empty title.
+3. With neither, the largest on-screen Superkeet window is used. `click --row` defaults to `settings`.
+
+Offscreen panels and overlays never qualify, and array order never decides a tie. Name the surface whenever more than one window is open. `windows` prints each window's title, bounds, `on_screen`, and `z`. A window whose accessibility tree cannot be resolved fails with CuaDriver's `degraded_reason`. The command never writes an empty snapshot.
 
 Exact menu titles from `MenuBarManager.swift`: `Start Recording`, `Stop Recording`, `Copy Last Transcript`, `Copy Original Transcript`, `Undo Text Changes and Copy`, `History`, `Settings...` (ASCII dots), `Run Setup Again...`, `Quit Superkeet`. When Actions Mode is on: `Start Listening for Actions` or `Run an Action…` (unicode ellipsis) or `Stop Listening`, plus `Auto-Approve Actions`. Status lines such as `Listening…` / `Recording…` / `Shortcuts are off. Turn on Accessibility.` are disabled items — do not click them.
 
@@ -88,9 +96,21 @@ Windows:
 - History: `Superkeet - History`
 - Setup: `Superkeet Setup`
 
-Sidebar tabs in Settings (`SettingsView`): `General`, `Output & Privacy`, `Actions` (hidden below macOS 26), `Advanced`, `About`. Click the row name. `exists` and `click` walk the SwiftUI tree (the Settings window title is empty and labels sit several AX groups deep). General must show `Setup Checklist`; incomplete checks are shown by default and `Show all` reveals the rest. About must show `Version <short>` (the build is added in parentheses only when it differs from the short version), `On-device speech recognition`, and the privacy explanation beginning `Your audio and transcripts are processed on your Mac`.
+Sidebar tabs in Settings (`SettingsView`): `General`, `Output & Privacy`, `Actions` (hidden below macOS 26), `Advanced`, `About`. Click the row name. With System Events, `exists` and `click` walk the SwiftUI tree (the Settings window title is empty and labels sit several AX groups deep). With CuaDriver, `exists` searches the selected window's full accessibility tree, and `click` acts on element tokens from one fresh snapshot. General must show `Setup Checklist`; incomplete checks are shown by default and `Show all` reveals the rest. About must show `Version <short>` (the build is added in parentheses only when it differs from the short version), `On-device speech recognition`, and the privacy explanation beginning `Your audio and transcripts are processed on your Mac`.
 
 Read the feature map under `features/` before driving. Start every recipe from the baseline there. With the CuaDriver backend, `menu dump` / `menu click` are unavailable; use the visual menu entry above, then the same `windows`, `exists`, `click`, `snapshot`, and `screenshot` commands. Features that require textual menu dumps remain unverified in CuaDriver-only mode.
+
+### Disclosures (CuaDriver)
+
+CuaDriver does not index a disclosure triangle. The `Diagnostic details` triangle in Settings > Advanced > Troubleshooting has no element token, no actions, and no frame in the snapshot. A background click does not toggle it. A foreground click does. `expand` uses that path:
+
+```bash
+"$CONTROL" click --row 4          # Advanced, if it is not already selected
+"$CONTROL" expand --name "Diagnostic details"
+"$CONTROL" snapshot --surface settings --path .cursor/skills/verify-superkeet/artifacts/settings/advanced-diagnostics.ax.txt
+```
+
+`expand` scrolls the Troubleshooting section into view if needed. It aims at the spot where the triangle is drawn, measured from the `Refresh` button's frame, and makes a foreground click there. Before it clicks, it checks that the `Diagnostic details` line sits in the Troubleshooting section, that `Refresh` shares a button row with another control, and that no control covers the aim point. It refuses and clicks nothing otherwise. It then reads the tree back for `Status:` or `Diagnostics:`, and fails if neither appears. CuaDriver gives the triangle no frame, so the aim is a layout measurement, not an AX fact. If the layout changes, a check or the readback fails. Report that limit rather than guessing coordinates. `expand` is CuaDriver only.
 
 ## Evidence
 
@@ -110,9 +130,11 @@ Standards:
 "$CONTROL" cleanup
 ```
 
-Cleanup closes Superkeet windows this run opened and quits Superkeet only if `.run/state` owns the pid. It never kills by process name. It never deletes artifacts. It never writes UserDefaults or deletes `~/Library/Application Support/Superkeet/`.
+`cleanup` quits the pid recorded in `.run/state`, and only when this run launched it. It signals only when the pid still runs the launched bundle's executable, with the start time recorded at launch. Otherwise it clears the state and signals nothing. It sends SIGTERM and waits up to 5 seconds. If the app is still running, it sends SIGKILL to that same pid. It never quits by name, and it does not script the windows first. An AppleEvent to a Superkeet with a menu open never returns. Quitting closes the windows. It never deletes artifacts. It never writes UserDefaults or deletes `~/Library/Application Support/Superkeet/`.
 
-If this run did not launch Superkeet, cleanup only clears stale state and leaves the user's instance alone.
+If this run did not launch Superkeet, or the recorded pid now belongs to another process, cleanup only clears stale state and leaves that process alone.
+
+`quit` runs the same pid-only path on its own.
 
 ## Helpers
 
@@ -124,4 +146,7 @@ If this run did not launch Superkeet, cleanup only clears stale state and leaves
 .cursor/skills/verify-superkeet/scripts/control-superkeet doctor
 .cursor/skills/verify-superkeet/scripts/control-superkeet menu click "Settings..."
 .cursor/skills/verify-superkeet/scripts/control-superkeet cleanup
+python3 -m unittest discover -s .cursor/skills/verify-superkeet/scripts -p 'test_*.py'
 ```
+
+The unit tests cover CuaDriver window selection, tree reads, the disclosure aim and refusals, and the quit identity check. The fixtures under `scripts/fixtures/` are hand-written and hold only Settings chrome. The quit tests start stand-in processes named `Superkeet` for up to about 5 seconds, so run them outside a live session. The repo's `scripts/test_*.py` gate does not run these tests.

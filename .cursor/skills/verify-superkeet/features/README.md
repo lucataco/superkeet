@@ -15,8 +15,10 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Driving conventions
 
 - Start every recipe from the baseline unless its preconditions say otherwise.
-- Prefer AX names and exact menu titles over coordinates. The sole exception is the CuaDriver fallback for opening the status-item menu, where fresh native screenshot coordinates are unavoidable; subsequent window actions still use AX tokens.
+- Prefer AX names and exact menu titles over coordinates. Two exceptions exist under CuaDriver. The first is the fallback for opening the status-item menu, where fresh native screenshot coordinates are unavoidable. The second is `expand` for the Diagnostic details disclosure. All other window actions use AX tokens.
 - Treat every command as literal. Keep quoted titles unchanged, including `Settings...` (ASCII dots) and `Run an Action…` (unicode ellipsis).
+- Name the window whenever more than one Superkeet window is open: `--surface settings|history|setup` or `--window "<exact title>"`. With neither, CuaDriver uses the largest on-screen window.
+- `menu dump` and `menu click` need the System Events driver. Under CuaDriver, open the menu from the visual menu entry in SKILL.md.
 - Close windows you open before starting another feature, unless the recipe says to keep them.
 - Restore any setting you change. Prefer recipes that do not change settings.
 

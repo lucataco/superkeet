@@ -24,12 +24,12 @@ Preconditions:
 - With System Events, `control-superkeet doctor` reports `menu-bar extra: yes`. CuaDriver-only mode cannot complete this feature's textual dump proof.
 - No Settings, History, or Setup window needs to be open.
 
-- **Open menu.** Show the extra. Run `control-superkeet menu dump`. Output includes `Start Recording` or `Stop Recording`, `History`, `Settings...`, `Run Setup Again...`, and `Quit Superkeet`.
+- **Open menu.** Show the extra. Run `control-superkeet menu dump` (System Events only). Output includes `Start Recording` or `Stop Recording`, `History`, `Settings...`, `Run Setup Again...`, and `Quit Superkeet`.
 - **Idle recording control.** With no take in progress, `Start Recording` is present and `Stop Recording` is not.
 - **Recovery items.** The dump includes `Copy Last Transcript`, `Copy Original Transcript`, and `Undo Text Changes and Copy`. Disabled rows are still listed. `Copy Original Transcript` is enabled only when processing changed the last take, such as removing filler words or applying a replacement. A plain take leaves it disabled.
 - **Actions items.** If the dump includes `Auto-Approve Actions`, it also includes exactly one of `Start Listening for Actions`, `Stop Listening`, or `Run an Action…`. On macOS 26+, `Try Actions Mode…` may appear while Actions Mode is off. During an action, `Stop Action` appears.
 - **Status line.** The first printed title is a status such as `Listening…`, `Recording…`, `Transcribing…`, `Shortcuts are off. Turn on Accessibility.`, or a session status. Do not click it.
-- **Proof.** Write the dump to `artifacts/menu-bar/menu.txt`. The file contains `History`, `Settings...`, and `Quit Superkeet`.
+- **Proof.** Write the dump to `artifacts/menu-bar/menu.txt` (System Events only). The file contains `History`, `Settings...`, and `Quit Superkeet`.
 
 ## Gotchas
 

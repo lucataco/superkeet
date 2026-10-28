@@ -1,0 +1,215 @@
+{
+  "app_name": "Superkeet",
+  "background_input": {
+    "exact_window": {
+      "pid": 1234,
+      "status": "matched",
+      "window_id": 11
+    }
+  },
+  "element_count": 11,
+  "elements": [
+    {
+      "element_index": 0,
+      "element_token": "s00000001:0",
+      "role": "AXWindow",
+      "depth": 0,
+      "actions": [
+        "AXRaise"
+      ],
+      "frame": {
+        "x": 500.0,
+        "y": 200.0,
+        "w": 800.0,
+        "h": 648.0
+      }
+    },
+    {
+      "element_index": 1,
+      "element_token": "s00000001:1",
+      "role": "AXOutline",
+      "depth": 2,
+      "actions": [
+        "AXShowMenu"
+      ],
+      "frame": {
+        "x": 500.0,
+        "y": 260.0,
+        "w": 220.0,
+        "h": 520.0
+      },
+      "label": "Sidebar",
+      "parent_index": 0
+    },
+    {
+      "element_index": 2,
+      "element_token": "s00000001:2",
+      "role": "AXRow",
+      "depth": 3,
+      "actions": [
+        "AXShowDefaultUI",
+        "AXShowAlternateUI"
+      ],
+      "frame": {
+        "x": 500.0,
+        "y": 276.0,
+        "w": 220.0,
+        "h": 28.5
+      },
+      "parent_index": 1,
+      "selected": false
+    },
+    {
+      "element_index": 3,
+      "element_token": "s00000001:3",
+      "role": "AXRow",
+      "depth": 3,
+      "actions": [
+        "AXShowDefaultUI",
+        "AXShowAlternateUI"
+      ],
+      "frame": {
+        "x": 500.0,
+        "y": 304.5,
+        "w": 220.0,
+        "h": 28.5
+      },
+      "parent_index": 1,
+      "selected": false
+    },
+    {
+      "element_index": 4,
+      "element_token": "s00000001:4",
+      "role": "AXRow",
+      "depth": 3,
+      "actions": [
+        "AXShowDefaultUI",
+        "AXShowAlternateUI"
+      ],
+      "frame": {
+        "x": 500.0,
+        "y": 333.0,
+        "w": 220.0,
+        "h": 28.5
+      },
+      "parent_index": 1,
+      "selected": false
+    },
+    {
+      "element_index": 5,
+      "element_token": "s00000001:5",
+      "role": "AXRow",
+      "depth": 3,
+      "actions": [
+        "AXShowDefaultUI",
+        "AXShowAlternateUI"
+      ],
+      "frame": {
+        "x": 500.0,
+        "y": 361.5,
+        "w": 220.0,
+        "h": 28.5
+      },
+      "parent_index": 1,
+      "selected": false
+    },
+    {
+      "element_index": 6,
+      "element_token": "s00000001:6",
+      "role": "AXRow",
+      "depth": 3,
+      "actions": [
+        "AXShowDefaultUI",
+        "AXShowAlternateUI"
+      ],
+      "frame": {
+        "x": 500.0,
+        "y": 390.0,
+        "w": 220.0,
+        "h": 28.5
+      },
+      "parent_index": 1,
+      "selected": false
+    },
+    {
+      "element_index": 7,
+      "element_token": "s00000001:7",
+      "role": "AXButton",
+      "depth": 2,
+      "actions": [
+        "AXPress"
+      ],
+      "frame": {
+        "x": 900.0,
+        "y": 600.0,
+        "w": 52.5,
+        "h": 16.0
+      },
+      "label": "Refresh",
+      "parent_index": 0,
+      "enabled": true
+    },
+    {
+      "element_index": 8,
+      "element_token": "s00000001:8",
+      "role": "AXButton",
+      "depth": 2,
+      "actions": [
+        "AXPress"
+      ],
+      "frame": {
+        "x": 962.5,
+        "y": 600.0,
+        "w": 104.0,
+        "h": 16.0
+      },
+      "label": "Copy Diagnostics",
+      "parent_index": 0,
+      "enabled": true
+    },
+    {
+      "element_index": 9,
+      "element_token": "s00000001:9",
+      "role": "AXButton",
+      "depth": 2,
+      "actions": [
+        "AXPress"
+      ],
+      "frame": {
+        "x": 1076.5,
+        "y": 600.0,
+        "w": 83.5,
+        "h": 16.0
+      },
+      "label": "Export Logs…",
+      "parent_index": 0,
+      "enabled": true
+    },
+    {
+      "element_index": 10,
+      "element_token": "s00000001:10",
+      "role": "AXButton",
+      "depth": 2,
+      "actions": [
+        "AXPress"
+      ],
+      "frame": {
+        "x": 1170.0,
+        "y": 600.0,
+        "w": 131.0,
+        "h": 16.0
+      },
+      "label": "Restart Speech Engine",
+      "parent_index": 0,
+      "enabled": true
+    }
+  ],
+  "elements_complete": false,
+  "pid": 1234,
+  "returned_element_count": 11,
+  "snapshot_id": "s00000001",
+  "total_element_count": 11,
+  "tree_markdown": "- [0] AXWindow [actions=[raise]]\n    - AXImage (AppIcon)\n    - AXStaticText = \"Superkeet\"\n    - [1] AXOutline (Sidebar) [actions=[showmenu]]\n          - [2] AXRow [actions=[showdefaultui,showalternateui]]\n              - AXStaticText = \"General\"\n          - [3] AXRow [actions=[showdefaultui,showalternateui]]\n              - AXStaticText = \"Output & Privacy\"\n          - [4] AXRow [actions=[showdefaultui,showalternateui]]\n              - AXStaticText = \"Actions\"\n          - [5] AXRow [actions=[showdefaultui,showalternateui]]\n              - AXStaticText = \"Advanced\"\n          - [6] AXRow [actions=[showdefaultui,showalternateui]]\n              - AXStaticText = \"About\"\n    - AXStaticText = \"Advanced\"\n    - AXHeading (Engine)\n    - AXStaticText = \"Stop engine after inactivity\"\n    - AXHeading (Troubleshooting)\n    - [7] AXButton (Refresh) [actions=[press]]\n    - [8] AXButton (Copy Diagnostics) [actions=[press]]\n    - [9] AXButton (Export Logs…) [actions=[press]]\n    - [10] AXButton (Restart Speech Engine) [actions=[press]]\n    - AXDisclosureTriangle (Diagnostic details)\n",
+  "window_id": 11,
+  "window_title": ""
+}
