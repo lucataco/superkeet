@@ -374,13 +374,16 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
     }
 
     private func insufficientDiskSpaceMessage() -> String? {
-        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
+        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey]
         let probeURL = FileManager.default.fileExists(atPath: modelDirectoryURL.path)
             ? modelDirectoryURL
             : URL(fileURLWithPath: NSHomeDirectory())
 
         guard let values = try? probeURL.resourceValues(forKeys: keys),
-              let available = values.volumeAvailableCapacityForImportantUsage else {
+              let available = Self.availableBytes(
+                  importantUsage: values.volumeAvailableCapacityForImportantUsage,
+                  plain: values.volumeAvailableCapacity
+              ) else {
             return nil
         }
 
@@ -392,6 +395,17 @@ final class ModelProvisioning: ObservableObject, @unchecked Sendable {
             )
         }
         return nil
+    }
+
+    /// The important-usage capacity has been observed to read 0 on a volume with tens of
+    /// gigabytes free. The plain free-space figure is a floor.
+    static func availableBytes(importantUsage: Int64?, plain: Int?) -> Int64? {
+        switch (importantUsage, plain.map(Int64.init)) {
+        case let (important?, plain?): return max(important, plain)
+        case let (important?, nil): return important
+        case let (nil, plain?): return plain
+        case (nil, nil): return nil
+        }
     }
 
     static func displayName(for file: String?) -> String {

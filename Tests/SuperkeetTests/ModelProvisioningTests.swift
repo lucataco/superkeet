@@ -21,6 +21,14 @@ final class ModelProvisioningTests: XCTestCase {
         XCTAssertNotEqual(ModelProvisionState.installed.phase, ModelProvisionState.failed("x").phase)
     }
 
+    func testZeroImportantUsageCapacityFallsBackToFreeSpace() {
+        XCTAssertEqual(ModelProvisioning.availableBytes(importantUsage: 0, plain: 41_000_000_000), 41_000_000_000)
+        XCTAssertEqual(ModelProvisioning.availableBytes(importantUsage: 50_000_000_000, plain: 41_000_000_000), 50_000_000_000)
+        XCTAssertEqual(ModelProvisioning.availableBytes(importantUsage: nil, plain: 1_000), 1_000)
+        XCTAssertEqual(ModelProvisioning.availableBytes(importantUsage: 2_000, plain: nil), 2_000)
+        XCTAssertNil(ModelProvisioning.availableBytes(importantUsage: nil, plain: nil))
+    }
+
     @MainActor
     func testBootstrapExceptionPublishesFailureAndRetryStartsFreshTask() async {
         var attempts = 0
