@@ -58,7 +58,7 @@ struct HistoryView: View {
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
-                TextField("Search transcriptions...", text: $searchText)
+                TextField("Search transcriptions…", text: $searchText)
                     .textFieldStyle(.plain)
                 if !searchText.isEmpty {
                     Button {
@@ -89,6 +89,12 @@ struct HistoryView: View {
                         .font(.caption)
                         .foregroundColor(.secondary.opacity(0.7))
                         .multilineTextAlignment(.center)
+                    if showsTurnOnHistory {
+                        // The ObservedObject binding publishes the change, so this view re-renders.
+                        Button("Turn On History") {
+                            $settings.saveHistoryEnabled.wrappedValue = true
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -158,12 +164,16 @@ struct HistoryView: View {
         return settings.saveHistoryEnabled ? "No transcriptions yet" : "History is off"
     }
 
+    private var showsTurnOnHistory: Bool {
+        searchText.isEmpty && !settings.saveHistoryEnabled
+    }
+
     private var emptyStateMessage: String {
         if !searchText.isEmpty { return "Try a different search term" }
         if settings.saveHistoryEnabled {
             return "Use \(settings.toggleHotkeyDisplayName) or the menu bar to start recording"
         }
-        return "Turn on Save History in Settings > Output & Privacy to keep future transcriptions on this Mac."
+        return "Turn it on to keep future transcriptions on this Mac."
     }
 }
 
@@ -175,14 +185,9 @@ struct HistoryRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                HStack(spacing: 4) {
-                    Image(systemName: "app.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Text(record.activeAppName)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
+                Text(record.activeAppName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
 
                 Spacer()
 
@@ -192,7 +197,7 @@ struct HistoryRowView: View {
                         .foregroundColor(.green)
                         .transition(.opacity)
                 } else {
-                    Text(record.timestamp, style: .relative)
+                    Text(record.timestamp, format: .relative(presentation: .named))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary.opacity(0.7))
                 }
