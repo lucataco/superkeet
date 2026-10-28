@@ -203,7 +203,7 @@ struct HistoryRowView: View {
             }
 
             if record.isPartial == true {
-                Label("Partial transcript", systemImage: "exclamationmark.triangle")
+                Label("Incomplete", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
             }
             Text(record.text)

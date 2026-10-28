@@ -18,7 +18,7 @@ final class SetupSummaryTests: XCTestCase {
         XCTAssertEqual(makeSummary([.appleIntelligence, .microphone]), .needsAttention([.microphone]))
         XCTAssertEqual(
             makeSummary([.appleIntelligence, .model], model: downloading(0.5)),
-            .downloadingModel(percent: 50, needsAccessibility: false)
+            .downloadingModel(percent: 50, needsAccessibility: false, autoPaste: false)
         )
     }
 
@@ -28,13 +28,13 @@ final class SetupSummaryTests: XCTestCase {
     }
 
     func testDownloadingModelShowsPercent() {
-        XCTAssertEqual(makeSummary([.model], model: downloading(0.42)), .downloadingModel(percent: 42, needsAccessibility: false))
-        XCTAssertEqual(makeSummary([.model], model: downloading(0)), .downloadingModel(percent: 0, needsAccessibility: false))
+        XCTAssertEqual(makeSummary([.model], model: downloading(0.42)), .downloadingModel(percent: 42, needsAccessibility: false, autoPaste: false))
+        XCTAssertEqual(makeSummary([.model], model: downloading(0)), .downloadingModel(percent: 0, needsAccessibility: false, autoPaste: false))
     }
 
     func testCheckingAndVerifyingModelShowNoPercent() {
-        XCTAssertEqual(makeSummary([.model], model: .checking), .downloadingModel(percent: nil, needsAccessibility: false))
-        XCTAssertEqual(makeSummary([.model], model: .verifying), .downloadingModel(percent: nil, needsAccessibility: false))
+        XCTAssertEqual(makeSummary([.model], model: .checking), .downloadingModel(percent: nil, needsAccessibility: false, autoPaste: false))
+        XCTAssertEqual(makeSummary([.model], model: .verifying), .downloadingModel(percent: nil, needsAccessibility: false, autoPaste: false))
     }
 
     func testModelItemIsHiddenWhileDownloadingBehindOtherBlockers() {
@@ -44,7 +44,7 @@ final class SetupSummaryTests: XCTestCase {
     func testDownloadingKeepsAccessibilityVisible() {
         XCTAssertEqual(
             makeSummary([.model, .accessibility], model: downloading(0.42), autoPasteEnabled: true),
-            .downloadingModel(percent: 42, needsAccessibility: true)
+            .downloadingModel(percent: 42, needsAccessibility: true, autoPaste: true)
         )
     }
 
@@ -66,16 +66,20 @@ final class SetupSummaryTests: XCTestCase {
             "Press ⌥Space to start dictating, then press it again to stop."
         )
         XCTAssertEqual(
-            SetupSummary.downloadingModel(percent: 42, needsAccessibility: false).message(toggleShortcut: shortcut),
+            SetupSummary.downloadingModel(percent: 42, needsAccessibility: false, autoPaste: false).message(toggleShortcut: shortcut),
             "The speech model is downloading (42%). Dictation works as soon as it finishes."
         )
         XCTAssertEqual(
-            SetupSummary.downloadingModel(percent: nil, needsAccessibility: false).message(toggleShortcut: shortcut),
+            SetupSummary.downloadingModel(percent: nil, needsAccessibility: false, autoPaste: false).message(toggleShortcut: shortcut),
             "The speech model is downloading. Dictation works as soon as it finishes."
         )
         XCTAssertEqual(
-            SetupSummary.downloadingModel(percent: 42, needsAccessibility: true).message(toggleShortcut: shortcut),
+            SetupSummary.downloadingModel(percent: 42, needsAccessibility: true, autoPaste: false).message(toggleShortcut: shortcut),
             "The speech model is downloading (42%). Turn on Accessibility now so ⌥Space works when it finishes."
+        )
+        XCTAssertEqual(
+            SetupSummary.downloadingModel(percent: 42, needsAccessibility: true, autoPaste: true).message(toggleShortcut: shortcut),
+            "The speech model is downloading (42%). Turn on Accessibility now so ⌥Space and automatic paste work when it finishes."
         )
         XCTAssertEqual(
             SetupSummary.needsAccessibility(autoPaste: false).message(toggleShortcut: shortcut),
@@ -93,7 +97,7 @@ final class SetupSummaryTests: XCTestCase {
 
     func testTitles() {
         XCTAssertEqual(SetupSummary.ready.title, "You're all set")
-        XCTAssertEqual(SetupSummary.downloadingModel(percent: 42, needsAccessibility: false).title, "Almost ready")
+        XCTAssertEqual(SetupSummary.downloadingModel(percent: 42, needsAccessibility: false, autoPaste: false).title, "Almost ready")
         XCTAssertEqual(SetupSummary.needsAccessibility(autoPaste: false).title, "Almost ready")
         XCTAssertEqual(SetupSummary.needsAccessibility(autoPaste: true).title, "Almost ready")
         XCTAssertEqual(SetupSummary.needsAttention([.microphone]).title, "Setup needs attention")
@@ -101,7 +105,7 @@ final class SetupSummaryTests: XCTestCase {
 
     func testCompletionButtonTitles() {
         XCTAssertEqual(SetupSummary.ready.completionButtonTitle, "Start Using Superkeet")
-        XCTAssertEqual(SetupSummary.downloadingModel(percent: 42, needsAccessibility: false).completionButtonTitle, "Start Using Superkeet")
+        XCTAssertEqual(SetupSummary.downloadingModel(percent: 42, needsAccessibility: false, autoPaste: false).completionButtonTitle, "Start Using Superkeet")
         XCTAssertEqual(SetupSummary.needsAccessibility(autoPaste: true).completionButtonTitle, "Start Using Superkeet")
         XCTAssertEqual(SetupSummary.needsAttention([.microphone]).completionButtonTitle, "Continue to Superkeet")
     }

@@ -25,6 +25,6 @@ struct EngineReply: Decodable, Equatable {
     var rejection: String? {
         guard status == "error" else { return nil }
         let reason = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return reason.isEmpty ? "The speech engine refused the request." : reason
+        return reason.isEmpty ? "Dictation couldn't handle that request." : reason
     }
 }

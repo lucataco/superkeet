@@ -20,8 +20,8 @@ final class EngineReplyTests: XCTestCase {
 
     func testErrorReplyWithoutMessageStillCountsAsRefusal() throws {
         let reply = try XCTUnwrap(EngineReply(decoding: #"{"status":"error","message":"  "}"#))
-        XCTAssertEqual(reply.rejection, "The speech engine refused the request.")
-        XCTAssertEqual(EngineReply(decoding: #"{"status":"error"}"#)?.rejection, "The speech engine refused the request.")
+        XCTAssertEqual(reply.rejection, "Dictation couldn't handle that request.")
+        XCTAssertEqual(EngineReply(decoding: #"{"status":"error"}"#)?.rejection, "Dictation couldn't handle that request.")
     }
 
     func testMissingOrGarbledReplyMeansNoAnswer() {

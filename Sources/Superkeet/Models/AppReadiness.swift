@@ -27,7 +27,7 @@ enum AppReadinessIssue: String {
         case .accessibility:
             return "Turn on Accessibility so your shortcuts and automatic paste work."
         case .architecture:
-            return "Superkeet's bundled speech engine is built for Apple Silicon. An Intel Mac cannot run it."
+            return "Superkeet needs a Mac with Apple silicon."
         case .appleIntelligence:
             return "Actions Mode needs macOS 26 with Apple Intelligence enabled."
         }
