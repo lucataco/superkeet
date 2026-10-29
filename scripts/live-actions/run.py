@@ -21,7 +21,7 @@ import common  # noqa: E402
 import report  # noqa: E402
 
 DOMAIN = common.APP_BUNDLE_ID
-LOG_PREDICATE = f'subsystem == "{DOMAIN}" AND processImagePath == "{common.APP}/Contents/MacOS/Superkeet"'
+APP_PROCESS_LOG_PREDICATE = f'subsystem == "{DOMAIN}" AND processImagePath == "{common.APP}/Contents/MacOS/Superkeet"'
 OBSERVER_SRC = Path(__file__).resolve().parent / "observer.swift"
 OBSERVER = common.BUILD / "observer"
 RESTORE_FILE = common.BUILD / "restore.json"
@@ -61,7 +61,7 @@ class LogStream:
     def start(self):
         self.file = open(self.path, "wb")
         self.proc = subprocess.Popen(
-            ["log", "stream", "--style", "ndjson", "--level", "debug", "--predicate", LOG_PREDICATE],
+            ["log", "stream", "--style", "ndjson", "--level", "debug", "--predicate", APP_PROCESS_LOG_PREDICATE],
             stdout=self.file, stderr=subprocess.DEVNULL, start_new_session=True,
         )
         children.append(self.proc)

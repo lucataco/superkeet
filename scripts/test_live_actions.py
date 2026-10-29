@@ -105,12 +105,12 @@ class StimulusTimelineTests(unittest.TestCase):
         clock = [(772, 1213, "TextEdit")]
         late = [(1020, "Can you open up text?"), (1530, "Can you open up Text Adit for me?"), (6630, "Can you open up Text Edit")]
         timely = late[:2] + [(1530, "Can you open up Text Edit for me?")]
-        self.assertEqual([p for p, _ in build_stimulus.live_gate_problems(late, clock, ["TextEdit"])], ["TextEdit"])
+        self.assertEqual([p.phrase for p in build_stimulus.live_gate_problems(late, clock, ["TextEdit"])], ["TextEdit"])
         self.assertEqual(build_stimulus.live_gate_problems(timely, clock, ["TextEdit"]), [])
 
     def test_a_failed_phrase_names_the_utterances_to_synthesize_again(self):
-        self.assertEqual(build_stimulus.carrying(scenario(), [("hello.", "x")]), [2])
-        self.assertEqual(build_stimulus.carrying(scenario(), [(None, "x")]), [0, 1, 2])
+        self.assertEqual(build_stimulus.carrying(scenario(), [build_stimulus.Problem("hello.", "x")]), [2])
+        self.assertEqual(build_stimulus.carrying(scenario(), [build_stimulus.Problem(None, "x")]), [0, 1, 2])
 
 
 class LogParsingTests(unittest.TestCase):

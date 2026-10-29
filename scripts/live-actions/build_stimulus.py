@@ -15,6 +15,7 @@ import urllib.request
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common  # noqa: E402
@@ -152,27 +153,33 @@ def align(wav16, out_clock):
     return rows
 
 
+class Problem(NamedTuple):
+    phrase: str | None
+    message: str
+
+
 def live_gate_problems(partials, clock, phrases, slack_ms=LIVE_SLACK_MS):
     problems = []
     for phrase in phrases:
         end = common.phrase_end_ms(clock, phrase)
         if end is not None and not any(at <= end + slack_ms and common.phrase_in_text(text, phrase) for at, text in partials):
-            problems.append((phrase, f"no partial showed {phrase!r} by {end + slack_ms} ms (phrase ends at {end} ms)"))
+            problems.append(Problem(phrase, f"no partial showed {phrase!r} by {end + slack_ms} ms (phrase ends at {end} ms)"))
     return problems
 
 
 def check_phrases(scenario, transcript, partials, clock, windows):
     phrases = [e["after"] for e in scenario["expect"]]
-    problems = [(p, f"engine transcript lacks {p!r}") for p in common.missing_phrases(transcript, phrases)]
-    problems += [(p, f"speech clock lacks {p!r}") for p in phrases if common.phrase_end_ms(clock, p) is None]
-    problems += [(None, m) for m in alignment_problems(clock, windows)]
+    problems = [Problem(p, f"engine transcript lacks {p!r}") for p in common.missing_phrases(transcript, phrases)]
+    problems += [Problem(p, f"speech clock lacks {p!r}") for p in phrases if common.phrase_end_ms(clock, p) is None]
+    problems += [Problem(None, m) for m in alignment_problems(clock, windows)]
     return problems + live_gate_problems(partials, clock, phrases)
 
 
 def carrying(scenario, problems):
-    words = [p for p, _ in problems]
+    if any(p.phrase is None for p in problems):
+        return list(range(len(scenario["utterances"])))
     return [i for i, u in enumerate(scenario["utterances"])
-            if None in words or any(p and common.phrase_in_text(u["text"], p) for p in words)]
+            if any(common.phrase_in_text(u["text"], p.phrase) for p in problems)]
 
 
 def clip_path(scenario, utterance, take):
@@ -219,7 +226,7 @@ def build(scenario_path, fresh=False):
         placed, total, gain_db, loudness = assemble(scenario, clips, paths)
         transcript, partials = replay(paths["wav16"])
         wins = windows_ms(placed)
-        problems = [(p, f"engine transcript lacks {p!r}") for p in common.missing_phrases(transcript, [e["after"] for e in scenario["expect"]])]
+        problems = [Problem(p, f"engine transcript lacks {p!r}") for p in common.missing_phrases(transcript, [e["after"] for e in scenario["expect"]])]
         clock = []
         if not problems:
             clock = align(paths["wav16"], paths["clock"])

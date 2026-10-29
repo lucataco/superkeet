@@ -157,6 +157,8 @@ final class Loop {
     }
     var stats: [String: Any] { ["polls": polls, "slow_polls": slow, "max_poll_ms": Int(maxMs)] }
 
+    // An Accessibility call into a launching app can stall for about 200 ms, so each source
+    // polls on its own thread and a slow one cannot delay another's timestamps.
     func spawn(every seconds: Double, _ body: @escaping () -> Void) {
         Thread {
             while !self.isStopped {

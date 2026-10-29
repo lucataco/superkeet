@@ -70,6 +70,10 @@ def timeline(events, origin):
     return sorted(((ms, e) for ms, e in rows if ms is not None), key=lambda r: r[0])
 
 
+def during_playback(ms):
+    return ms >= 0
+
+
 def probe_ms(kind, value, rows):
     if kind == "frontmost":
         hits = [ms for ms, e in rows if (e["event"] == "frontmost" and e.get("bundle") == value) or e["event"] == "target_frontmost"]
@@ -79,7 +83,7 @@ def probe_ms(kind, value, rows):
             if e["event"] != "target_windows" or e.get("bundle", value) != value:
                 continue
             titles = {t for t in e.get("titles", []) if t not in NON_DOCUMENT_TITLES}
-            if ms >= 0 and titles - seen:
+            if during_playback(ms) and titles - seen:
                 hits.append(ms)
                 break
             seen |= titles
@@ -88,7 +92,7 @@ def probe_ms(kind, value, rows):
         hits = [ms for ms, e in rows if e["event"] == "target_text" and any(needle in t.lower() for t in e.get("texts", [e.get("text", "")]))]
     if not hits:
         return None, None
-    after = [ms for ms in hits if ms >= 0]
+    after = [ms for ms in hits if during_playback(ms)]
     note = f"{kind} already true {min(hits)} ms before playback" if hits[0] < 0 else None
     return (after[0] if after else None), note
 
@@ -107,7 +111,7 @@ def typed_claims(run, rows):
             match = TYPED.search(row.get("detail") or "")
             claims.add(match.group(1) if match else None)
     for ms, e in rows:
-        if e["event"] == "hud" and ms >= 0:
+        if e["event"] == "hud" and during_playback(ms):
             claims.update(TYPED.findall(e.get("text", "")))
     return {c for c in claims if c}
 
@@ -121,18 +125,18 @@ def duplicate_dispatches(audit):
     return sum(n - 1 for n in seen.values())
 
 
-def first_words_ms(rows, scenario, first_word_end):
+def first_new_script_bigram_ms(rows, scenario, first_word_end):
     script_words = common.tokens(" ".join(u["text"] for u in scenario["utterances"]))
-    script = set(zip(script_words, script_words[1:]))
-    previous = set()
+    script_bigrams = set(zip(script_words, script_words[1:]))
+    shown_before = set()
     for ms, e in rows:
         if e["event"] != "hud":
             continue
         words = common.tokens(e.get("text", ""))
-        now = set(zip(words, words[1:]))
-        if ms >= 0 and (now & script) - previous:
+        shown = set(zip(words, words[1:]))
+        if during_playback(ms) and (shown & script_bigrams) - shown_before:
             return ms - first_word_end
-        previous = now
+        shown_before = shown
     return None
 
 
@@ -177,7 +181,7 @@ def analyze_run(run, scenario, clock, loopback_ms=0):
     first_word = next((c for c in clock if c[1] is not None), None)
     during = [ms for ms, e in rows if e["event"] == "hud" and first_word and first_word[0] <= ms <= speech_end]
     out["hud"] = {
-        "first_words_ms": first_words_ms(rows, scenario, first_word[1]) if first_word else None,
+        "first_words_ms": first_new_script_bigram_ms(rows, scenario, first_word[1]) if first_word else None,
         "updates_during_speech": len(during),
         "max_gap_ms": max((b - a for a, b in zip(during, during[1:])), default=None),
     }
