@@ -35,6 +35,7 @@ RESTORE_FILE = common.BUILD / "restore.json"
 ICLOUD = Path.home() / "Library/Mobile Documents/com~apple~TextEdit/Documents"
 TEXTEDIT = "com.apple.TextEdit"
 AUDIT = Path.home() / "Library/Application Support/Superkeet/action-audit.log"
+ESCAPE_KEY_CODE = 53
 LEAD_BASE_MS = 1500
 JITTER_MS = 500
 TAIL_MS = 6000
@@ -202,13 +203,17 @@ def quit_textedit():
         time.sleep(0.5)
 
 
+def refuse_if_user_work(scenario):
+    if scenario["start_state"].get(TEXTEDIT) == "quit" and textedit_running():
+        holding = [d["name"] for d in (textedit_documents() or []) if d["text"].strip()]
+        if holding:
+            raise SystemExit(f"TextEdit holds text in {holding}. Close it yourself first; the rig will not discard your work.")
+
+
 def prepare_start_state(scenario):
-    for bundle, state in scenario["start_state"].items():
-        if bundle == TEXTEDIT and state == "quit" and textedit_running():
-            holding = [d["name"] for d in (textedit_documents() or []) if d["text"].strip()]
-            if holding:
-                raise SystemExit(f"TextEdit holds text in {holding}. Close it yourself first; the rig will not discard your work.")
-            quit_textedit()
+    refuse_if_user_work(scenario)
+    if scenario["start_state"].get(TEXTEDIT) == "quit":
+        quit_textedit()
 
 
 def icloud_files():
@@ -238,6 +243,43 @@ def audit_rows_since(start_epoch_s):
     return rows
 
 
+def press(hotkey_code, flags=0):
+    sh([OBSERVER, "press", "--hotkey-code", hotkey_code, "--hotkey-flags", flags])
+
+
+def cancel_active_work():
+    """Escape cancels the listening session, the recording, and any running action session."""
+    press(ESCAPE_KEY_CODE)
+
+
+class PlannerGuard(threading.Thread):
+    """Cancel the app's work the moment the planner starts.
+
+    A misheard clause reaches the on-device planner, which runs with the user's approval policy and can drive
+    any app on this machine. The run is already a failure at that point, so the guard trades the rest of the
+    run's evidence for not letting the planner act."""
+
+    def __init__(self, log):
+        super().__init__(daemon=True)
+        self.path, self.offset, self.fired = log.path, 0, []
+        self.stopped = threading.Event()
+
+    def read_new(self):
+        with open(self.path, errors="replace") as f:
+            f.seek(self.offset)
+            data = f.read()
+            self.offset = f.tell()
+        return data
+
+    def run(self):
+        pending = ""
+        while not self.stopped.wait(0.1):
+            complete, _, pending = (pending + self.read_new()).rpartition("\n")
+            if any(cat == "ActionPlanner" and msg.startswith("Planning with") for _, cat, msg in common.parse_log(complete)):
+                cancel_active_work()
+                self.fired.append(round(time.time() * 1000))
+
+
 def count_messages(log, prefix):
     return sum(1 for _, _, message in common.parse_log(log.text()) if message.startswith(prefix))
 
@@ -254,17 +296,23 @@ def settle(log, hotkey):
     for _ in range(2):
         if count_messages(log, "Listening session started") <= count_messages(log, "Listening session ended"):
             break
-        sh([OBSERVER, "press", "--hotkey-code", hotkey["code"], "--hotkey-flags", hotkey["flags"]])
+        press(hotkey["code"], hotkey["flags"])
         time.sleep(1.0)
+    if not settled:
+        cancel_active_work()
+        time.sleep(2.0)
     return settled
 
 
-def one_run(scenario, stimulus, run_dir, rng, hotkey):
+def one_run(scenario, stimulus, run_dir, rng, hotkey, guard_planner):
     run_dir.mkdir(parents=True)
     prepare_start_state(scenario)
     before = icloud_files()
     log = LogStream(run_dir / "log.ndjson")
     log.start()
+    guard = PlannerGuard(log)
+    if guard_planner:
+        guard.start()
     meta = {"started": datetime.now().isoformat(timespec="milliseconds"), "jitter_ms": rng.randint(0, JITTER_MS),
             "loadavg_before": round(os.getloadavg()[0], 2)}
     meta["lead_ms"] = LEAD_BASE_MS + meta["jitter_ms"]
@@ -294,10 +342,13 @@ def one_run(scenario, stimulus, run_dir, rng, hotkey):
         meta["observer_exit"] = proc.returncode
         meta["loadavg_after"] = round(os.getloadavg()[0], 2)
         time.sleep(1.0)
+        meta["errors"] = [] if count_messages(log, "Listening session started") else ["the command hotkey did not start a listening session"]
         meta["settled"] = settle(log, hotkey)
         time.sleep(0.8)
         documents["final"] = textedit_documents()
     finally:
+        guard.stopped.set()
+        meta["planner_guard_fired_at"] = guard.fired
         log.stop()
         (run_dir / "documents.json").write_text(json.dumps(documents))
         (run_dir / "audit.ndjson").write_text("\n".join(audit_rows_since(int(start_epoch) - 1)) + "\n")
@@ -318,7 +369,7 @@ def compile_observer():
     sh(["swiftc", "-O", "-swift-version", "5", "-suppress-warnings", OBSERVER_SRC, "-o", OBSERVER], timeout=300, check=True)
 
 
-def preflight():
+def preflight(scenario):
     if not common.APP.exists():
         raise SystemExit(f"{common.APP} is not installed")
     for key in ("actionsEnabled", "hasCompletedOnboarding"):
@@ -330,6 +381,7 @@ def preflight():
         raise SystemExit(f"observer check failed. Needs Accessibility for this terminal and the BlackHole 2ch device.\n{check.stdout}")
     if not shutil.which("cua-driver"):
         say("WARNING: cua-driver not found; the end-of-run HUD screenshot will be missing")
+    refuse_if_user_work(scenario)
 
 
 def read_hotkey():
@@ -348,9 +400,11 @@ def main():
     parser.add_argument("scenario")
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--allow-planner", action="store_true",
+                        help="do not cancel the app when the planner starts; it can then drive any app on this machine")
     args = parser.parse_args()
     scenario = common.load_scenario(args.scenario)
-    preflight()
+    preflight(scenario)
     hotkey = read_hotkey()
     stimulus = build_stimulus.build(args.scenario)
     root = common.BUILD / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -367,15 +421,15 @@ def main():
         say(f"daemon: {daemon_line()}")
         for i in range(1, args.runs + 1):
             say(f"run {i}/{args.runs}")
-            leaks += bool(one_run(scenario, stimulus, root / f"run-{i:02d}", rng, hotkey)["icloud_files"])
+            leaks += bool(one_run(scenario, stimulus, root / f"run-{i:02d}", rng, hotkey, not args.allow_planner)["icloud_files"])
             time.sleep(2)
     except KeyboardInterrupt as stop:
         say(f"interrupted ({stop}); restoring")
+        cancel_active_work()
     finally:
         for child in children:
             if child.poll() is None:
                 child.kill()
-        quit_textedit()
         restore(original)
     report.write(root)
     say(f"report: {root / 'report.md'}")

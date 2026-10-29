@@ -151,7 +151,7 @@ def first_words_ms(rows, scenario, first_word_end):
 
 def analyze_run(run, scenario, clock, loopback_ms=0):
     origin = audio_origin_ms(run["events"])
-    out = {"name": run["name"], "errors": [], "expect": {}, "forbidden": {}, "details": []}
+    out = {"name": run["name"], "errors": list(run["meta"].get("errors", [])), "expect": {}, "forbidden": {}, "details": []}
     if origin is None:
         out["errors"].append("no audio_play event; the observer did not play the stimulus")
         origin = 0
@@ -182,7 +182,11 @@ def analyze_run(run, scenario, clock, loopback_ms=0):
     if planner:
         out["details"].append(f"planner started at {planner} ms")
     if missing:
-        out["details"].append(f"typed claims {missing} but the documents read back {document_text(run)!r}")
+        claimed = [ms for ms, e in rows if e["event"] == "hud" and TYPED.search(e.get("text", ""))]
+        when = f", first shown in the HUD at {claimed[0]} ms" if claimed else ""
+        out["details"].append(f"typed claims {missing}{when} but the documents read back {document_text(run)!r}")
+    for fired in run["meta"].get("planner_guard_fired_at", []):
+        out["details"].append(f"the rig cancelled the app at {fired - origin} ms because the planner started; later expectations are unmeasured")
     first_word = next((c for c in clock if c[1] is not None), None)
     during = [ms for ms, e in rows if e["event"] == "hud" and first_word and first_word[0] <= ms <= speech_end]
     out["hud"] = {
@@ -192,7 +196,7 @@ def analyze_run(run, scenario, clock, loopback_ms=0):
     }
     out["documents"] = None if run["documents"] is None else len(run["documents"])
     stats = next((e for e in run["events"] if e["event"] == "poll_stats"), {})
-    out["max_poll_ms"] = stats.get("max_poll_ms")
+    out["max_poll_ms"] = {k: stats[k]["max_poll_ms"] for k in ("workspace", "targets", "hud") if k in stats}
     out["icloud_files"] = run["meta"].get("icloud_files", [])
     out["settled"] = run["meta"].get("settled")
     out["loadavg"] = run["meta"].get("loadavg_after")
@@ -243,13 +247,13 @@ def render(results, verdict, scenario, loopback_ms):
     for key, v in verdict["forbidden"].items():
         lines.append(f"| {key} | {v['runs_affected']}/{verdict['runs']} | {v['rate']:.0%} | {v['total']} | {'yes' if v['forbidden_by_scenario'] else 'no'} |")
     ids = list(verdict["expectations"])
-    lines += ["", "## Runs", "", "| run | jitter | " + " | ".join(ids) + " | split | planner | duplicate | no effect | docs | first words | max poll | load |",
+    lines += ["", "## Runs", "", "| run | jitter | " + " | ".join(ids) + " | split | planner | duplicate | no effect | docs | first words | max poll ms (ws/ax/hud) | load |",
               "|---|---|" + "---|" * (len(ids) + 8)]
     for r in results:
         cells = [ms(r["expect"][i]["latency_ms"]) for i in ids]
         f, h = r["forbidden"], r["hud"]
         lines.append(f"| {r['name']} | {r['jitter_ms']} | " + " | ".join(cells) +
-                     f" | {f['take_split']} | {f['planner_call']} | {f['duplicate_dispatch']} | {f['success_without_effect']} | {r['documents']} | {ms(h['first_words_ms'])} | {r['max_poll_ms']} | {r['loadavg']} |")
+                     f" | {f['take_split']} | {f['planner_call']} | {f['duplicate_dispatch']} | {f['success_without_effect']} | {r['documents'] if r['documents'] is not None else '-'} | {ms(h['first_words_ms'])} | {'/'.join(str(v) for v in r['max_poll_ms'].values()) or '-'} | {r['loadavg']} |")
     lines += ["", "## Evidence for flagged events", ""]
     for r in results:
         for detail in r["details"] + r["errors"]:

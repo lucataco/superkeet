@@ -11,13 +11,17 @@ import CoreAudio
 // visible change: frontmost app, target windows, target document text, Superkeet HUD text. Every event has
 // `t`, wall-clock epoch milliseconds, and after playback starts `ms`, milliseconds since the first sample.
 // After the tail it prints tail_done and waits for a line on stdin before it presses the hotkey again.
+//
+// Three loops poll independently, because an Accessibility call into an app that is still launching can block
+// for the messaging timeout. The main thread watches NSWorkspace, one thread reads the target apps, and one
+// thread reads the HUD. A stall in one source then cannot delay another source's timestamps.
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
 let hudBundle = "com.superkeet.app"
 let pollSeconds = 0.02
 let hudSeconds = 0.05
-let axTimeout: Float = 0.25
+let axTimeout: Float = 0.1
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -37,11 +41,14 @@ func option(_ name: String) -> String? { options[name]?.last }
 func intOption(_ name: String, _ fallback: Int) -> Int { option(name).flatMap { Int($0) } ?? fallback }
 
 var audioStart: Date?
+let emitLock = NSLock()
 func emit(_ event: String, _ extra: [String: Any] = [:]) {
     let now = Date()
     var row: [String: Any] = ["event": event, "t": Int64(now.timeIntervalSince1970 * 1000)]
-    if let start = audioStart { row["ms"] = Int(now.timeIntervalSince(start) * 1000) }
     for (key, value) in extra { row[key] = value }
+    emitLock.lock()
+    defer { emitLock.unlock() }
+    if let start = audioStart { row["ms"] = Int(now.timeIntervalSince(start) * 1000) }
     if let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]),
        let line = String(data: data, encoding: .utf8) {
         print(line)
@@ -144,25 +151,61 @@ let audioSeconds = Double(file.length) / file.processingFormat.sampleRate
 _ = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in }
 func pump(until date: Date) { RunLoop.current.run(mode: .default, before: date) }
 
-var lastFront = ""
-var lastWindows: [String: String] = [:]
-var lastTexts: [String: [String]] = [:]
-var lastRunning: [String: Bool] = [:]
-var lastHUD = ""
-var nextHUD = Date.distantPast
-var polls = 0
-var slowPolls = 0
-var maxPollMs = 0.0
+final class Loop {
+    let name: String
+    private let lock = NSLock()
+    private var stopped = false
+    private var polls = 0
+    private var slow = 0
+    private var maxMs = 0.0
+    private let done = DispatchSemaphore(value: 0)
 
-func pollTargets() {
+    init(_ name: String) { self.name = name }
+
+    var isStopped: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
+    func stop() { lock.lock(); stopped = true; lock.unlock() }
+    func record(_ started: Date) {
+        let spent = Date().timeIntervalSince(started) * 1000
+        lock.lock(); polls += 1; maxMs = max(maxMs, spent); if spent > 100 { slow += 1 }; lock.unlock()
+    }
+    var stats: [String: Any] { ["polls": polls, "slow_polls": slow, "max_poll_ms": Int(maxMs)] }
+
+    func spawn(every seconds: Double, _ body: @escaping () -> Void) {
+        Thread {
+            while !self.isStopped {
+                let started = Date()
+                body()
+                self.record(started)
+                Thread.sleep(forTimeInterval: seconds)
+            }
+            self.done.signal()
+        }.start()
+    }
+    func finish() { stop(); _ = done.wait(timeout: .now() + 2) }
+}
+
+var lastFront = ""
+var lastRunning: [String: Bool] = [:]
+func pollWorkspace() {
+    let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"
+    if front != lastFront {
+        lastFront = front
+        emit("frontmost", ["bundle": front])
+    }
     for bundle in targets {
-        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
-        let isRunning = running != nil
+        let isRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: bundle).isEmpty
         if lastRunning[bundle] != isRunning {
             lastRunning[bundle] = isRunning
             emit("target_running", ["bundle": bundle, "running": isRunning])
         }
-        guard let app = running else { continue }
+    }
+}
+
+var lastWindows: [String: String] = [:]
+var lastTexts: [String: [String]] = [:]
+func pollTargets() {
+    for bundle in targets {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first else { continue }
         let element = axApp(pid: app.processIdentifier)
         let windows = (attr(element, kAXWindowsAttribute) as? [AXUIElement]) ?? []
         let titles = windows.map { (attr($0, kAXTitleAttribute) as? String) ?? "" }
@@ -185,10 +228,9 @@ func pollTargets() {
     }
 }
 
-func pollHUD(now: Date) {
-    guard now >= nextHUD,
-          let pid = NSRunningApplication.runningApplications(withBundleIdentifier: hudBundle).first?.processIdentifier else { return }
-    nextHUD = now.addingTimeInterval(hudSeconds)
+var lastHUD = ""
+func pollHUD() {
+    guard let pid = NSRunningApplication.runningApplications(withBundleIdentifier: hudBundle).first?.processIdentifier else { return }
     var texts: [String] = []
     let element = axApp(pid: pid)
     for window in (attr(element, kAXWindowsAttribute) as? [AXUIElement]) ?? [] { collectStaticText(window, depth: 12, into: &texts) }
@@ -199,26 +241,13 @@ func pollHUD(now: Date) {
     }
 }
 
-func poll() {
-    let started = Date()
-    let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"
-    if front != lastFront {
-        lastFront = front
-        emit("frontmost", ["bundle": front])
-    }
-    pollTargets()
-    pollHUD(now: started)
-    let spent = Date().timeIntervalSince(started) * 1000
-    polls += 1
-    maxPollMs = max(maxPollMs, spent)
-    if spent > 100 { slowPolls += 1 }
-}
-
+let workspaceLoop = Loop("workspace"), targetLoop = Loop("targets"), hudLoop = Loop("hud")
 func run(until deadline: Date) {
     while Date() < deadline {
         let tick = Date()
-        poll()
-        pump(until: tick.addingTimeInterval(pollSeconds))
+        pollWorkspace()
+        workspaceLoop.record(tick)
+        pump(until: tick.addingTimeInterval(0.01))
     }
 }
 
@@ -227,18 +256,24 @@ emit("harness_start", [
     "lead_ms": Int(leadSeconds * 1000), "tail_ms": Int(tailSeconds * 1000),
     "output_latency_ms": Int(engine.outputNode.presentationLatency * 1000),
 ])
-poll()
+targetLoop.spawn(every: pollSeconds, pollTargets)
+hudLoop.spawn(every: hudSeconds, pollHUD)
+pollWorkspace()
 pressHotkey()
 emit("hotkey_start")
 run(until: Date().addingTimeInterval(leadSeconds))
 
 node.play()
+emitLock.lock()
 audioStart = Date()
+emitLock.unlock()
 emit("audio_play")
 run(until: Date().addingTimeInterval(audioSeconds + tailSeconds))
 
+targetLoop.finish()
+hudLoop.finish()
 emit("tail_done")
 _ = readLine()
 pressHotkey()
 emit("hotkey_stop")
-emit("poll_stats", ["polls": polls, "slow_polls": slowPolls, "max_poll_ms": Int(maxPollMs)])
+emit("poll_stats", ["workspace": workspaceLoop.stats, "targets": targetLoop.stats, "hud": hudLoop.stats])
