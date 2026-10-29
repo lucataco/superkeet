@@ -105,7 +105,7 @@ final class ListeningSessionPolicyTests: XCTestCase {
         }
     }
 
-    private let command: [(start: Int, end: Int, word: String)] = [
+    private let threeSentenceCommandWordTimings: [(start: Int, end: Int, word: String)] = [
         (31, 131, "Can"), (151, 312, "you"), (432, 612, "open"), (652, 732, "up"), (772, 1_213, "TextEdit"),
         (1_253, 1_393, "for"), (1_434, 1_554, "me?"), (2_175, 2_355, "And"), (2_536, 2_676, "once"),
         (2_716, 2_936, "you're"), (3_057, 3_537, "there,"), (3_678, 3_838, "can"), (3_878, 4_038, "you"),
@@ -122,10 +122,10 @@ final class ListeningSessionPolicyTests: XCTestCase {
             var endedAt: Int?
             for audio in stride(from: 500, through: 14_000, by: 500) {
                 let clock = audio - pad
-                let heard = command.filter { $0.end + recogniserLag <= clock }.map(\.word).joined(separator: " ")
+                let heard = threeSentenceCommandWordTimings.filter { $0.end + recogniserLag <= clock }.map(\.word).joined(separator: " ")
                 _ = take.hear(heard)
-                let lastSpeechEnd = command.last { $0.start <= clock }.map { min($0.end, clock) } ?? 0
-                let isSpeaking = command.contains { $0.start <= clock && clock < $0.end }
+                let lastSpeechEnd = threeSentenceCommandWordTimings.last { $0.start <= clock }.map { min($0.end, clock) } ?? 0
+                let isSpeaking = threeSentenceCommandWordTimings.contains { $0.start <= clock && clock < $0.end }
                 let silence = isSpeaking ? 0 : clock - lastSpeechEnd
                 let tick = EngineTick(sessionID: "take", audio: .milliseconds(audio), trailingSilence: .milliseconds(silence))
                 if take.hear(tick) == .endTake {
