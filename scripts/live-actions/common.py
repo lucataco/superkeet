@@ -3,13 +3,14 @@
 import hashlib
 import json
 import math
+import os
 import re
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / ".build" / "live-actions"
-APP = Path("/Applications/Superkeet.app")
+APP = Path(os.environ.get("SUPERKEET_APP", "/Applications/Superkeet.app"))
 PARAKEET = APP / "Contents/Resources/bin/parakeet"
 APP_BUNDLE_ID = "com.superkeet.app"
 LOOPBACK_DEVICE = "BlackHole 2ch"

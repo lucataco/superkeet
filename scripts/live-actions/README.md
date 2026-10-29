@@ -6,7 +6,7 @@ It needs no change to the app. Speech goes through the BlackHole 2ch loopback de
 
 ## Prerequisites
 
-- Superkeet is installed at `/Applications/Superkeet.app`, onboarding is done, and Actions Mode is on.
+- Superkeet is installed at `/Applications/Superkeet.app`, onboarding is done, and Actions Mode is on. To test another build, set `SUPERKEET_APP` to its bundle path. Sign that build with the same Developer ID team as the installed app, so macOS keeps its Accessibility and Microphone grants. The rig quits the installed app and launches that build, and relaunches that build when it restores.
 - BlackHole 2ch is installed (`brew install --cask blackhole-2ch`, which asks for an administrator password once).
 - The terminal that runs the rig has Accessibility permission. It does not need Screen Recording. The HUD screenshot comes from `cua-driver`, which has its own grant.
 - `REPLICATE_API_TOKEN` is set. It is only used when a stimulus is built for the first time.
