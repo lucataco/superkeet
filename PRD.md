@@ -247,7 +247,7 @@ Requirement IDs are stable handles for discussion and issue tracking. "Must" is 
 | LIV-4 | The early launch does not wait for the app's window; a later step that acts inside the app waits for the window first. | In progress |
 | LIV-5 | **Native clauses while speaking:** every later clause the native router can carry out (open, URL, web search, ⌘N-style shortcut, typing) runs as soon as the next clause has begun or the text ends in "and"/"then". The last clause waits for the final transcript. The first clause that needs the planner blocks early execution for the rest of the utterance. Steps run strictly in order after the launch. | In progress |
 | LIV-6 | Early shortcuts and typing run only when the approval policy would not have asked about them (⌘N, ⌘T and `type_text` under the default policy; all "changes state" under Just Do It; nothing under Ask Before Every Tool). Opens and URLs follow the Instant App Launch toggle. | In progress |
-| LIV-7 | When the final transcript arrives, the launch and early steps are handed to the command, which waits for them, lists what ran ("Pressed ⌘N in Notes while you were speaking"), and marks matching clauses **Already done** rather than repeating them. A failed early step is simply done again. | In progress |
+| LIV-7 | When the final transcript arrives, the launch and early steps are handed to the command, which waits for them, logs what ran ("Pressed ⌘N in Notes while you were speaking"), shows one HUD line for each, and treats matching clauses as already done rather than repeating them. A failed early step is simply done again. | In progress |
 | LIV-8 | If the final transcript names a different app than the one launched early, the launched app stays open, the command opens the app it asked for, and the disagreement is logged. | Shipped |
 
 #### 7.10.4 Command understanding
@@ -324,10 +324,10 @@ Requirement IDs are stable handles for discussion and issue tracking. "Must" is 
 | ID | Requirement | Status |
 |---|---|---|
 | HUD-1 | A top-centre, non-activating floating pill shows listening, live transcript, early-launch and early-step status, the plan card, approvals, a working card with a live checklist, and a result card. It takes keyboard focus only while a question is pending, then returns focus to the user's app. | Shipped / In progress (session states) |
-| HUD-2 | The checklist lists early launches (⚡), numbered steps, each tool call (running, ✓ done, ↩ reused, ✗ failed, ✋ denied), and notes; long runs fold older rows into "… n earlier". It stays on the result card. | Shipped |
+| HUD-2 | The checklist is one plain line per action the user asked for, in spoken order: a spinner while running, a grey ✓ when done, an orange ! with a one-line reason when failed, an orange hand with "Not approved" when denied. Early work appears once; planner steps get one line per clause with no tool rows; long runs fold older lines into "… n earlier". It stays on the result card, which hides the raw tool message when the lines already say what happened. | Shipped |
 | HUD-3 | Successful results auto-dismiss after 8 s (2 s when another command is listening or queued); failures stay until dismissed or replaced. Listening never auto-hides. | Shipped |
 | HUD-4 | When another card is showing, a compact "Listening: …" footer displays the next command being heard. Waiting commands appear as "Next: …" rows. | Shipped |
-| HUD-5 | Under Just Do It the working card shows a shield and "Just Do It · destructive tools still ask". | Shipped / In progress (label) |
+| HUD-5 | HUD text never shows a pid, bundle identifier, step number, tool name, or "while you were speaking"; the working card carries no approval-policy label. | Shipped |
 
 #### 7.10.10 Audit log
 

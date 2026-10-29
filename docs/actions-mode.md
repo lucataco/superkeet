@@ -54,7 +54,8 @@ Run an Action hotkey (default ⌥⇧Space)
    default policy runs read-only tools and built-in app/URL opens automatically;
    other state-changing calls ask in the floating HUD. Multi-step commands show
    a **plan card** when a predictable step needs approval (see “Approving a whole
-   plan” below). The HUD then shows a checklist and the command's result.
+   plan” below). The HUD then shows one line per action and, when a planned step
+   answers in words, that answer.
 4. Approved or auto-approved calls run through the native executor or MCP
    server. Planned tool results are truncated and fed back to the model until
    the task is done.
@@ -234,7 +235,8 @@ Each step is then carried out in order, trying the cheapest route first:
 The recognised single open `open ‹browser› and go to ‹url›` still runs as one
 native step before any decomposition, so the browser and URL are never split.
 A step that fails (denial, timeout, launch error) stops the command; earlier
-effects stand and the HUD lists “Step 2 of 3: …” lines for what ran.
+effects stand and the HUD keeps a line for each action that ran, with the failed
+one in orange beside its reason.
 
 ### Approving a whole plan
 
@@ -253,10 +255,8 @@ The picker sits directly under the Actions Mode toggle in Settings ▸ Actions a
 on the Actions step of onboarding. The menu-bar **Auto-Approve Actions** item
 turns “Just Do It” on. Turning it off restores whichever asking policy was active
 before (“Only Ask Before Changes” or “Ask Before Every Tool”), falling back to
-“Only Ask Before Changes” when the policy was chosen in Settings. While “Just Do
-It” is active, the working card shows a shield and “Just Do It · destructive
-tools still ask”. State-changing calls that
-skip approval are logged as `succeeded (auto-approved)`; read-only calls that
+“Only Ask Before Changes” when the policy was chosen in Settings. State-changing
+calls that skip approval are logged as `succeeded (auto-approved)`; read-only calls that
 skip approval retain the plain `succeeded` outcome.
 
 Before a multi-step command runs, Superkeet simulates it — the same
@@ -362,12 +362,57 @@ automatically re-armed after a command.
 
 ### The checklist
 
-While a command runs, the HUD lists what is happening as rows whose status
-changes in place: an app that opened while you were speaking (⚡), each step of
-a multi-step command with its number, every tool call (running, ✓ done, ↩
-reused, ✗ failed, ✋ denied), and notes such as “Using ⌘N to create a new note
-in Notes”. Long runs fold older rows into “… n earlier” and keep the current
-step visible. The checklist stays on the result card so you can see what ran.
+The HUD lists **one line per action you asked for**, in the order you said them,
+and nothing else. A line is plain language. It never shows a process id, a
+bundle identifier, a step number, a tool name, or an error code.
+
+| Mark | Meaning |
+|---|---|
+| Spinner | Running |
+| Grey ✓ | Done |
+| Orange ! with a one-line reason under the title | Failed. The reason is the first sentence of the failure message |
+| Orange hand with “Not approved” | You declined it |
+
+Colour is reserved for the last two. The header follows the same rule: the
+accent waveform while listening, a spinner while working, a grey ✓ when done,
+and the orange triangle when the command failed (**One step didn’t work** when a
+step broke, **Couldn’t finish** otherwise).
+
+How the lines are made:
+
+- **Work that ran while you were speaking** is listed once, when it finishes:
+  **Opened TextEdit**, then **New document** for the ⌘N pressed at “create a new
+  document”. When the final transcript arrives, the clause that names the same
+  action adds no second line, whether it matches the early launch or an early
+  step. An early action that failed is not listed; the command does it again and
+  its line reports the result.
+- **Steps Superkeet carries out itself** read in the past tense once they worked
+  (**Opened TextEdit**, **New document**, **Save in Notes**, **Typed “hello”**,
+  **Searched for “cats” in Safari**). The launched app's real name replaces the
+  spoken one. While running, or if the step fails, the line reads as the command
+  (**Open Helium**, **Type “hello”**).
+- **Planned steps** get one line per clause, titled with the clause in sentence
+  case after lead-ins are dropped (“can you create a new document” becomes
+  **Create a new document**), with a spinner while the on-device model works. The
+  model's tool calls are not listed. A tool that fails puts its first sentence
+  under the line and turns it orange; a later tool call that works turns it back.
+  A denied tool gives **Not approved**.
+- Long runs fold older lines into “… n earlier”.
+
+The result card shows the lines and nothing more when they already say what
+happened. It adds text above them in two cases: the planner's own answer to a
+planned step (“I couldn't find any active title that says hello.”), and a
+failure no line explains, such as **No MCP servers are enabled** with its
+Settings hint. A raw tool message like `Opened TextEdit (pid 4039, …)` is never
+shown. The action log keeps the detailed record, including tool names, ids, and
+“… while you were speaking”.
+
+In code, `ActionChecklist` records `ActionLine` values as the command runs
+(`AgentSessionController` begins a line for each clause that does work and
+completes it), and `ActionHUDBody` draws them from plain values so the card can
+be rendered without any singleton. Running
+`SUPERKEET_RENDER_HUD=1 swift test --filter ActionHUDRenderTests` writes the
+listening, finished, and failed cards to `.build/hud-renders/`.
 
 The HUD is a non-activating panel: it only takes keyboard focus while a plan
 card or approval is showing (so Return and Escape work), and hands focus back
@@ -383,8 +428,8 @@ before any tool ran still retries with a smaller tool set, as before.
 
 During a listening session one pill stays up from the first press to the last:
 **Listening** with **Go ahead, I’m listening.** while idle, the live words while
-you speak, the early launch and any clause that ran early beneath them
-(**Press ⌘N in Notes…**, then **Pressed ⌘N in Notes**), the working and result
+you speak, the early launch and any clause that ran early beneath them as the
+same lines the result card uses (**Opened Notes**, **New note**), the working and result
 cards while a command runs, and back to the prompt. Its subtitle shows the
 shortcut that stops the session and how many commands have run. A **Stop**
 button does the same as Escape.
@@ -393,8 +438,8 @@ The **Listening…** card shows the words as they are recognised, up to three
 lines, with a blinking **▍** cursor while recording. It starts with
 **Say a command…** until the first words arrive. After you stop recording, the title
 becomes **Transcribing…** and the last live text stays visible until the final
-transcript arrives. An early app launch appears as a one-line **Opening Notes…**
-or **Opened Notes** status beneath the words.
+transcript arrives. An early app launch appears as a one-line **Open Notes**
+with a spinner, then **Opened Notes** with a grey ✓, beneath the words.
 
 If an approval, plan, working, or outcome card is already showing, a compact
 **Listening: …** footer displays the next command being heard. Live text works
@@ -529,9 +574,9 @@ Command Mode recording starts:
    directly — **without the approval HUD**. This bypass is limited to opening or
    activating an installed app that the user just named. The regular `open_app`
    tool keeps its “changes state” risk and follows the selected policy, including
-   its no-prompt exemption under the default policy. The HUD shows “Opening
-   Notes…”, then “Opened Notes”, beneath the live words while the recording
-   overlay stays up.
+   its no-prompt exemption under the default policy. The HUD shows “Open
+   Notes” with a spinner, then “Opened Notes” with a grey ✓, beneath the live
+   words while the recording overlay stays up.
 3. Every early launch is written to the action log with outcome `speculative`
    (or `failed`), the reason the detector committed, and the partial's sequence
    number. Speech text is not logged.
@@ -604,9 +649,9 @@ For “open the Notes app and create a new note and make the title say hello and
 open Safari”, Notes launches at “and”, ⌘N is pressed when “and make” arrives,
 “hello” is typed when “and open” arrives, and only “open Safari” waits for the
 pause, or, being an open, until it has held still. When the final transcript lands, `SpeculativeHandoff` carries the launch
-and the steps to `AgentSessionController`, which waits for them, lists what ran
-(“Pressed ⌘N in Notes while you were speaking”), and marks the matching clauses
-**Already done** instead of repeating them: matched by the action the final
+and the steps to `AgentSessionController`, which waits for them, logs what ran
+(“Pressed ⌘N in Notes while you were speaking”), shows one line for each, and
+marks the matching clauses as already done instead of repeating them: matched by the action the final
 clause maps to, then by its words, then, for steps inside an app, by position
 and tool, because repeating a shortcut or typed text would do it twice. A step
 that failed early is simply done again by the command.
