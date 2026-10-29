@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +17,7 @@ LOOPBACK_DEVICE = "BlackHole 2ch"
 PROBE_KINDS = ("frontmost", "new_window", "focused_text_contains")
 FORBIDDEN_EVENTS = ("take_split", "planner_call", "duplicate_dispatch", "success_without_effect")
 START_STATES = ("quit",)
+SAFE_TARGETS = ("com.apple.TextEdit",)
 
 
 def tokens(text):
@@ -101,6 +103,8 @@ def validate_scenario(scenario):
     if problems:
         return problems
     for bundle, state in scenario["start_state"].items():
+        if bundle not in SAFE_TARGETS:
+            problems.append(f"start_state {bundle}: the rig may only drive {SAFE_TARGETS}")
         if state not in START_STATES:
             problems.append(f"start_state {bundle}: {state!r} is not one of {START_STATES}")
     script = " ".join(u["text"] for u in scenario["utterances"])
@@ -120,6 +124,27 @@ def validate_scenario(scenario):
         if name not in FORBIDDEN_EVENTS:
             problems.append(f"unknown forbid {name}")
     return problems
+
+
+def scenario_targets(scenario):
+    """Bundles the observer should watch: the apps the rig sets up plus any app a probe names."""
+    probed = {v for e in scenario["expect"] for k, v in e["probe"].items() if k in ("frontmost", "new_window")}
+    return sorted(set(scenario["start_state"]) | probed)
+
+
+def parse_log(text):
+    """Rows of (epoch_ms, category, message) from `log stream --style ndjson`. Other lines are skipped."""
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+            stamp = datetime.strptime(event["timestamp"], "%Y-%m-%d %H:%M:%S.%f%z")
+        except (ValueError, KeyError):
+            continue
+        rows.append((round(stamp.timestamp() * 1000), event.get("category", ""), event.get("eventMessage", "")))
+    return rows
 
 
 def audio_key(scenario, version="1"):

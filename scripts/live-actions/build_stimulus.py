@@ -2,9 +2,12 @@
 """Build the speech stimulus for a scenario.
 
 Each utterance is synthesized on its own, joined with the scenario's exact silences, scaled to about
--16 LUFS (peak at most -1 dBTP), and written as 48 kHz stereo plus a 16 kHz mono copy. Two gates follow.
-The engine must transcribe the copy with every expected phrase present on word boundaries, and WhisperX
-must align every phrase inside the utterance windows. The result is cached under .build/live-actions/cache/.
+-16 LUFS (peak at most -1 dBTP), and written as 48 kHz stereo plus a 16 kHz mono copy. Three gates follow.
+The engine must transcribe the copy with every expected phrase present on word boundaries. WhisperX must
+align every phrase inside the utterance windows. And the engine's live partials must show each phrase
+within LIVE_SLACK_MS of its end, so a voice the engine mishears cannot pass as a timing result. A failed
+gate re-synthesizes the utterances that carry the phrase, up to MAX_ATTEMPTS times.
+The result is cached under .build/live-actions/cache/.
 
 usage: build_stimulus.py <scenario.json> [--fresh]
 """
@@ -24,15 +27,15 @@ import wave
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common  # noqa: E402
-from demo_actions_replay import parse_engine_stdout  # noqa: E402
 
 RATE = 48000
 TARGET_LUFS = -16.0
 PEAK_DBTP = -1.0
 MAX_ATTEMPTS = 3
 ALIGN_SLACK_MS = 250
+LIVE_SLACK_MS = 1000
 TTS_URL = "https://api.replicate.com/v1/models/google/gemini-3.8-flash-tts/predictions"
 WHISPERX_VERSION = "655845d6190ef70573c669245f245892cd039df4b880a1e3a65852c09252f5cc"
 TRIM = "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.02"
@@ -132,11 +135,23 @@ def measure_gain_db(wav):
     return min(TARGET_LUFS - loudness, PEAK_DBTP - true_peak), loudness
 
 
-def transcribe(wav16):
+def replay(wav16):
+    """The engine's session replay: the final text and the (audio_ms, text) partials it streams on the way."""
     if not common.PARAKEET.is_file():
         raise SystemExit(f"{common.PARAKEET} not found; install Superkeet first")
-    out = run([common.PARAKEET, "transcribe", wav16, "--session", "--format", "json"])
-    return parse_engine_stdout(out.stdout)
+    out = run([common.PARAKEET, "transcribe", wav16, "--session", "--partials", "--format", "json"])
+    final, partials = None, []
+    for line in out.stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        event = json.loads(line)
+        if event.get("type") == "partial":
+            partials.append((event["audio_ms"], event["text"]))
+        elif event.get("type") == "complete":
+            final = event["text"]
+    if not final:
+        raise GateError("the engine replay printed no final transcript")
+    return final, partials
 
 
 def align(wav16, out_clock):
@@ -154,12 +169,30 @@ def align(wav16, out_clock):
     return rows
 
 
-def check_phrases(scenario, transcript, clock, windows):
-    problems = [f"engine transcript lacks {p!r}" for p in common.missing_phrases(transcript, [e["after"] for e in scenario["expect"]])]
-    for item in scenario["expect"]:
-        if common.phrase_end_ms(clock, item["after"]) is None:
-            problems.append(f"speech clock lacks {item['after']!r}")
-    return problems + alignment_problems(clock, windows)
+def live_gate_problems(partials, clock, phrases, slack_ms=LIVE_SLACK_MS):
+    """Phrases the engine's partials never showed by slack_ms after the phrase ended."""
+    problems = []
+    for phrase in phrases:
+        end = common.phrase_end_ms(clock, phrase)
+        if end is not None and not any(at <= end + slack_ms and common.phrase_in_text(text, phrase) for at, text in partials):
+            problems.append((phrase, f"no partial showed {phrase!r} by {end + slack_ms} ms (phrase ends at {end} ms)"))
+    return problems
+
+
+def check_phrases(scenario, transcript, partials, clock, windows):
+    """Problems as (phrase or None, message). A phrase names the utterances to synthesize again."""
+    phrases = [e["after"] for e in scenario["expect"]]
+    problems = [(p, f"engine transcript lacks {p!r}") for p in common.missing_phrases(transcript, phrases)]
+    problems += [(p, f"speech clock lacks {p!r}") for p in phrases if common.phrase_end_ms(clock, p) is None]
+    problems += [(None, m) for m in alignment_problems(clock, windows)]
+    return problems + live_gate_problems(partials, clock, phrases)
+
+
+def carrying(scenario, problems):
+    """Indexes of the utterances to synthesize again. A problem with no phrase implicates every utterance."""
+    words = [p for p, _ in problems]
+    return [i for i, u in enumerate(scenario["utterances"])
+            if None in words or any(p and common.phrase_in_text(u["text"], p) for p in words)]
 
 
 def clip_path(scenario, utterance, take):
@@ -167,57 +200,63 @@ def clip_path(scenario, utterance, take):
     return common.BUILD / "cache" / "clips" / f"{key}.wav"
 
 
+def assemble(scenario, clips, paths):
+    """Join the clips with the scenario's silences and level them. Returns the sample windows, total, gain, and loudness."""
+    pcms = [read_pcm(c) for c in clips]
+    placed, total = layout(scenario.get("lead_ms", 0), [len(p) // 4 for p in pcms], [u["pause_ms"] for u in scenario["utterances"]])
+    joined = bytearray(b"\0" * (total * 4))
+    for (start, _), pcm in zip(placed, pcms):
+        joined[start * 4:start * 4 + len(pcm)] = pcm
+    raw = paths["dir"] / "joined-raw.wav"
+    write_pcm(raw, bytes(joined))
+    gain_db, loudness = measure_gain_db(raw)
+    run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-af", f"volume={gain_db:.3f}dB", "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_s16le", paths["wav48"]])
+    run(["ffmpeg", "-v", "error", "-y", "-i", paths["wav48"], "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", paths["wav16"]])
+    raw.unlink()
+    return placed, total, gain_db, loudness
+
+
 def build(scenario_path, fresh=False):
     scenario = common.load_scenario(scenario_path)
     out = common.BUILD / "cache" / f"{scenario['name']}-{common.audio_key(scenario)}"
     paths = {"dir": out, "wav48": out / "stimulus-48k.wav", "wav16": out / "stimulus-16k.wav",
-             "clock": out / "speech-clock.tsv", "meta": out / "stimulus.json"}
+             "clock": out / "speech-clock.tsv", "meta": out / "stimulus.json", "takes": out / "takes.json"}
     if not fresh and all(paths[k].exists() for k in ("wav48", "wav16", "clock", "meta")):
         meta = json.loads(paths["meta"].read_text())
-        problems = check_phrases(scenario, meta["transcript"], common.read_clock(paths["clock"]), meta["windows_ms"])
+        problems = check_phrases(scenario, meta["transcript"], meta["partials"], common.read_clock(paths["clock"]), meta["windows_ms"])
         if problems:
-            raise GateError("; ".join(problems))
+            raise GateError("; ".join(m for _, m in problems))
         return paths
 
     out.mkdir(parents=True, exist_ok=True)
-    salt = int(time.time()) if fresh else 0
-    takes = [salt] * len(scenario["utterances"])
-    phrases = [e["after"] for e in scenario["expect"]]
+    count = len(scenario["utterances"])
+    takes = [int(time.time())] * count if fresh else (json.loads(paths["takes"].read_text()) if paths["takes"].exists() else [0] * count)
     for attempt in range(MAX_ATTEMPTS):
+        paths["takes"].write_text(json.dumps(takes))
         clips = [clip_path(scenario, u, take) for u, take in zip(scenario["utterances"], takes)]
         missing = [(u, c) for u, c in zip(scenario["utterances"], clips) if not c.exists()]
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(lambda uc: synthesize(uc[0]["text"], scenario["voice"], scenario.get("style", ""), uc[1]), missing))
-        pcms = [read_pcm(c) for c in clips]
-        placed, total = layout(scenario.get("lead_ms", 0), [len(p) // 4 for p in pcms], [u["pause_ms"] for u in scenario["utterances"]])
-        joined = bytearray(b"\0" * (total * 4))
-        for (start, _), pcm in zip(placed, pcms):
-            joined[start * 4:start * 4 + len(pcm)] = pcm
-        raw = out / "joined-raw.wav"
-        write_pcm(raw, bytes(joined))
-        gain_db, loudness = measure_gain_db(raw)
-        run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-af", f"volume={gain_db:.3f}dB", "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_s16le", paths["wav48"]])
-        run(["ffmpeg", "-v", "error", "-y", "-i", paths["wav48"], "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", paths["wav16"]])
-        raw.unlink()
-        transcript = transcribe(paths["wav16"])
-        absent = common.missing_phrases(transcript, phrases)
-        if not absent:
+        placed, total, gain_db, loudness = assemble(scenario, clips, paths)
+        transcript, partials = replay(paths["wav16"])
+        wins = windows_ms(placed)
+        problems = [(p, f"engine transcript lacks {p!r}") for p in common.missing_phrases(transcript, [e["after"] for e in scenario["expect"]])]
+        clock = []
+        if not problems:
+            clock = align(paths["wav16"], paths["clock"])
+            problems = check_phrases(scenario, transcript, partials, clock, wins)
+        if not problems:
             break
-        print(f"attempt {attempt + 1}: transcript lacks {absent}: {transcript!r}", file=sys.stderr)
-        for i, u in enumerate(scenario["utterances"]):
-            if any(common.phrase_in_text(u["text"], p) for p in absent):
-                takes[i] += 1
+        print(f"attempt {attempt + 1} failed: " + "; ".join(m for _, m in problems), file=sys.stderr)
+        for i in carrying(scenario, problems):
+            takes[i] += 1
     else:
-        raise GateError(f"round-trip gate failed after {MAX_ATTEMPTS} attempts, last transcript {transcript!r}, missing {absent}")
+        raise GateError(f"gates failed after {MAX_ATTEMPTS} attempts: " + "; ".join(m for _, m in problems))
 
-    clock = align(paths["wav16"], paths["clock"])
-    wins = windows_ms(placed)
-    problems = check_phrases(scenario, transcript, clock, wins)
-    if problems:
-        raise GateError("; ".join(problems))
     paths["meta"].write_text(json.dumps({
         "name": scenario["name"], "duration_ms": round(total * 1000 / RATE), "windows_ms": wins,
-        "gain_db": round(gain_db, 2), "input_lufs": round(loudness, 2), "takes": takes, "transcript": transcript,
+        "gain_db": round(gain_db, 2), "input_lufs": round(loudness, 2), "takes": takes,
+        "transcript": transcript, "partials": partials,
     }, indent=1))
     return paths
 
