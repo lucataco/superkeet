@@ -9,9 +9,15 @@ struct ActionHUDView: View {
 
     @State private var showDetails = false
 
-    static let visibleChecklistRows = 6
-    static let visibleEarlySteps = 4
     static let sessionPrompt = "Go ahead, I’m listening."
+
+    private enum Control {
+        case stopRun
+        case dismissOutcome
+        case stopListening
+
+        var title: String { self == .dismissOutcome ? "Dismiss" : "Stop" }
+    }
 
     private var showsActionContent: Bool {
         approvals.pending != nil || approvals.pendingPlan != nil || agent.phase.showsHUD
@@ -21,81 +27,55 @@ struct ActionHUDView: View {
 
     private var listeningPlaceholder: String { session.isActive ? Self.sessionPrompt : "Say a command…" }
 
+    private var hasQuestion: Bool { approvals.pending != nil || approvals.pendingPlan != nil }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        ActionHUDCard(header: header, footer: footer, onButton: performControl) {
             content
-            if isListening, showsActionContent {
-                Divider()
-                listeningFooter(speculation.listening?.transcript ?? "")
-            }
         }
-        .padding(16)
-        .frame(width: 380)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+    }
+
+    private var footer: String? {
+        guard isListening, showsActionContent else { return nil }
+        let transcript = speculation.listening?.transcript ?? ""
+        return "Listening: \(transcript.isEmpty ? listeningPlaceholder : transcript)"
+    }
+
+    private var control: Control? {
+        guard !hasQuestion else { return nil }
+        if agent.phase.isActive { return .stopRun }
+        if agent.phase.isOutcome { return .dismissOutcome }
+        return session.isActive ? .stopListening : nil
+    }
+
+    private func performControl() {
+        switch control {
+        case .stopRun: agent.cancel()
+        case .dismissOutcome: agent.reset()
+        case .stopListening: session.end(dispatchPending: false)
+        case nil: break
+        }
+    }
+
+    private var header: ActionHUDHeader {
+        ActionHUDHeader(
+            icon: icon,
+            title: title,
+            subtitle: subtitle,
+            button: control?.title,
+            buttonHelp: control == .stopListening ? "Stop listening (\(settings.commandHotkeyDisplayName) or Escape)" : nil
         )
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            leadingIcon
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 8)
-            trailingAction
-        }
-    }
-
-    @ViewBuilder
-    private var leadingIcon: some View {
-        if approvals.pendingPlan != nil {
-            Image(systemName: "list.bullet.clipboard.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.orange)
-        } else if approvals.pending != nil {
-            Image(systemName: "hand.raised.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.orange)
-        } else if agent.phase.isActive {
-            ProgressView()
-                .controlSize(.small)
-        } else if isListening, !agent.phase.isOutcome {
-            Image(systemName: "waveform")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-        } else {
-            Image(systemName: iconName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(iconColor)
-        }
-    }
-
-    @ViewBuilder
-    private var trailingAction: some View {
-        if approvals.pending == nil, approvals.pendingPlan == nil, agent.phase.isActive {
-            Button("Stop") { agent.cancel() }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        } else if approvals.pending == nil, approvals.pendingPlan == nil, agent.phase.isOutcome {
-            Button("Dismiss") { agent.reset() }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        } else if approvals.pending == nil, approvals.pendingPlan == nil, session.isActive {
-            Button("Stop") { session.end(dispatchPending: false) }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Stop listening (\(settings.commandHotkeyDisplayName) or Escape)")
+    private var icon: ActionHUDHeader.Icon {
+        if approvals.pendingPlan != nil { return .plan }
+        if approvals.pending != nil { return .approval }
+        if agent.phase.isActive { return .working }
+        if isListening, !agent.phase.isOutcome { return .listening }
+        switch agent.phase {
+        case .finished: return .done
+        case .failed: return .failed
+        default: return .idle
         }
     }
 
@@ -105,7 +85,7 @@ struct ActionHUDView: View {
         switch agent.phase {
         case .planning, .running: return "Working…"
         case .finished: return "Done"
-        case .failed: return "Couldn’t finish"
+        case .failed: return agent.checklist.failureTitle
         default: break
         }
         if speculation.listening != nil { return settings.isRecording ? "Listening…" : "Transcribing…" }
@@ -113,41 +93,14 @@ struct ActionHUDView: View {
     }
 
     private var subtitle: String? {
-        if session.isActive, !agent.phase.showsHUD, approvals.pending == nil, approvals.pendingPlan == nil {
+        if session.isActive, !agent.phase.showsHUD, !hasQuestion {
             let count = session.dispatchedCommands
             let commands = count == 0 ? "" : " · \(count) command\(count == 1 ? "" : "s") so far"
             return "Press \(settings.commandHotkeyDisplayName) to stop\(commands)"
         }
         guard approvals.pendingPlan == nil, agent.phase.showsHUD || approvals.pending != nil else { return nil }
         let command = agent.commandText
-        guard !command.isEmpty else { return nil }
-        if let step = currentStep, agent.phase.isActive {
-            return "Step \(step.number) of \(step.total) · “\(command)”"
-        }
-        return "“\(command)”"
-    }
-
-    private var currentStep: (number: Int, total: Int)? {
-        for item in agent.checklist.items.reversed() {
-            if case .step(let number, let total) = item.kind { return (number, total) }
-        }
-        return nil
-    }
-
-    private var iconName: String {
-        switch agent.phase {
-        case .finished: return "checkmark.circle.fill"
-        case .failed: return "exclamationmark.triangle.fill"
-        default: return "wand.and.stars"
-        }
-    }
-
-    private var iconColor: Color {
-        switch agent.phase {
-        case .finished: return .green
-        case .failed: return .orange
-        default: return .accentColor
-        }
+        return command.isEmpty ? nil : "“\(command)”"
     }
 
     @ViewBuilder
@@ -157,13 +110,19 @@ struct ActionHUDView: View {
         } else if let pending = approvals.pending {
             approvalContent(pending)
         } else if agent.phase.isActive {
-            workingContent
+            ActionHUDBody(
+                note: agent.liveMessage.isEmpty ? nil : .progress(agent.liveMessage),
+                lines: agent.checklist.lines, queued: agent.queuedCommands
+            )
         } else if agent.phase.isOutcome {
             outcomeContent
         } else if let listening = speculation.listening {
-            listeningContent(listening)
+            ActionHUDBody(
+                transcript: .init(text: listening.transcript, isRecording: settings.isRecording, placeholder: listeningPlaceholder),
+                lines: ActionLine.early(activity: speculation.activity, steps: speculation.stepActivities)
+            )
         } else if session.isActive {
-            LiveTranscriptText(transcript: "", isRecording: false, placeholder: Self.sessionPrompt)
+            ActionHUDBody(transcript: .init(text: "", isRecording: false, placeholder: Self.sessionPrompt))
         }
     }
 
@@ -275,191 +234,20 @@ struct ActionHUDView: View {
     }
 
     @ViewBuilder
-    private var workingContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            checklistView
-            if !agent.liveMessage.isEmpty {
-                Text(agent.liveMessage)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if settings.actionApprovalPolicy == .autoApprove {
-                Label("Just Do It · destructive tools still ask", systemImage: "bolt.shield")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            queuedContent
-        }
-    }
-
-    @ViewBuilder
     private var outcomeContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            switch agent.phase {
-            case .finished(let message):
-                Text(message.isEmpty ? "All done." : message)
-                    .font(.system(size: 13))
-                    .fixedSize(horizontal: false, vertical: true)
-            case .failed(let message):
-                Text(message)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            default:
-                EmptyView()
-            }
-            if !agent.checklist.isEmpty {
-                Divider()
-                checklistView
-            }
-            queuedContent
-        }
-    }
-
-    @ViewBuilder
-    private var queuedContent: some View {
-        if !agent.queuedCommands.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(agent.queuedCommands.enumerated()), id: \.offset) { _, command in
-                    Text("Next: “\(command)”")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var checklistView: some View {
-        let visible = agent.checklist.visibleItems(limit: Self.visibleChecklistRows)
-        VStack(alignment: .leading, spacing: 4) {
-            if visible.hidden > 0 {
-                Text("… \(visible.hidden) earlier")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-            }
-            ForEach(visible.items) { item in
-                checklistRow(item)
-            }
-        }
-    }
-
-    private func checklistRow(_ item: ActionChecklistItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            statusIcon(item.status)
-                .frame(width: 14)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(rowTitle(item))
-                    .font(.system(size: 12, weight: rowIsStep(item) ? .semibold : .regular))
-                    .foregroundStyle(item.status == .skipped || item.status == .info ? .secondary : .primary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let detail = item.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, rowIsStep(item) ? 0 : 10)
-    }
-
-    private func rowIsStep(_ item: ActionChecklistItem) -> Bool {
-        if case .step = item.kind { return true }
-        return false
-    }
-
-    private func rowTitle(_ item: ActionChecklistItem) -> String {
-        if case .step(let number, let total) = item.kind { return "Step \(number) of \(total): \(item.title)" }
-        return item.title
-    }
-
-    @ViewBuilder
-    private func statusIcon(_ status: ActionChecklistItem.Status) -> some View {
-        switch status {
-        case .running:
-            ProgressView().controlSize(.mini)
-        case .done:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        case .reused:
-            Image(systemName: "arrow.uturn.backward.circle.fill").foregroundStyle(.green.opacity(0.8))
-        case .skipped:
-            Image(systemName: "bolt.circle.fill").foregroundStyle(.green)
-        case .failed:
-            Image(systemName: "xmark.circle.fill").foregroundStyle(.orange)
-        case .denied:
-            Image(systemName: "hand.raised.circle.fill").foregroundStyle(.orange)
-        case .pending:
-            Image(systemName: "circle").foregroundStyle(.tertiary)
-        case .info:
-            Image(systemName: "info.circle").foregroundStyle(.secondary)
-        }
-    }
-
-    private func listeningContent(_ listening: SpeculativeLaunchCoordinator.Listening) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LiveTranscriptText(
-                transcript: listening.transcript, isRecording: settings.isRecording,
-                placeholder: listeningPlaceholder
+        switch agent.phase {
+        case .finished(let message):
+            ActionHUDBody(
+                note: agent.checklist.outcomeText(message: message, succeeded: true).map(ActionHUDBody.Note.result),
+                lines: agent.checklist.lines, queued: agent.queuedCommands
             )
-            if let activity = speculation.activity {
-                speculativeStatus(activity)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-            }
-            ForEach(Array(speculation.stepActivities.suffix(Self.visibleEarlySteps).enumerated()), id: \.element.step.index) { _, step in
-                stepStatus(step)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func stepStatus(_ step: SpeculativeLaunchCoordinator.StepActivity) -> some View {
-        switch step {
-        case .running(let running):
-            let summary = SpeculativeStepResult(step: running, output: nil, failure: nil).summary
-            Label("\(summary)…", systemImage: "bolt.fill")
-                .foregroundStyle(.secondary)
-        case .done(let result):
-            Label(result.doneDescription, systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .failed(let result):
-            Label("Couldn’t \(result.lowercasedSummary)", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .help(result.failure ?? "")
-        }
-    }
-
-    private func listeningFooter(_ transcript: String) -> some View {
-        Label("Listening: \(transcript.isEmpty ? listeningPlaceholder : transcript)", systemImage: "waveform")
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    @ViewBuilder
-    private func speculativeStatus(_ activity: SpeculativeLaunchCoordinator.Activity) -> some View {
-        switch activity {
-        case .launching(let name):
-            Label("Opening \(name)…", systemImage: "bolt.fill")
-                .foregroundStyle(.secondary)
-        case .launched(let launched):
-            Label("Opened \(launched.name)", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .failed(let name, let message):
-            Label("Couldn’t open \(name)", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .help(message)
+        case .failed(let message):
+            ActionHUDBody(
+                note: agent.checklist.outcomeText(message: message, succeeded: false).map(ActionHUDBody.Note.problem),
+                lines: agent.checklist.lines, queued: agent.queuedCommands
+            )
+        default:
+            EmptyView()
         }
     }
 
@@ -502,36 +290,5 @@ struct ActionHUDView: View {
         case .mutating: return .orange
         case .destructive: return .red
         }
-    }
-}
-
-private struct LiveTranscriptText: View {
-    let transcript: String
-    let isRecording: Bool
-    var placeholder = "Say a command…"
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var cursorVisible = true
-
-    private var displayedText: String { transcript.isEmpty ? placeholder : transcript }
-
-    var body: some View {
-        (Text(displayedText) + Text(isRecording ? "▍" : "").foregroundColor(cursorVisible ? .primary : .clear))
-            .font(.system(size: 13))
-            .foregroundStyle(.primary)
-            .lineLimit(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(displayedText)
-            .task(id: isRecording && !reduceMotion) {
-                cursorVisible = true
-                guard isRecording, !reduceMotion else { return }
-                do {
-                    while !Task.isCancelled {
-                        try await Task.sleep(for: .milliseconds(500))
-                        cursorVisible.toggle()
-                    }
-                } catch is CancellationError {
-                } catch { }
-            }
     }
 }
