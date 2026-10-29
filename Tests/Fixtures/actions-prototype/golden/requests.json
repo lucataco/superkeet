@@ -10,7 +10,7 @@
     "protocol_version": 3,
     "request_id": "r2",
     "command": "continuous_start",
-    "session_id": "fixture-session",
+    "session_id": "12345678-1234-4234-8234-123456789abc",
     "input_kind": "wav",
     "capability": "continuous-turns-v1",
     "partials": true,
@@ -21,13 +21,13 @@
     "protocol_version": 3,
     "request_id": "continuous_finish",
     "command": "continuous_finish",
-    "session_id": "fixture-session"
+    "session_id": "12345678-1234-4234-8234-123456789abc"
   },
   {
     "schema_version": 1,
     "protocol_version": 3,
     "request_id": "continuous_cancel",
     "command": "continuous_cancel",
-    "session_id": "fixture-session"
+    "session_id": "12345678-1234-4234-8234-123456789abc"
   }
 ]

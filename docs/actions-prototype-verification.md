@@ -2,6 +2,8 @@
 
 P01 is not verified. The current operator supplied only the primary macOS account, UID 501. No disposable account or guest is available. Do not launch Notes, Chrome, Superkeet, microphone capture, or an AX observation on that account. A worktree is not desktop isolation.
 
+The current delivery covers tools and non-desktop tests only. Native screenshot/title/body proof aggregation and the legacy GUI outcome/performance driver are unimplemented, not just blocked by permissions. Actual Notes AX evidence must precede their design. An isolated account alone will not complete P01. Keep E01 and S01 blocked until all P01 gates pass.
+
 ## Run safe checks without a desktop
 
 1. Run the repository gates.
@@ -71,7 +73,7 @@ Request `continuous-turns-v1` only with a future artifact that actually negotiat
 4. Run `legacy-microphone` separately for a bounded single take. Keep the input device and duration explicit. Do not call repeated legacy takes continuous capture.
 5. Preserve `preflight.json`, `baseline.json`, `events.ndjson`, `assertions.json`, process identities, cleanup, and the evidence index outside the checkout. Record unavailable commitment, dispatch, and effect timestamps as unavailable.
 
-The new probe can drive an engine at trunk externally even though trunk lacks the probe. The app has no safe headless replay entry point in P01. Native GUI triggering and native end-state baseline remain blocked until proven on the disposable desktop. Do not call internal production setters or fake executors to fill that gap.
+The new probe can drive an engine at trunk externally even though trunk lacks the probe. The app has no safe headless replay entry point in P01. Native GUI triggering and native end-state baseline require an unimplemented driver and proof aggregator. Establish actual Notes AX evidence in the disposable desktop before designing them. Do not call internal production setters or fake executors to fill that gap.
 
 ## Establish Notes target feasibility
 
@@ -80,7 +82,7 @@ The new probe can drive an engine at trunk externally even though trunk lacks th
 3. Run `observe --scenario notes-target` with the compiled helper and local content retention. It reads two actual AX observations. Missing AX access returns BLOCKED rather than an empty successful target.
 4. Capture an independent screenshot of that exact app/window. Correlate the AX window, focus, readable editor, title, and body with the same visible fixture. A title-only tree is insufficient.
 5. Verify stable editor identity across observations and a changed generation when the focused window changes. A new observer epoch invalidates older tokens.
-6. Keep `native-target-proof.json` blocked until the independent correlation is complete. The probe does not turn readable AX into a whole native proof automatically.
+6. Keep `native-target-proof.json` blocked. The probe lacks a screenshot/title/body proof aggregator. Independent correlation supplies design evidence but does not change the receipt automatically. Do not mark native proof verified until that implementation and its independent verification exist.
 
 If title/body observation is insufficient, record UNSUPPORTED for that Notes/macOS adapter scope and stop mutation work. Select a smaller supported operation or explicit adapter alternative before S02. This is an unresolved feasibility gate, not permission for blind typing.
 
@@ -99,7 +101,7 @@ Run each lane at the exact PR head in the disposable account. Use fresh independ
 
 | Lane | Required proof | Current state |
 | --- | --- | --- |
-| 1 | Trunk/head legacy phrase coverage with the same rebuilt engine and observer impact check | BLOCKED pending disposable lane and rebuilt artifact |
+| 1 | Trunk/head legacy phrase coverage with the same rebuilt engine and observer impact check | BLOCKED pending disposable live lane; use the root's recorded rebuilt artifact |
 | 2 | Primary-user path refused before launch or mutation | Unit/CLI refusal is runnable; live terminal screenshot remains open |
 | 3 | Notes visible document and AX editable target identify the same app/window | BLOCKED |
 | 4 | Chrome screenshot, profile PID, page target, and URL agree | BLOCKED |

@@ -66,8 +66,11 @@ def strict_json(data):
         if not math.isfinite(result):
             raise ValueError("nonfinite JSON")
         return result
-    return json.loads(data, object_pairs_hook=pairs, parse_float=number,
-                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+    try:
+        return json.loads(data, object_pairs_hook=pairs, parse_float=number,
+                          parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+    except RecursionError as error:
+        raise ValueError("JSON nesting limit") from error
 
 
 def validate_schema(value, schema):
@@ -357,13 +360,100 @@ class LegacyTrace:
                 "scope": "phrase-coverage-not-exact-transcript-or-desktop"}
 
 
+@dataclasses.dataclass
+class MicrophoneTrace(LegacyTrace):
+    stop_acknowledged: bool = False
+
+    def accept(self, event):
+        if isinstance(event, dict):
+            if event.get("type") != "session_started" and not self.started:
+                raise ProbeError(1, "microphone-start-event-missing")
+            if event.get("type") in ("transcribing", "complete") and not self.stop_acknowledged:
+                raise ProbeError(1, "microphone-completed-before-stop")
+        super().accept(event)
+
+
+@dataclasses.dataclass(frozen=True)
+class SampleRange:
+    start: int
+    end: int
+
+    def overlaps(self, other):
+        return self.start < other.end and other.start < self.end
+
+    def contains(self, other):
+        return self.start <= other.start and other.end <= self.end
+
+
+@dataclasses.dataclass
+class SourceAccounting:
+    accepted: int = 0
+    accounted: int = 0
+    finals: dict = dataclasses.field(default_factory=dict)
+    partitions: list = dataclasses.field(default_factory=list)
+    losses: list = dataclasses.field(default_factory=list)
+    speech: list = dataclasses.field(default_factory=list)
+
+    def finalize(self, row):
+        owned = SampleRange(**row["source_range"])
+        if any(owned.overlaps(SampleRange(**other["source_range"])) for other in self.finals.values()):
+            raise ValueError("overlapping authoritative ownership")
+        if row["status"] == "ok" and (row["failed_segments"] or row["dropped_samples"]):
+            raise ValueError("false successful final")
+        self.finals[row["turn_id"]] = row
+
+    def partition(self, row):
+        owned = SampleRange(**row["source_range"])
+        if owned.start != self.accounted:
+            raise ValueError("source partition gap or overlap")
+        turn = row["turn_id"]
+        if row["kind"] == "speech":
+            final = self.finals.get(turn)
+            if final is None or not SampleRange(**final["source_range"]).contains(owned):
+                raise ValueError("speech owner mismatch")
+        elif turn:
+            raise ValueError("non-speech partition cannot name a turn")
+        self.partitions.append((owned, row["kind"], turn))
+        self.accounted = owned.end
+
+    def finish(self, row):
+        loss_count = sum(owned.end - owned.start for owned in self.losses)
+        if (row["accepted_through"] != self.accepted or self.accounted != self.accepted
+                or row["dropped_samples"] != loss_count):
+            raise ValueError("incomplete terminal accounting")
+        loss_partitions = [owned for owned, kind, _ in self.partitions if kind == "loss"]
+        key = lambda owned: (owned.start, owned.end)
+        if sorted(self.losses, key=key) != sorted(loss_partitions, key=key):
+            raise ValueError("unreconciled loss ownership")
+        for turn, final in self.finals.items():
+            owned = SampleRange(**final["source_range"])
+            dropped = 0
+            for part, kind, owner in self.partitions:
+                if not owned.overlaps(part):
+                    continue
+                if not owned.contains(part) or kind == "silence" or (kind == "speech" and owner != turn):
+                    raise ValueError("partition contradicts finalized ownership")
+                if kind == "loss":
+                    dropped += part.end - part.start
+            if final["dropped_samples"] != dropped or (final["status"] == "ok" and dropped):
+                raise ValueError("final loss range mismatch")
+        for speech in self.speech:
+            if any(speech.overlaps(part) and kind == "silence" for part, kind, _ in self.partitions):
+                raise ValueError("observed speech accounted as silence")
+        failures = sum(final["failed_segments"] for final in self.finals.values())
+        if row["failed_segments"] < failures:
+            raise ValueError("unreconciled final counters")
+        if row["status"] == "finished" and (loss_count or row["failed_segments"]
+                                             or any(final["status"] != "ok" for final in self.finals.values())):
+            raise ValueError("false successful terminal")
+
+
 def validate_protocol3_trace(rows):
     schema = strict_json((FIXTURES / "schemas/protocol3-event-v1.json").read_bytes())
     session, clock, published = None, None, -1
-    revisions, finals, candidates = {}, {}, {}
-    accepted, accounted, loss_count = 0, 0, 0
-    final_failures, final_drops, bad_final = 0, 0, False
-    accounted_turns, loss_ranges, loss_partitions = set(), [], []
+    revisions, candidates, active_candidates = {}, {}, set()
+    source = SourceAccounting()
+    activity_position, speech_start = 0, None
     terminal = None
     for index, row in enumerate(rows, 1):
         validate_schema(row, schema)
@@ -380,73 +470,65 @@ def validate_protocol3_trace(rows):
             raise ValueError("foreign session or clock")
         published = row["published_ns"]
         for field in ("source_range", "context_range"):
-            if field in row and row[field]["start"] >= row[field]["end"]:
-                raise ValueError("empty or reversed source range")
+            if field in row:
+                owned = SampleRange(**row[field])
+                if not 0 <= owned.start < owned.end <= source.accepted:
+                    raise ValueError("invalid range or beyond accepted source")
         turn = row.get("turn_id")
         if kind == "audio_progress":
-            if row["accepted_through"] < accepted:
+            if row["accepted_through"] < source.accepted:
                 raise ValueError("source frontier regressed")
-            accepted = row["accepted_through"]
+            source.accepted = row["accepted_through"]
+        elif kind == "speech_activity":
+            position = row["position"]
+            if not activity_position <= position <= source.accepted:
+                raise ValueError("invalid speech activity position")
+            activity_position = position
+            if row["state"] == "speech" and speech_start is None:
+                speech_start = position
+            elif row["state"] == "silence" and speech_start is not None:
+                if speech_start < position:
+                    source.speech.append(SampleRange(speech_start, position))
+                speech_start = None
         elif kind in ("turn_preview", "turn_final"):
             previous = revisions.get(turn, 0)
-            if turn in finals or row["revision_id"] <= previous or row["source_range"]["end"] > accepted:
+            if turn in source.finals or row["revision_id"] <= previous:
                 raise ValueError("invalid speech revision or range")
             if kind == "turn_preview" and row["replaces_revision"] != previous:
                 raise ValueError("unknown replacement base")
             revisions[turn] = row["revision_id"]
             if kind == "turn_final":
-                owned = row["source_range"]
-                if any(owned["start"] < other["end"] and other["start"] < owned["end"] for other in finals.values()):
-                    raise ValueError("overlapping authoritative ownership")
-                if row["status"] == "ok" and (row["failed_segments"] or row["dropped_samples"]):
-                    raise ValueError("false successful final")
-                finals[turn] = owned
-                final_failures += row["failed_segments"]
-                final_drops += row["dropped_samples"]
-                bad_final = bad_final or row["status"] != "ok"
-        elif kind == "turn_candidate":
-            if turn in finals or row["candidate_revision"] <= candidates.get(turn, 0):
-                raise ValueError("stale candidate")
-            candidates[turn] = row["candidate_revision"]
-        elif kind == "turn_retracted":
-            if turn in finals or candidates.get(turn) != row["candidate_revision"]:
-                raise ValueError("unknown or finalized candidate")
-            del candidates[turn]
-        elif kind == "source_accounted":
-            owned = row["source_range"]
-            if owned["start"] != accounted or owned["end"] > accepted:
-                raise ValueError("source partition gap or overlap")
-            if row["kind"] == "speech":
-                if finals.get(turn) != owned or turn in accounted_turns:
-                    raise ValueError("speech owner mismatch")
-                accounted_turns.add(turn)
+                source.finalize(row)
             else:
-                if turn or any(owned["start"] < final["end"] and final["start"] < owned["end"] for final in finals.values()):
-                    raise ValueError("non-speech cannot own finalized speech")
-                if row["kind"] == "loss":
-                    loss_partitions.append((owned["start"], owned["end"]))
-            accounted = owned["end"]
+                source.speech.append(SampleRange(**row["source_range"]))
+        elif kind == "turn_candidate":
+            if (turn in source.finals or row["candidate_revision"] <= candidates.get(turn, 0)
+                    or row["end_sample"] > source.accepted):
+                raise ValueError("stale candidate or beyond accepted source")
+            candidates[turn] = row["candidate_revision"]
+            active_candidates.add(turn)
+            source.speech.append(SampleRange(row["end_sample"] - 1, row["end_sample"]))
+        elif kind == "turn_retracted":
+            if turn in source.finals or turn not in active_candidates or candidates.get(turn) != row["candidate_revision"]:
+                raise ValueError("unknown or finalized candidate")
+            active_candidates.remove(turn)
+        elif kind == "source_accounted":
+            source.partition(row)
         elif kind == "loss":
-            if row["source_range"]["end"] > accepted:
-                raise ValueError("loss beyond accepted source")
-            owned = row["source_range"]
-            if row["dropped_samples"] != owned["end"] - owned["start"]:
+            owned = SampleRange(**row["source_range"])
+            if row["dropped_samples"] != owned.end - owned.start:
                 raise ValueError("loss sample count mismatch")
-            loss_ranges.append((owned["start"], owned["end"]))
-            loss_count += row["dropped_samples"]
+            source.losses.append(owned)
         elif kind == "session_terminal":
-            if row["accepted_through"] != accepted or accounted != accepted or row["dropped_samples"] != loss_count:
-                raise ValueError("incomplete terminal accounting")
-            if accounted_turns != set(finals) or sorted(loss_ranges) != sorted(loss_partitions):
-                raise ValueError("unreconciled speech or loss ownership")
-            if row["failed_segments"] < final_failures or row["dropped_samples"] < final_drops:
-                raise ValueError("unreconciled final counters")
-            if row["status"] == "finished" and (loss_count or row["failed_segments"] or bad_final):
-                raise ValueError("false successful terminal")
+            if speech_start is not None and speech_start < source.accepted:
+                source.speech.append(SampleRange(speech_start, source.accepted))
+            if row["status"] == "finished" and (set(revisions) | set(candidates)) - set(source.finals):
+                raise ValueError("unfinished speech at graceful finish")
+            source.finish(row)
             terminal = row
     if terminal is None:
         raise ValueError("terminal required")
-    return {"event_count": len(rows), "turn_count": len(finals), "status": terminal["status"]}
+    return {"event_count": len(rows), "turn_count": len(source.finals), "status": terminal["status"]}
 
 
 def redacted_event(event):
@@ -525,15 +607,13 @@ class OwnedRun:
             self.raw.flush()
         self.processing_ns.append(time.monotonic_ns() - start)
 
-    def collect(self, child, trace, timeout, until_complete=False, tick=None):
+    def collect(self, child, trace, timeout, on_complete=None, tick=None):
         pending = b""
         deadline = time.monotonic() + timeout
         with selectors.DefaultSelector() as selector:
             selector.register(child.stdout, selectors.EVENT_READ)
             while True:
                 self.track_descendants()
-                if tick:
-                    tick()
                 if time.monotonic() > deadline:
                     raise ProbeError(4, "engine-deadline")
                 for key, _ in selector.select(min(0.2, max(0, deadline - time.monotonic()))):
@@ -564,10 +644,12 @@ class OwnedRun:
                         self.processing_ns[-1] = time.monotonic_ns() - start
                     if len(pending) > MAX_LINE:
                         raise ProbeError(1, "frame-size-limit")
-                    if until_complete and trace.final is not None:
-                        if pending:
-                            raise ProbeError(1, "post-completion-bytes")
-                        return
+                    if on_complete and trace.final is not None:
+                        on_complete()
+                        on_complete = None
+                        deadline = min(deadline, time.monotonic() + 5)
+                if tick:
+                    tick()
 
     def legacy_wav(self):
         data = self.manifest.data
@@ -609,28 +691,33 @@ class OwnedRun:
         request = {"command": "start", "session_id": session}
         if protocol == 2:
             request["partials"] = True
-        socket_request(socket_path, request)
-        stop_at = time.monotonic() + data["input"]["duration_seconds"]
-        stopped = False
+        trace = MicrophoneTrace(session)
 
         def stop_when_due():
-            nonlocal stopped
-            if not stopped and time.monotonic() >= stop_at:
+            if not trace.stop_acknowledged and time.monotonic() >= stop_at:
                 socket_request(socket_path, {"command": "stop", "session_id": session})
-                stopped = True
+                trace.stop_acknowledged = True
 
-        trace = LegacyTrace(session)
+        def shutdown():
+            socket_request(socket_path, {"command": "shutdown"})
+
         try:
+            socket_request(socket_path, request)
+            stop_at = time.monotonic() + data["input"]["duration_seconds"]
             self.collect(child, trace, data["input"]["duration_seconds"] + 120,
-                         until_complete=True, tick=stop_when_due)
-            if not trace.started:
-                raise ProbeError(1, "microphone-start-event-missing")
+                         on_complete=shutdown, tick=stop_when_due)
+            if child.wait(timeout=5) != 0:
+                raise ProbeError(1, "engine-exit-failure")
             self.assertions.append(trace.finish(data["input"]["expected_phrases"]))
             return self.baseline(trace)
-        finally:
+        except BaseException:
             if child.poll() is None and matches_process(self.children[-1][1]):
-                socket_request(socket_path, {"command": "cancel", "session_id": session}, require_ok=False)
-                socket_request(socket_path, {"command": "shutdown"}, require_ok=False)
+                for command in ({"command": "cancel", "session_id": session}, {"command": "shutdown"}):
+                    try:
+                        socket_request(socket_path, command, require_ok=False)
+                    except ProbeError:
+                        pass
+            raise
 
     def baseline(self, trace):
         result = {"state": State.VERIFIED.value, "scope": "legacy-engine-only",
@@ -680,6 +767,8 @@ class OwnedRun:
             if child.poll() is None:
                 if not matches_process(identity):
                     cleanup.append({"pid": child.pid, "state": "identity-mismatch-not-signalled"})
+                    if getattr(child, "stdout", None):
+                        child.stdout.close()
                     continue
                 child.terminate()
                 try:
@@ -717,28 +806,65 @@ class OwnedRun:
 
 
 def socket_request(path, request, require_ok=True):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(5)
-        connection.connect(str(path))
-        connection.sendall(json.dumps(request).encode() + b"\n")
-        response = b""
-        while b"\n" not in response:
-            chunk = connection.recv(4096)
-            if not chunk or len(response) + len(chunk) > MAX_LINE:
-                raise ProbeError(4, "invalid-socket-reply")
-            response += chunk
-        reply = strict_json(response.split(b"\n", 1)[0])
-        if reply.get("protocol_version") not in (1, 2) or (require_ok and reply.get("status") != "ok"):
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(5)
+            connection.connect(str(path))
+            connection.sendall(json.dumps(request).encode() + b"\n")
+            response = b""
+            deadline = time.monotonic() + 5
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ProbeError(4, "socket-reply-deadline")
+                connection.settimeout(remaining)
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+                if len(response) > MAX_LINE:
+                    raise ProbeError(1, "invalid-socket-reply")
+    except OSError as error:
+        raise ProbeError(4, "socket-request-incomplete") from error
+    if not response.endswith(b"\n") or response.count(b"\n") != 1:
+        raise ProbeError(1, "invalid-socket-reply")
+    try:
+        reply = strict_json(response)
+    except (ValueError, UnicodeError) as error:
+        raise ProbeError(1, "malformed-socket-json") from error
+    if not isinstance(reply, dict) or type(reply.get("protocol_version")) is not int:
+        raise ProbeError(1, "invalid-socket-reply")
+    if reply["protocol_version"] not in (1, 2):
+        raise ProbeError(3, "legacy-protocol-unavailable")
+    if reply.get("status") == "error":
+        if set(reply) != {"protocol_version", "status", "message"} or not isinstance(reply["message"], str):
+            raise ProbeError(1, "invalid-socket-rejection")
+        if require_ok:
             raise ProbeError(3, "legacy-request-not-accepted")
         return reply
+    if (set(reply) != {"protocol_version", "status", "state", "session_id"}
+            or reply.get("status") != "ok" or reply.get("state") not in ("idle", "recording", "transcribing")):
+        raise ProbeError(1, "invalid-socket-acknowledgement")
+    session, state = reply["session_id"], reply["state"]
+    if (state == "idle" and session is not None) or (state != "idle" and (not isinstance(session, str) or not session)):
+        raise ProbeError(1, "invalid-socket-session-state")
+    expected_state = {"start": "recording", "stop": "transcribing", "cancel": "transcribing"}.get(request["command"])
+    if expected_state and (state != expected_state or session != request["session_id"]):
+        raise ProbeError(1, "socket-acknowledgement-mismatch")
+    return reply
 
 
 def engine_protocol(engine):
-    result = subprocess.run([engine, "protocol-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            timeout=10, check=False)
-    if result.returncode != 0 or result.stdout.strip() not in (b"1", b"2"):
+    with subprocess.Popen([engine, "protocol-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
+        try:
+            output, _ = child.communicate(timeout=10)
+        except BaseException:
+            child.kill()
+            child.wait(timeout=5)
+            raise
+    if child.returncode != 0 or output.strip() not in (b"1", b"2"):
         raise ProbeError(3, "legacy-engine-capability-unavailable")
-    return int(result.stdout.strip())
+    return int(output.strip())
 
 
 def capability_preflight(manifest):
@@ -748,7 +874,7 @@ def capability_preflight(manifest):
         return {"state": State.BLOCKED.value, "requested": requested, "reason": "future-driver-unavailable"}
     protocol = engine_protocol(data["artifacts"]["engine"]["path"])
     return {"state": State.VERIFIED.value, "scope": "legacy-engine-protocol-only", "protocol": protocol,
-            "native": State.BLOCKED.value, "native_reason": "requires-disposable-AX-and-screenshot-proof"}
+            "native": State.BLOCKED.value, "native_reason": "native-proof-aggregation-unimplemented"}
 
 
 def receipt(manifest, out, code, reason, assertions):
@@ -843,9 +969,9 @@ def observe_notes(run):
     if rows[0].get("generation") != rows[1].get("generation"):
         raise ProbeError(1, "native-target-drift")
     write_json(run.out / "native-target-proof.json", {"state": State.BLOCKED.value,
-               "reason": "screenshot-and-title-body-correlation-require-independent-live-verifier",
+               "reason": "native-proof-aggregation-unimplemented",
                "observations": "native-observations.json", "input_consumed": False})
-    raise ProbeError(3, "native-proof-incomplete-without-independent-screenshot")
+    raise ProbeError(3, "native-proof-aggregation-unimplemented")
 
 
 def compare(args, manifest, out):

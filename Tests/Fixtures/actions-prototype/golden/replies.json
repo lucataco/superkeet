@@ -2,6 +2,33 @@
   {
     "schema_version": 1,
     "protocol_version": 3,
+    "request_id": "r2",
+    "status": "accepted",
+    "command": "continuous_start",
+    "session_id": "12345678-1234-4234-8234-123456789abc",
+    "state": "capturing"
+  },
+  {
+    "schema_version": 1,
+    "protocol_version": 3,
+    "request_id": "continuous_finish",
+    "status": "accepted",
+    "command": "continuous_finish",
+    "session_id": "12345678-1234-4234-8234-123456789abc",
+    "state": "finishing"
+  },
+  {
+    "schema_version": 1,
+    "protocol_version": 3,
+    "request_id": "continuous_cancel",
+    "status": "accepted",
+    "command": "continuous_cancel",
+    "session_id": "12345678-1234-4234-8234-123456789abc",
+    "state": "cancelling"
+  },
+  {
+    "schema_version": 1,
+    "protocol_version": 3,
     "request_id": "r1",
     "status": "accepted",
     "capabilities": [

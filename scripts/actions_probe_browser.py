@@ -350,7 +350,11 @@ def result_matches(nodes, query, public=False):
     if not all(isinstance(name, str) for name in names):
         return False
     if not public:
-        return MARKER in names and any(query in name for name in names)
+        marker = any(node.get("name", {}).get("value") == MARKER and node.get("role", {}).get("value") == "heading"
+                     for node in visible)
+        fields = [node for node in visible if node.get("name", {}).get("value") == "Actions probe query"
+                  and node.get("role", {}).get("value") == "textbox"]
+        return marker and len(fields) == 1 and fields[0].get("value", {}).get("value") == query
     content = "\n".join(names).casefold()
     challenges = ("unusual traffic", "captcha", "before you continue", "not a robot", "verify you are human",
                   "our systems have detected", "consent.google")

@@ -318,7 +318,7 @@ class ProbeTests(unittest.TestCase):
     def test_interruption_cleans_only_owned_real_cli_child(self):
         if sys.platform != "darwin":
             self.skipTest("macOS process identity")
-        executable = str(Path(sys.executable).resolve())
+        executable = probe.process_identity(os.getpid())["executable"]
         manifest = self.load()
         manifest.data["artifacts"]["test-interpreter"] = {"path": executable, "sha256": probe.sha256(executable)}
         unrelated = subprocess.Popen([executable, "-c", "import time; time.sleep(30)"])

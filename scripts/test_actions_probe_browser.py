@@ -88,16 +88,43 @@ class URLAndResultTests(unittest.TestCase):
                 self.assertFalse(browser.committed_url_matches(url, "", "Norbert Wiener", public=True))
 
     def test_fixture_requires_both_visible_exact_marker_and_literal_query(self):
-        good = [ax("Actions probe result", "heading"), ax("Norbert Wiener")]
+        good = [ax("Actions probe result", "heading"),
+                ax("Actions probe query", "textbox", value={"value": "Norbert Wiener"})]
         self.assertTrue(browser.result_matches(good, "Norbert Wiener"))
-        cases = [[ax("Not Actions probe result"), ax("Norbert Wiener")],
-                 [ax("Actions probe result"), ax("Wrong query")],
-                 [ax("Actions probe result", ignored=True), ax("Norbert Wiener")],
-                 [ax("Actions probe result"), ax("norbert wiener")], [], [None],
-                 [ax("Actions probe result"), {"ignored": False, "name": "bad"}]]
+        cases = [[ax("Not Actions probe result", "heading"), good[1]],
+                 [good[0], ax("Actions probe query", "textbox", value={"value": "Wrong query"})],
+                 [{**good[0], "ignored": True}, good[1]],
+                 [good[0], ax("Actions probe query", "textbox", value={"value": "norbert wiener"})],
+                 [good[0], {**good[1], "ignored": True}], good + [good[1]], [], [None],
+                 [good[0], {"ignored": False, "name": "bad"}]]
         for nodes in cases:
             with self.subTest(nodes=nodes):
                 self.assertFalse(browser.result_matches(nodes, "Norbert Wiener"))
+
+    def test_local_query_is_a_separate_exact_literal_not_heading_or_substring(self):
+        for query, observed in [("Actions", "Unrelated query"), ("Norbert Wiener", "Norbert Wiener II"),
+                                ("Actions probe result", "Unrelated query")]:
+            with self.subTest(query=query, observed=observed):
+                self.assertFalse(browser.result_matches([ax("Actions probe result", "heading"),
+                                                        ax("Actions probe query", "textbox", value={"value": observed})], query))
+        self.assertTrue(browser.result_matches([ax("Actions probe result", "heading"),
+                                                ax("Actions probe query", "textbox", value={"value": "Actions probe result"})],
+                                               "Actions probe result"))
+        self.assertFalse(browser.result_matches([ax("Actions probe result", "heading"),
+                                                 ax("Norbert Wiener", "heading")], "Norbert Wiener"))
+
+    def test_fixture_query_is_bound_to_its_labelled_field_not_other_page_text(self):
+        root = ax("Local search", "RootWebArea", nodeId="root", frameId="frame")
+        heading = ax(browser.MARKER, "heading", nodeId="heading", parentId="root")
+        heading_text = ax(browser.MARKER, nodeId="heading-text", parentId="heading")
+        footer = ax("Fixture revision 1", nodeId="footer", parentId="root")
+        for query in (browser.MARKER, "Fixture revision 1"):
+            for actual, expected in (("Unrelated query", False), (query, True)):
+                with self.subTest(query=query, actual=actual):
+                    field = ax("Actions probe query", "textbox", nodeId="query", parentId="root",
+                               value={"value": actual})
+                    nodes = browser.main_frame_nodes({"nodes": [root, heading, heading_text, field, footer]}, "frame")
+                    self.assertEqual(browser.result_matches(nodes, query), expected)
 
     def public_nodes(self):
         return [ax("Search Results", "heading"), ax("Search", "searchbox", value={"value": "Norbert Wiener"}),

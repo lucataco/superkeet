@@ -1,5 +1,27 @@
 {
+  "properties": {
+    "session_id": {"type": "string", "minLength": 36, "maxLength": 36, "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"}
+  },
   "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {"const": 1},
+        "protocol_version": {"const": 3},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "status": {"const": "accepted"},
+        "command": {"enum": ["continuous_start", "continuous_finish", "continuous_cancel"]},
+        "session_id": {"type": "string"},
+        "state": {"enum": ["capturing", "finishing", "cancelling"]}
+      },
+      "required": ["schema_version", "protocol_version", "request_id", "status", "command", "session_id", "state"],
+      "additionalProperties": false,
+      "oneOf": [
+        {"properties": {"command": {"const": "continuous_start"}, "state": {"const": "capturing"}}},
+        {"properties": {"command": {"const": "continuous_finish"}, "state": {"const": "finishing"}}},
+        {"properties": {"command": {"const": "continuous_cancel"}, "state": {"const": "cancelling"}}}
+      ]
+    },
     {
       "type": "object",
       "properties": {
