@@ -48,7 +48,8 @@ func pressHotkey() {
     let flags = CGEventFlags(rawValue: UInt64(intOption("hotkey-flags", 0)))
     for down in [true, false] {
         let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down)
-        event?.flags = flags
+        // A keyUp that carries the modifier latches it in the HID flag state for the rest of the session.
+        event?.flags = down ? flags : []
         event?.post(tap: .cghidEventTap)
         usleep(30_000)
     }
