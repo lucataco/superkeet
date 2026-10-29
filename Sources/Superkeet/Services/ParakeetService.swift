@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Combine
 import Darwin
 import os.log
 
@@ -26,6 +27,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @Published var startupStatusDetail: String?
     @Published private(set) var daemonProtocolVersion: Int?
     @Published private(set) var lastOutcome: TranscriptOutcomeEvent?
+    let ticks = PassthroughSubject<EngineTick, Never>()
 
     static let supportedProtocolVersions: Set<Int> = [1, 2]
     static let interimTextProtocolVersion = 2
@@ -101,6 +103,12 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private func deliverInterim(_ event: TranscriptEvent) {
         guard daemonState == .recording, let interim = event.interimTranscript else { return }
         interimContinuations[event.sessionID]?.yield(interim)
+    }
+
+    @MainActor
+    private func deliverTick(_ event: TranscriptEvent) {
+        guard daemonState == .recording, let tick = event.tick else { return }
+        ticks.send(tick)
     }
 
     func startDaemon() async throws {
@@ -871,6 +879,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                     sessionStatus = "Transcribing…"
                 case .partial:
                     deliverInterim(event)
+                case .tick:
+                    deliverTick(event)
                 case .complete:
                     guard ["ok", "partial", "empty", "error"].contains(event.status ?? ""), event.text != nil else {
                         throw TranscriptProtocolError.invalidMessage
