@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -350,7 +351,13 @@ class ProbeTests(unittest.TestCase):
                 self.assertIsNone(child.returncode)
                 child.stdin.write(b"exit\n")
                 child.stdin.close()
-                self.assertEqual(child.wait(timeout=5), 0)
+                deadline = time.monotonic() + 5
+                while (status := os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)) is None:
+                    self.assertLess(time.monotonic(), deadline, "child did not become waitable before exit deadline")
+                    time.sleep(0.001)
+                self.assertEqual((status.si_pid, status.si_code, status.si_status), (child.pid, os.CLD_EXITED, 0))
+                self.assertIsNone(child.returncode)
+                self.assertFalse(real_matches(identity), "terminated child identity still matches")
                 released.append(child.pid)
             return real_matches(identity)
 
@@ -372,6 +379,7 @@ class ProbeTests(unittest.TestCase):
             self.assertTrue(child.stdin.closed)
             self.assertTrue(child.stdout.closed)
             self.assertTrue(run.events.closed)
+            self.assertTrue(all(stream is None or stream.closed for stream in (run.raw, run.wire)))
             self.assertEqual(json.loads((run.out / "cleanup.json").read_text()),
                              [{"pid": child.pid, "state": "exited"}])
             with self.assertRaises(ChildProcessError):
