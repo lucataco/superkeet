@@ -9,9 +9,9 @@
     "intent": "create-note"
   },
   {
-    "turn": "Set the title to Prototype hello.",
+    "turn": "Set the title to Prototype hello",
     "intent": "set-title",
-    "payload": "Prototype hello."
+    "payload": "Prototype hello"
   },
   {
     "turn": "Type Open Safari is literal text.",
@@ -19,9 +19,9 @@
     "payload": "Open Safari is literal text."
   },
   {
-    "turn": "Search Chrome for Norbert Wiener.",
+    "turn": "Search Chrome for Norbert Wiener",
     "intent": "browser-search",
-    "payload": "Norbert Wiener."
+    "payload": "Norbert Wiener"
   },
   {
     "turn": "Replace that title with Other.",

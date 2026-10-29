@@ -2,7 +2,7 @@
   "browser/search.html": "89871e8750a46a1c2f75c1395b315fdd42c1b1dc226ca1dd86518091670e1506",
   "golden/cancel.ndjson": "a728adc29d20b97e6f33dd656b9b7638894f23a642571ea93762ca8c938f74b2",
   "golden/expected-outcomes.json": "99823e1e326502e12adf26371f82e80444a85d34deadea32c181567000190d18",
-  "golden/grammar.json": "c5c9b90ac17a016eebc336f2a17c1f9faca757552bbf229429d0274e30a88f0c",
+  "golden/grammar.json": "5d08c598d7f436c09e78dc33c61f0d279f9ed8f558f8723acdf40b73c03a1f4f",
   "golden/legacy-v2.json": "0e4f0683a3eb68a9a3412ee83e0899e6dae4b08f866fd7e823f21f770d9bb4db",
   "golden/loss.ndjson": "0401f80b81755a4bf411117071cd26a30679b3f7c3f4de0a62bb6445e0a801bb",
   "golden/replies.json": "3134f32a5190eec37fedf0eff9291e955ace07ff4b137c0bb49503d90d55ab1a",

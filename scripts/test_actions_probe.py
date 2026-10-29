@@ -390,6 +390,13 @@ class ProbeTests(unittest.TestCase):
                 row["elapsed_ns"] = 1300 * 1000000
         self.assertFalse(probe.assess_samples(samples)["budgets_passed"])
 
+    def test_frozen_payloads_match_exact_demo_content(self):
+        grammar = probe.strict_json((probe.FIXTURES / "golden/grammar.json").read_bytes())
+        payloads = {row["intent"]: row.get("payload") for row in grammar}
+        self.assertEqual(payloads["set-title"], "Prototype hello")
+        self.assertEqual(payloads["append-body"], "Open Safari is literal text.")
+        self.assertEqual(payloads["browser-search"], "Norbert Wiener")
+
     def test_frozen_contract_inventory_matches_all_files(self):
         index = probe.strict_json((probe.FIXTURES / "contract-index.json").read_bytes())
         actual = {p.relative_to(probe.FIXTURES).as_posix(): probe.sha256(p)

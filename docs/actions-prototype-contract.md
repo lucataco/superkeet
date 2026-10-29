@@ -28,11 +28,11 @@ The pause-separated demonstration contains these finalized turns:
 
 1. `Open Notes.`
 2. `Create a new note.`
-3. `Set the title to Prototype hello.`
+3. `Set the title to Prototype hello`
 4. `Type Open Safari is literal text.`
-5. `Search Chrome for Norbert Wiener.`
+5. `Search Chrome for Norbert Wiener`
 
-The bounded grammar covers explicit Notes and Chrome opens, new-note creation, title text, body text, browser search, and explicit HTTP or HTTPS URL navigation. Payload begins after the title, body, typing, or search introducer and consumes the rest of that finalized turn. Punctuation is literal. `Type Open Safari` never opens Safari. `Search Chrome for cats and open Notes` is one query. Explicit spoken correction of a committed effect requests clarification without mutation. ASR revision before finalization replaces provisional text and is a separate case.
+The bounded grammar covers explicit Notes and Chrome opens, new-note creation, title text, body text, browser search, and explicit HTTP or HTTPS URL navigation. Payload begins after the title, body, typing, or search introducer and consumes the rest of that finalized turn. Punctuation is literal. The frozen title and query contain no trailing period. The body ends with a literal period. ASR that adds punctuation changes the payload and cannot satisfy an exact-content assertion silently. `Type Open Safari` never opens Safari. `Search Chrome for cats and open Notes` is one query. Explicit spoken correction of a committed effect requests clarification without mutation. ASR revision before finalization replaces provisional text and is a separate case.
 
 Only one explicit leading app-open occurrence per turn can execute early, subject to the same approval policy as final actions. A matching final reuses its observed receipt. A contradiction or withdrawal records the existing open and blocks dependent mutations. All other mutations wait for authoritative finalization. P01 specifies these rules but does not parse or execute them.
 
