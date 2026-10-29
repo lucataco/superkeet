@@ -13,10 +13,19 @@ final class SyntheticKeyEventsTests: XCTestCase {
         XCTAssertFalse(SyntheticKeyEvents.isSynthetic(userEscape), "A real Escape still cancels the run.")
     }
 
-    func testShortcutFlagsAndTypedTextAreKept() throws {
-        let paste = try XCTUnwrap(SyntheticKeyEvents.events(virtualKey: 9, flags: .maskCommand))
-        XCTAssertTrue(paste.allSatisfy { $0.flags.contains(.maskCommand) })
+    private let modifierMask: CGEventFlags = [
+        .maskCommand, .maskShift, .maskControl, .maskAlternate, .maskSecondaryFn, .maskAlphaShift
+    ]
 
+    func testShortcutKeyUpCarriesNoModifierSoTheHIDFlagStateIsNotLatched() throws {
+        let paste = try XCTUnwrap(SyntheticKeyEvents.events(virtualKey: 9, flags: .maskCommand))
+        XCTAssertEqual(paste.map { $0.type }, [.keyDown, .keyUp])
+        XCTAssertTrue(paste[0].flags.contains(.maskCommand))
+        XCTAssertTrue(paste[1].flags.isDisjoint(with: modifierMask),
+                      "A keyUp carrying Command latches it into the HID flag state.")
+    }
+
+    func testTypedTextIsKept() throws {
         let typed = try XCTUnwrap(SyntheticKeyEvents.events(virtualKey: 0, text: "héllo 👋"))
         for event in typed {
             var length = 0
@@ -25,5 +34,13 @@ final class SyntheticKeyEventsTests: XCTestCase {
             XCTAssertEqual(String(utf16CodeUnits: buffer, count: length), "héllo 👋")
             XCTAssertTrue(SyntheticKeyEvents.isSynthetic(event))
         }
+    }
+
+    func testPostedShortcutLeavesNoModifierLatchedInHIDState() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["SUPERKEET_SYNTHETIC_KEYS_LIVE"] == "1",
+                          "Set SUPERKEET_SYNTHETIC_KEYS_LIVE=1 to post real key events.")
+        XCTAssertTrue(SyntheticKeyEvents.post(virtualKey: 80, flags: .maskCommand))
+        Thread.sleep(forTimeInterval: 0.2)
+        XCTAssertFalse(CGEventSource.flagsState(.hidSystemState).contains(.maskCommand))
     }
 }
