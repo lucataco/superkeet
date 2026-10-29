@@ -333,14 +333,97 @@ class ProbeTests(unittest.TestCase):
         cleanup = json.loads((self.root / "interrupted/cleanup.json").read_text())
         self.assertEqual(cleanup, [{"pid": child.pid, "state": "exited"}])
 
-    def test_cleanup_does_not_signal_reused_identity(self):
+    def test_cleanup_preserves_error_when_child_exits_during_identity_check(self):
+        if sys.platform != "darwin":
+            self.skipTest("macOS process identity")
+        executable = probe.process_identity(os.getpid())["executable"]
         manifest = self.load()
-        child = SimpleNamespace(pid=123, poll=lambda: None, terminate=lambda: self.fail("foreign process signalled"))
-        run = probe.OwnedRun(manifest, self.root / "reused")
-        with patch.object(probe, "matches_process", return_value=False):
-            with self.assertRaisesRegex(probe.ProbeError, "cleanup-incomplete"):
-                with run:
-                    run.children.append((child, {"pid": 123}))
+        manifest.data["artifacts"]["engine"] = {"path": executable, "sha256": probe.sha256(executable)}
+        original = probe.ProbeError(1, "original-stream-invariant-failure")
+        real_matches = probe.matches_process
+        child = None
+        released = []
+        run = None
+
+        def exit_before_identity_check(identity):
+            if sys._getframe(1).f_code.co_name == "__exit__":
+                self.assertIsNone(child.returncode)
+                child.stdin.write(b"exit\n")
+                child.stdin.close()
+                self.assertEqual(child.wait(timeout=5), 0)
+                released.append(child.pid)
+            return real_matches(identity)
+
+        try:
+            with self.assertRaises(probe.ProbeError) as caught:
+                with patch.object(probe, "matches_process", new=exit_before_identity_check), \
+                     patch.object(subprocess.Popen, "terminate", side_effect=AssertionError("child signalled")), \
+                     patch.object(subprocess.Popen, "kill", side_effect=AssertionError("child signalled")):
+                    with probe.OwnedRun(manifest, self.root / "natural-exit") as run:
+                        child = run.spawn([executable, "-c", "import sys; print('READY', flush=True); sys.stdin.readline()"],
+                                          stdin=subprocess.PIPE)
+                        self.assertEqual(child.stdout.readline(), b"READY\n")
+                        self.assertTrue(real_matches(run.children[-1][1]))
+                        raise original
+            self.assertIs(caught.exception, original)
+            self.assertEqual((caught.exception.code, caught.exception.reason), (1, "original-stream-invariant-failure"))
+            self.assertEqual(released, [child.pid])
+            self.assertEqual(child.returncode, 0)
+            self.assertTrue(child.stdin.closed)
+            self.assertTrue(child.stdout.closed)
+            self.assertTrue(run.events.closed)
+            self.assertEqual(json.loads((run.out / "cleanup.json").read_text()),
+                             [{"pid": child.pid, "state": "exited"}])
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(child.pid, os.WNOHANG)
+        finally:
+            if child is not None:
+                if child.poll() is None:
+                    child.terminate()
+                child.wait(timeout=5)
+                for stream in (child.stdin, child.stdout):
+                    if stream and not stream.closed:
+                        stream.close()
+            if run is not None:
+                for stream in (run.events, run.raw, run.wire):
+                    if stream and not stream.closed:
+                        stream.close()
+
+    def test_cleanup_does_not_signal_reused_identity(self):
+        if sys.platform != "darwin":
+            self.skipTest("macOS process identity")
+        executable = probe.process_identity(os.getpid())["executable"]
+        manifest = self.load()
+        manifest.data["artifacts"]["engine"] = {"path": executable, "sha256": probe.sha256(executable)}
+        child = None
+        try:
+            with self.assertRaisesRegex(probe.ProbeError, "cleanup-incomplete"), \
+                 patch.object(subprocess.Popen, "terminate", side_effect=AssertionError("foreign process signalled")), \
+                 patch.object(subprocess.Popen, "kill", side_effect=AssertionError("foreign process signalled")):
+                with probe.OwnedRun(manifest, self.root / "reused") as run:
+                    child = run.spawn([executable, "-c", "import sys; print('READY', flush=True); sys.stdin.readline()"],
+                                      stdin=subprocess.PIPE)
+                    self.assertEqual(child.stdout.readline(), b"READY\n")
+                    identity = run.children[-1][1]
+                    self.assertTrue(probe.matches_process(identity))
+                    identity["start_us"] += 1
+                    self.assertFalse(probe.matches_process(identity))
+            self.assertIsNone(child.poll())
+            self.assertTrue(child.stdout.closed)
+            self.assertTrue(run.events.closed)
+            self.assertEqual(json.loads((run.out / "cleanup.json").read_text()),
+                             [{"pid": child.pid, "state": "identity-mismatch-not-signalled"}])
+            child.stdin.write(b"exit\n")
+            child.stdin.close()
+            self.assertEqual(child.wait(timeout=5), 0)
+        finally:
+            if child is not None:
+                if child.poll() is None:
+                    child.terminate()
+                child.wait(timeout=5)
+                for stream in (child.stdin, child.stdout):
+                    if stream and not stream.closed:
+                        stream.close()
 
     def test_cli_refusal_has_nonzero_exit_and_no_output_or_launch(self):
         path = self.root / "manifest.json"

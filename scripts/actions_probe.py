@@ -766,7 +766,8 @@ class OwnedRun:
                 cleanup.append({"pid": child.pid, "state": "parent-exited-before-descendant-reconciliation"})
             if child.poll() is None:
                 if not matches_process(identity):
-                    cleanup.append({"pid": child.pid, "state": "identity-mismatch-not-signalled"})
+                    cleanup.append({"pid": child.pid, "state": "exited" if child.poll() is not None
+                                    else "identity-mismatch-not-signalled"})
                     if getattr(child, "stdout", None):
                         child.stdout.close()
                     continue
