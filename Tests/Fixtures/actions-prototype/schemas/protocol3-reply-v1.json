@@ -1,0 +1,89 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "status": {
+          "const": "accepted"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "continuous-turns-v1"
+            ]
+          }
+        },
+        "event_schema_version": {
+          "const": 1
+        },
+        "request_schema_version": {
+          "const": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "request_id",
+        "status",
+        "capabilities",
+        "event_schema_version",
+        "request_schema_version"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "status": {
+          "const": "rejected"
+        },
+        "reason": {
+          "enum": [
+            "unsupported-protocol",
+            "unsupported-capability",
+            "unsupported-input",
+            "malformed-request",
+            "busy",
+            "wrong-session",
+            "after-terminal"
+          ]
+        },
+        "state_changed": {
+          "const": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "request_id",
+        "status",
+        "reason",
+        "state_changed"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

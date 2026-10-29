@@ -1,0 +1,207 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "const": "OBSERVED"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_us": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bundle_id": {
+          "const": "com.apple.Notes"
+        },
+        "observer_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frontmost": {
+          "const": true
+        },
+        "editable": {
+          "const": true
+        },
+        "value_readable": {
+          "const": true
+        },
+        "value_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "focused": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "subrole": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "role",
+            "subrole"
+          ],
+          "additionalProperties": false
+        },
+        "window": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "const": "AXWindow"
+            },
+            "frame": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "width": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "width",
+                "height"
+              ],
+              "additionalProperties": false
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "role",
+            "frame"
+          ],
+          "additionalProperties": false
+        },
+        "value": {
+          "type": "string"
+        },
+        "value_sha": {
+          "type": "string",
+          "pattern": "[0-9a-f]{64}"
+        }
+      },
+      "required": [
+        "state",
+        "pid",
+        "uid",
+        "start_us",
+        "bundle_id",
+        "observer_epoch",
+        "generation",
+        "frontmost",
+        "editable",
+        "value_readable",
+        "value_length",
+        "focused",
+        "window"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "BLOCKED",
+            "UNSUPPORTED"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_us": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bundle_id": {
+          "type": "null"
+        },
+        "observer_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frontmost": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "window": {
+          "type": "null"
+        },
+        "focused": {
+          "type": "null"
+        },
+        "editable": {
+          "const": false
+        },
+        "value_readable": {
+          "const": false
+        },
+        "value_length": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "state",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

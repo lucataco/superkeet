@@ -1,0 +1,33 @@
+[
+  {
+    "schema_version": 1,
+    "protocol_version": 3,
+    "request_id": "r1",
+    "command": "capabilities"
+  },
+  {
+    "schema_version": 1,
+    "protocol_version": 3,
+    "request_id": "r2",
+    "command": "continuous_start",
+    "session_id": "fixture-session",
+    "input_kind": "wav",
+    "capability": "continuous-turns-v1",
+    "partials": true,
+    "max_session_samples": 9600000
+  },
+  {
+    "schema_version": 1,
+    "protocol_version": 3,
+    "request_id": "continuous_finish",
+    "command": "continuous_finish",
+    "session_id": "fixture-session"
+  },
+  {
+    "schema_version": 1,
+    "protocol_version": 3,
+    "request_id": "continuous_cancel",
+    "command": "continuous_cancel",
+    "session_id": "fixture-session"
+  }
+]

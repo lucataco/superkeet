@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "received_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "clock": {
+      "const": "host-monotonic-ns"
+    },
+    "event": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "sequence",
+    "run_id",
+    "received_ns",
+    "clock",
+    "event"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "run_id": "12345678-1234-1234-1234-123456789abc",
+  "account": {
+    "uid": 502,
+    "home": "/Users/actions-test",
+    "disposable": true,
+    "no_personal_data": true,
+    "operator_receipt": {
+      "path": "/Users/actions-test/enrollment.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "paths": {
+    "root": "/Users/actions-test/runs/one",
+    "socket": "/Users/actions-test/runs/one/e.sock",
+    "pid_file": "/Users/actions-test/runs/one/e.pid",
+    "chrome_profile": "/Users/actions-test/runs/one/chrome"
+  },
+  "artifacts": {
+    "engine": {
+      "path": "/readonly/ARTIFACT",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "source_sha": "0000000000000000000000000000000000000000",
+      "build_receipt": {
+        "path": "/readonly/build-receipt.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "model": {
+      "path": "/readonly/ARTIFACT",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "source_sha": "0000000000000000000000000000000000000000",
+      "build_receipt": {
+        "path": "/readonly/build-receipt.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  },
+  "input": {
+    "kind": "wav",
+    "path": "/readonly/demo-audio.wav",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "expected_phrases": [
+      "notes app",
+      "norbert wiener"
+    ]
+  },
+  "requested_capability": "legacy-session",
+  "fixture_writes": false,
+  "privacy": {
+    "retain_content": false
+  },
+  "expected": {},
+  "contract_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "case": "asr-revision-before-final",
+    "input": "revision-finish.ndjson",
+    "ready_payload": "Prototype hello",
+    "desktop_mutations": 0
+  },
+  {
+    "case": "spoken-correction",
+    "turn": "Replace that title with Other.",
+    "outcome": "clarification",
+    "desktop_mutations": 0
+  },
+  {
+    "case": "repeated-create-within-turn",
+    "turn": "Create a new note. Create a new note.",
+    "occurrence_ids": [
+      "a1",
+      "a2"
+    ],
+    "dispatch_count": 2
+  },
+  {
+    "case": "duplicate-event",
+    "deliveries": 2,
+    "event_id": 7,
+    "occurrence_count": 1
+  },
+  {
+    "case": "literal-body",
+    "turn": "Type Open Safari is literal text.",
+    "intent": "append-body",
+    "payload": "Open Safari is literal text.",
+    "open_safari_count": 0
+  },
+  {
+    "case": "loss",
+    "input": "loss.ndjson",
+    "ready_mutations": 0
+  },
+  {
+    "case": "cancel",
+    "input": "cancel.ndjson",
+    "future_dispatches": 0
+  },
+  {
+    "case": "denial",
+    "outcome": "cancelled",
+    "dependent_mutations": 0
+  },
+  {
+    "case": "unknown-result",
+    "outcome": "unknown",
+    "automatic_retries": 0
+  }
+]

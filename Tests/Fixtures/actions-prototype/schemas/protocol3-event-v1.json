@@ -1,0 +1,685 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "session_started"
+        },
+        "sample_rate": {
+          "const": 16000
+        },
+        "input_kind": {
+          "enum": [
+            "microphone",
+            "wav"
+          ]
+        },
+        "capability": {
+          "const": "continuous-turns-v1"
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "sample_rate",
+        "input_kind",
+        "capability"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "audio_progress"
+        },
+        "accepted_through": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "accepted_through"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "speech_activity"
+        },
+        "state": {
+          "enum": [
+            "speech",
+            "silence"
+          ]
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "state",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "turn_candidate"
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "candidate_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_sample": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "turn_id",
+        "candidate_revision",
+        "end_sample"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "turn_retracted"
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "candidate_revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "turn_id",
+        "candidate_revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "turn_preview"
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "revision_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_range": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "context_range": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "replaces_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "replacement_scope": {
+          "const": "whole-unfinalized-turn"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "turn_id",
+        "revision_id",
+        "source_range",
+        "context_range",
+        "replaces_revision",
+        "replacement_scope",
+        "truncated",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "turn_final"
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "revision_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_range": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "partial",
+            "error"
+          ]
+        },
+        "failed_segments": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped_samples": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "turn_id",
+        "revision_id",
+        "source_range",
+        "text",
+        "status",
+        "failed_segments",
+        "dropped_samples"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "source_accounted"
+        },
+        "source_range": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "kind": {
+          "enum": [
+            "speech",
+            "silence",
+            "loss"
+          ]
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "source_range",
+        "kind",
+        "turn_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "loss"
+        },
+        "source_range": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "dropped_samples": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "source_range",
+        "reason",
+        "dropped_samples"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "protocol_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "type": {
+          "const": "session_terminal"
+        },
+        "status": {
+          "enum": [
+            "finished",
+            "cancelled",
+            "failed"
+          ]
+        },
+        "accepted_through": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_segments": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped_samples": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "session_id",
+        "event_id",
+        "published_ns",
+        "clock_id",
+        "type",
+        "status",
+        "accepted_through",
+        "failed_segments",
+        "dropped_samples"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

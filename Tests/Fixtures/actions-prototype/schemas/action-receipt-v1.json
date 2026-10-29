@@ -1,0 +1,228 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "occurrence_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "revision_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_range": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "additionalProperties": false
+    },
+    "intent": {
+      "enum": [
+        "open-app",
+        "create-note",
+        "set-title",
+        "append-body",
+        "browser-search",
+        "navigate-url"
+      ]
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "outcome": {
+      "enum": [
+        "proposed",
+        "ready",
+        "awaiting-approval",
+        "executing",
+        "verified",
+        "failed",
+        "cancelled",
+        "unknown"
+      ]
+    },
+    "target": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "native"
+            },
+            "process": {
+              "type": "object",
+              "properties": {
+                "pid": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "start_us": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "executable": {
+                  "type": "string",
+                  "pattern": "/[^\\x00]+"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "[0-9a-f]{64}"
+                },
+                "bundle_id": {
+                  "const": "com.apple.Notes"
+                }
+              },
+              "required": [
+                "pid",
+                "uid",
+                "start_us",
+                "executable",
+                "sha256",
+                "bundle_id"
+              ],
+              "additionalProperties": false
+            },
+            "observer_epoch": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "window_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "editor_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "kind",
+            "process",
+            "observer_epoch",
+            "generation",
+            "window_token",
+            "editor_token"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "chrome"
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "start_us": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "executable_sha256": {
+              "type": "string",
+              "pattern": "[0-9a-f]{64}"
+            },
+            "profile": {
+              "type": "string",
+              "pattern": "/[^\\x00]+"
+            },
+            "target_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "frame_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "loader_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "committed_url": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "kind",
+            "pid",
+            "start_us",
+            "executable_sha256",
+            "profile",
+            "target_id",
+            "frame_id",
+            "loader_id",
+            "committed_url"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "dispatch_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verified_ns": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "occurrence_id",
+    "turn_id",
+    "revision_id",
+    "source_range",
+    "intent",
+    "dependencies",
+    "outcome"
+  ],
+  "additionalProperties": false
+}

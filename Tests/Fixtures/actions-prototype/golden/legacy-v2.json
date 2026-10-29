@@ -1,0 +1,17 @@
+[
+  {
+    "type": "partial",
+    "session_id": "replay",
+    "sequence": 1,
+    "text": "Open Notes",
+    "truncated": false
+  },
+  {
+    "type": "complete",
+    "session_id": "replay",
+    "status": "ok",
+    "text": "Open Notes. Search Chrome for Norbert Wiener.",
+    "failed_segments": 0,
+    "dropped_samples": 0
+  }
+]

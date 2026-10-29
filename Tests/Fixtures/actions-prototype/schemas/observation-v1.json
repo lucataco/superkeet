@@ -1,0 +1,86 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "state": {
+      "enum": [
+        "VERIFIED",
+        "BLOCKED",
+        "UNSUPPORTED"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "observed_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "process": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_us": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "executable": {
+          "type": "string",
+          "pattern": "/[^\\x00]+"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "[0-9a-f]{64}"
+        },
+        "bundle_id": {
+          "const": "com.apple.Notes"
+        }
+      },
+      "required": [
+        "pid",
+        "uid",
+        "start_us",
+        "executable",
+        "sha256",
+        "bundle_id"
+      ],
+      "additionalProperties": false
+    },
+    "observer_epoch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "content_retained": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  },
+  "required": [
+    "schema_version",
+    "state",
+    "source",
+    "observed_ns",
+    "content_retained"
+  ],
+  "additionalProperties": false
+}

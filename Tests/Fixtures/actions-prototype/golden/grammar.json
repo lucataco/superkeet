@@ -1,0 +1,31 @@
+[
+  {
+    "turn": "Open Notes.",
+    "intent": "open-app",
+    "payload": "Notes"
+  },
+  {
+    "turn": "Create a new note.",
+    "intent": "create-note"
+  },
+  {
+    "turn": "Set the title to Prototype hello.",
+    "intent": "set-title",
+    "payload": "Prototype hello."
+  },
+  {
+    "turn": "Type Open Safari is literal text.",
+    "intent": "append-body",
+    "payload": "Open Safari is literal text."
+  },
+  {
+    "turn": "Search Chrome for Norbert Wiener.",
+    "intent": "browser-search",
+    "payload": "Norbert Wiener."
+  },
+  {
+    "turn": "Replace that title with Other.",
+    "intent": "clarification",
+    "mutations": 0
+  }
+]
