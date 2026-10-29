@@ -105,8 +105,6 @@ final class ListeningSessionPolicyTests: XCTestCase {
         }
     }
 
-    /// Word timings (start ms, end ms, word) of the three-sentence TTS command that the timer rule
-    /// split in 11 of 11 replays. The longest pause is 742 ms, between "document?" and "And".
     private let command: [(start: Int, end: Int, word: String)] = [
         (31, 131, "Can"), (151, 312, "you"), (432, 612, "open"), (652, 732, "up"), (772, 1_213, "TextEdit"),
         (1_253, 1_393, "for"), (1_434, 1_554, "me?"), (2_175, 2_355, "And"), (2_536, 2_676, "once"),

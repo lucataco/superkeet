@@ -72,13 +72,9 @@ enum ListeningSessionPolicy {
     }
 }
 
-/// How the controller learns a take is over. `Effect`s tell the controller what to do; the take
-/// decides in audio time while ticks keep arriving and in wall time otherwise.
 struct TakeEndpoint {
     enum Timer: Equatable {
-        /// Wall time without a new ending in the interim text.
         case progress
-        /// Wall time without a tick.
         case stall
     }
 
@@ -132,8 +128,6 @@ struct TakeEndpoint {
         return hasSpeech && tick.trailingSilence >= ListeningSessionPolicy.endpointSilence ? .endTake : .startTimer(.stall)
     }
 
-    /// The running timer elapsed. A take whose ticks stopped goes back to the wall-clock rule
-    /// for the rest of the take, starting with the words it already has.
     mutating func timerFired() -> Effect {
         switch clock {
         case .wall(let heardEndings, timerRunning: true):
