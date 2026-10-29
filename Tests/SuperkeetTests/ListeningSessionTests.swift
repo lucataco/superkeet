@@ -24,19 +24,68 @@ final class ListeningSessionPolicyTests: XCTestCase {
 
     func testFallbackTimerRestartsOnNewEndingsAndWhenStopped() {
         var take = TakeEndpoint(sessionID: "take")
-        XCTAssertEqual(take.hear("open x.com"), .restartTimer)
+        XCTAssertEqual(take.hear("open x.com"), .startTimer(.progress))
         XCTAssertEqual(take.hear("Open x.com."), .none, "A re-decode of words already heard is no progress.")
         XCTAssertEqual(take.hear(""), .cancelTimer)
-        XCTAssertEqual(take.hear("open x.com"), .restartTimer, "An ending already heard re-arms a stopped timer.")
+        XCTAssertEqual(take.hear("open x.com"), .startTimer(.progress), "An ending already heard re-arms a stopped timer.")
         XCTAssertEqual(take.timerFired(), .endTake)
     }
 
-    func testTheFirstTickRetiresTheFallbackTimer() {
+    private func tick(_ take: String = "take", audio: Int = 1_000, silence: Int = 0) -> EngineTick {
+        EngineTick(sessionID: take, audio: .milliseconds(audio), trailingSilence: .milliseconds(silence))
+    }
+
+    func testTheFirstTickHandsTheDecisionToTheStallTimer() {
         var take = TakeEndpoint(sessionID: "take")
-        XCTAssertEqual(take.hear("open TextEdit"), .restartTimer)
-        XCTAssertEqual(take.hear(EngineTick(sessionID: "take", audio: .milliseconds(1_000), trailingSilence: .zero)), .cancelTimer)
-        XCTAssertEqual(take.hear("open TextEdit and make a new document"), .none, "After a tick, new words leave the timer off.")
-        XCTAssertEqual(take.timerFired(), .none, "A late fire of the cancelled timer ends nothing.")
+        XCTAssertEqual(take.hear("open TextEdit"), .startTimer(.progress))
+        XCTAssertEqual(take.hear(tick()), .startTimer(.stall), "The tick replaces the progress timer.")
+        XCTAssertEqual(take.hear("open TextEdit and make a new document"), .none, "After a tick, new words start no timer.")
+    }
+
+    func testTicksThatKeepComingNeverFallBack() {
+        var take = TakeEndpoint(sessionID: "take")
+        _ = take.hear("open TextEdit")
+        for index in 1...6 {
+            XCTAssertEqual(take.hear(tick(audio: index * 500, silence: 200)), .startTimer(.stall), "Every tick restarts the stall timer.")
+        }
+        XCTAssertEqual(take.hear(tick(audio: 3_500, silence: 900)), .endTake)
+    }
+
+    func testATakeWhoseTicksStallEndsOnTheProgressTimer() {
+        var take = TakeEndpoint(sessionID: "take")
+        _ = take.hear("open TextEdit")
+        _ = take.hear(tick())
+        XCTAssertEqual(take.timerFired(), .startTimer(.progress), "No tick for the stall timeout hands the take back to the wall clock.")
+        XCTAssertEqual(take.hear("open TextEdit"), .none)
+        XCTAssertEqual(take.timerFired(), .endTake)
+        XCTAssertEqual(take.timerFired(), .none, "The take ends once.")
+    }
+
+    func testAStalledTakeThatHearsNewWordsKeepsWaiting() {
+        var take = TakeEndpoint(sessionID: "take")
+        _ = take.hear("open TextEdit")
+        _ = take.hear(tick())
+        XCTAssertEqual(take.timerFired(), .startTimer(.progress))
+        XCTAssertEqual(take.hear("open TextEdit and make a new document"), .startTimer(.progress), "New words restart the progress timer.")
+        XCTAssertEqual(take.hear("Open TextEdit and make a new document."), .none, "A re-decode is no progress.")
+        XCTAssertEqual(take.timerFired(), .endTake)
+    }
+
+    func testAStalledTakeCanReturnToTicks() {
+        var take = TakeEndpoint(sessionID: "take")
+        _ = take.hear("open TextEdit")
+        _ = take.hear(tick())
+        _ = take.timerFired()
+        XCTAssertEqual(take.hear(tick(audio: 4_000)), .startTimer(.stall))
+        XCTAssertEqual(take.timerFired(), .startTimer(.progress), "Stalling again falls back again.")
+    }
+
+    func testAStallBeforeAnySpeechStartsNoTimerUntilWordsArrive() {
+        var take = TakeEndpoint(sessionID: "take")
+        _ = take.hear(tick(silence: 500))
+        XCTAssertEqual(take.timerFired(), .none)
+        XCTAssertEqual(take.hear("open"), .startTimer(.progress))
+        XCTAssertEqual(take.timerFired(), .endTake)
     }
 
     func testIdleEngineRearmsUnlessATakeIsAlreadyUnderway() {
@@ -53,6 +102,42 @@ final class ListeningSessionPolicyTests: XCTestCase {
         XCTAssertEqual(ListeningSessionPolicy.action(after: .failed, consecutiveFailures: 2), .endSession)
         for outcome in [TranscriptOutcome.command, .noSpeech, .ignored] {
             XCTAssertEqual(ListeningSessionPolicy.action(after: outcome, consecutiveFailures: 5), .keepListening)
+        }
+    }
+
+    /// Word timings (start ms, end ms, word) of the three-sentence TTS command that the timer rule
+    /// split in 11 of 11 replays. The longest pause is 742 ms, between "document?" and "And".
+    private let command: [(start: Int, end: Int, word: String)] = [
+        (31, 131, "Can"), (151, 312, "you"), (432, 612, "open"), (652, 732, "up"), (772, 1_213, "TextEdit"),
+        (1_253, 1_393, "for"), (1_434, 1_554, "me?"), (2_175, 2_355, "And"), (2_536, 2_676, "once"),
+        (2_716, 2_936, "you're"), (3_057, 3_537, "there,"), (3_678, 3_838, "can"), (3_878, 4_038, "you"),
+        (4_159, 4_479, "create"), (4_539, 4_559, "a"), (4_599, 4_720, "new"), (4_740, 5_120, "document?"),
+        (5_862, 5_982, "And"), (6_062, 6_262, "let's"), (6_322, 6_483, "make"), (6_543, 6_643, "the"),
+        (6_703, 7_084, "title"), (7_164, 7_545, "say"), (7_745, 8_066, "Hello.")
+    ]
+
+    func testReplayingTheCommandAtEveryTickPhaseNeverSplitsItAndEndsAfterTheLastWord() {
+        let lastWordEnd = 8_066
+        let recogniserLag = 600
+        for pad in stride(from: 0, through: 500, by: 50) {
+            var take = TakeEndpoint(sessionID: "take")
+            var endedAt: Int?
+            for audio in stride(from: 500, through: 14_000, by: 500) {
+                let clock = audio - pad
+                let heard = command.filter { $0.end + recogniserLag <= clock }.map(\.word).joined(separator: " ")
+                _ = take.hear(heard)
+                let lastSpeechEnd = command.last { $0.start <= clock }.map { min($0.end, clock) } ?? 0
+                let isSpeaking = command.contains { $0.start <= clock && clock < $0.end }
+                let silence = isSpeaking ? 0 : clock - lastSpeechEnd
+                let tick = EngineTick(sessionID: "take", audio: .milliseconds(audio), trailingSilence: .milliseconds(silence))
+                if take.hear(tick) == .endTake {
+                    endedAt = clock
+                    break
+                }
+            }
+            guard let endedAt else { return XCTFail("The take never ended at pad \(pad) ms.") }
+            XCTAssertGreaterThanOrEqual(endedAt - lastWordEnd, 900, "Ended inside a pause at pad \(pad) ms.")
+            XCTAssertLessThanOrEqual(endedAt - lastWordEnd, 1_400, "Waited more than one tick past the endpoint at pad \(pad) ms.")
         }
     }
 }
@@ -104,7 +189,7 @@ final class ListeningSessionControllerTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeFixture(fallbackTimeout: Duration = .milliseconds(60)) -> Fixture {
+    private func makeFixture(fallbackTimeout: Duration = .milliseconds(60), stallTimeout: Duration = .seconds(5)) -> Fixture {
         let recorder = Recorder()
         let listening = CurrentValueSubject<SpeculativeLaunchCoordinator.Listening?, Never>(nil)
         let ticks = PassthroughSubject<EngineTick, Never>()
@@ -126,7 +211,7 @@ final class ListeningSessionControllerTests: XCTestCase {
             daemonState: daemonState.eraseToAnyPublisher(),
             outcome: outcome.eraseToAnyPublisher()
         )
-        let controller = ListeningSessionController(settings: .shared, hooks: hooks, streams: streams, fallbackEndpointTimeout: fallbackTimeout)
+        let controller = ListeningSessionController(settings: .shared, hooks: hooks, streams: streams, fallbackEndpointTimeout: fallbackTimeout, tickStallTimeout: stallTimeout)
         return Fixture(controller: controller, recorder: recorder, listening: listening, ticks: ticks, daemonState: daemonState, outcome: outcome)
     }
 
@@ -208,6 +293,46 @@ final class ListeningSessionControllerTests: XCTestCase {
         XCTAssertEqual(fixture.recorder.warmStops, 1, "A pause keeps the microphone warm for the next take.")
         XCTAssertEqual(fixture.controller.dispatchedCommands, 1)
         XCTAssertTrue(fixture.controller.isActive)
+        fixture.controller.end(dispatchPending: false)
+    }
+
+    func testATakeWhoseTicksStopEndsOnTheWallClockRule() async {
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(80), stallTimeout: .milliseconds(100))
+        fixture.controller.begin()
+        fixture.hear("open Notes")
+        fixture.tick(silence: 0)
+        await settle(.milliseconds(60))
+        XCTAssertEqual(fixture.recorder.stops, 0, "Ticks arrived recently.")
+        await settle(.milliseconds(400))
+        XCTAssertEqual(fixture.recorder.stops, 1, "No tick for the stall timeout hands the take to the progress timer, which ends it.")
+        XCTAssertEqual(fixture.recorder.warmStops, 1)
+        XCTAssertEqual(fixture.controller.dispatchedCommands, 1)
+        fixture.controller.end(dispatchPending: false)
+    }
+
+    func testTicksThatKeepComingNeverTriggerTheFallback() async {
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(50), stallTimeout: .milliseconds(150))
+        fixture.controller.begin()
+        fixture.hear("open Notes")
+        for _ in 0..<8 {
+            fixture.tick(silence: 300)
+            await settle(.milliseconds(60))
+        }
+        XCTAssertEqual(fixture.recorder.stops, 0, "Ticks every 60 ms never let the 150 ms stall timer fire.")
+        fixture.controller.end(dispatchPending: false)
+    }
+
+    func testAStalledTakeThatHearsNewWordsKeepsWaiting() async {
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(250), stallTimeout: .milliseconds(50))
+        fixture.controller.begin()
+        fixture.hear("open Notes")
+        fixture.tick(silence: 0)
+        await settle(.milliseconds(100))
+        fixture.hear("open Notes and make a new note")
+        await settle(.milliseconds(150))
+        XCTAssertEqual(fixture.recorder.stops, 0, "New words restarted the progress timer.")
+        await settle(.milliseconds(300))
+        XCTAssertEqual(fixture.recorder.stops, 1)
         fixture.controller.end(dispatchPending: false)
     }
 

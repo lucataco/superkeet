@@ -6,11 +6,16 @@ import Foundation
 enum ListeningSessionPolicy {
     static let endpointSilence: Duration = .milliseconds(900)
 
-    /// Wall time an interim-text ending must hold still to end a take that has had no tick. The
+    /// Wall time an interim-text ending must hold still to end a take that has no ticks (or whose ticks stalled). The
     /// engine decodes every 0.5 s of audio and sends a partial only when the text changes, so this
     /// ends the take after one decode with no new words; the next decode re-encodes a longer tail
     /// and finishes after the timer fires.
     static let fallbackEndpointTimeout: Duration = .milliseconds(1_000)
+
+    /// Wall time without a tick (three missed ticks) after which a take that had ticks goes back
+    /// to the progress-key timer, because the engine stops sending them for a session whose
+    /// silence detector failed.
+    static let tickStallTimeout: Duration = .milliseconds(1_500)
 
     static let progressWordCount = 4
 
@@ -67,17 +72,26 @@ enum ListeningSessionPolicy {
     }
 }
 
+/// How the controller learns a take is over. `Effect`s tell the controller what to do; the take
+/// decides in audio time while ticks keep arriving and in wall time otherwise.
 struct TakeEndpoint {
+    enum Timer: Equatable {
+        /// Wall time without a new ending in the interim text.
+        case progress
+        /// Wall time without a tick.
+        case stall
+    }
+
     enum Effect: Equatable {
         case none
-        case restartTimer
+        case startTimer(Timer)
         case cancelTimer
         case endTake
     }
 
     private enum Clock {
         case wall(heardEndings: Set<String>, timerRunning: Bool)
-        case audio
+        case audio(heardEndings: Set<String>)
     }
 
     let sessionID: String
@@ -93,25 +107,43 @@ struct TakeEndpoint {
     mutating func hear(_ text: String) -> Effect {
         guard text != transcript else { return .none }
         transcript = text
-        guard case .wall(var heardEndings, let timerRunning) = clock else { return .none }
-        guard hasSpeech else {
-            clock = .wall(heardEndings: heardEndings, timerRunning: false)
-            return .cancelTimer
+        switch clock {
+        case .wall(var heardEndings, let timerRunning):
+            guard hasSpeech else {
+                clock = .wall(heardEndings: heardEndings, timerRunning: false)
+                return .cancelTimer
+            }
+            let isNewSpeech = heardEndings.insert(ListeningSessionPolicy.progressKey(for: text)).inserted
+            clock = .wall(heardEndings: heardEndings, timerRunning: true)
+            return isNewSpeech || !timerRunning ? .startTimer(.progress) : .none
+        case .audio(var heardEndings):
+            if hasSpeech { heardEndings.insert(ListeningSessionPolicy.progressKey(for: text)) }
+            clock = .audio(heardEndings: heardEndings)
+            return .none
         }
-        let isNewSpeech = heardEndings.insert(ListeningSessionPolicy.progressKey(for: text)).inserted
-        clock = .wall(heardEndings: heardEndings, timerRunning: true)
-        return isNewSpeech || !timerRunning ? .restartTimer : .none
     }
 
     mutating func hear(_ tick: EngineTick) -> Effect {
         guard tick.sessionID == sessionID else { return .none }
-        clock = .audio
-        return hasSpeech && tick.trailingSilence >= ListeningSessionPolicy.endpointSilence ? .endTake : .cancelTimer
+        switch clock {
+        case .wall(let heardEndings, _), .audio(let heardEndings):
+            clock = .audio(heardEndings: heardEndings)
+        }
+        return hasSpeech && tick.trailingSilence >= ListeningSessionPolicy.endpointSilence ? .endTake : .startTimer(.stall)
     }
 
+    /// The running timer elapsed. A take whose ticks stopped goes back to the wall-clock rule
+    /// for the rest of the take, starting with the words it already has.
     mutating func timerFired() -> Effect {
-        guard case .wall(let heardEndings, timerRunning: true) = clock else { return .none }
-        clock = .wall(heardEndings: heardEndings, timerRunning: false)
-        return hasSpeech ? .endTake : .none
+        switch clock {
+        case .wall(let heardEndings, timerRunning: true):
+            clock = .wall(heardEndings: heardEndings, timerRunning: false)
+            return hasSpeech ? .endTake : .none
+        case .audio(let heardEndings):
+            clock = .wall(heardEndings: heardEndings, timerRunning: hasSpeech)
+            return hasSpeech ? .startTimer(.progress) : .none
+        case .wall:
+            return .none
+        }
     }
 }

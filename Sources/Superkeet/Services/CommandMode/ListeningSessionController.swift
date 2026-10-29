@@ -32,6 +32,7 @@ final class ListeningSessionController: ObservableObject {
     private let settings: AppSettings
     private let hooks: Hooks
     private let fallbackEndpointTimeout: Duration
+    private let tickStallTimeout: Duration
     private var cancellables: Set<AnyCancellable> = []
     private var take: TakeEndpoint?
     private var endpointTimer: Task<Void, Never>?
@@ -42,11 +43,13 @@ final class ListeningSessionController: ObservableObject {
         settings: AppSettings = .shared,
         hooks: Hooks? = nil,
         streams: Streams? = nil,
-        fallbackEndpointTimeout: Duration = ListeningSessionPolicy.fallbackEndpointTimeout
+        fallbackEndpointTimeout: Duration = ListeningSessionPolicy.fallbackEndpointTimeout,
+        tickStallTimeout: Duration = ListeningSessionPolicy.tickStallTimeout
     ) {
         self.settings = settings
         self.hooks = hooks ?? Self.defaultHooks()
         self.fallbackEndpointTimeout = fallbackEndpointTimeout
+        self.tickStallTimeout = tickStallTimeout
         observe(streams ?? Self.defaultStreams())
     }
 
@@ -166,9 +169,9 @@ final class ListeningSessionController: ObservableObject {
         switch effect {
         case .none:
             break
-        case .restartTimer:
+        case .startTimer(let timer):
             endpointTimer?.cancel()
-            let timeout = fallbackEndpointTimeout
+            let timeout = timer == .stall ? tickStallTimeout : fallbackEndpointTimeout
             endpointTimer = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: timeout)
                 guard !Task.isCancelled, let self else { return }
