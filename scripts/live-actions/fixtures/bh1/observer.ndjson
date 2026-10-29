@@ -1,0 +1,32 @@
+{"audio_s":10.800000000000001,"event":"harness_start","target_was_running":false,"wall":"2026-10-29T17:43:34.460Z"}
+{"event":"hotkey_start_session","wall":"2026-10-29T17:43:34.552Z"}
+{"event":"audio_play","wall":"2026-10-29T17:43:36.057Z"}
+{"bundle":"com.apple.finder","event":"frontmost","ms":1,"wall":"2026-10-29T17:43:36.060Z"}
+{"event":"hud","ms":1,"text":"Listening… | Press ⌥ Space to stop | Go ahead, I’m listening.","wall":"2026-10-29T17:43:36.118Z"}
+{"event":"hud","ms":1362,"text":"Listening… | Press ⌥ Space to stop | Can you","wall":"2026-10-29T17:43:37.422Z"}
+{"event":"hud","ms":1874,"text":"Listening… | Press ⌥ Space to stop | Can you open up","wall":"2026-10-29T17:43:37.933Z"}
+{"event":"hud","ms":2392,"text":"Listening… | Press ⌥ Space to stop | Can you open up text app?","wall":"2026-10-29T17:43:38.452Z"}
+{"event":"hud","ms":2889,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? | Opening TextEdit…","wall":"2026-10-29T17:43:38.949Z"}
+{"event":"target_running","ms":2914,"wall":"2026-10-29T17:43:38.973Z"}
+{"count":0,"event":"target_windows","ms":2914,"titles":[],"wall":"2026-10-29T17:43:38.973Z"}
+{"event":"target_frontmost","ms":2965,"wall":"2026-10-29T17:43:39.024Z"}
+{"count":1,"event":"target_windows","ms":2986,"titles":["Open"],"wall":"2026-10-29T17:43:39.477Z"}
+{"event":"hud","ms":3473,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me and | Opened TextEdit","wall":"2026-10-29T17:43:39.549Z"}
+{"event":"hud","ms":3887,"text":"Listening… | Press ⌥ Space to stop | Can you open up text edit for me and once you're | Opened TextEdit","wall":"2026-10-29T17:43:39.964Z"}
+{"event":"hud","ms":4452,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me and once you're there, can | Opened TextEdit","wall":"2026-10-29T17:43:40.526Z"}
+{"event":"hud","ms":4954,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? And once you're there, can you create | Opened TextEdit","wall":"2026-10-29T17:43:41.033Z"}
+{"event":"hud","ms":5459,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? And once you're there, can you create a new document? | Opened TextEdit","wall":"2026-10-29T17:43:41.536Z"}
+{"event":"hud","ms":6130,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? And once you're there, can you create a new document? | Opened TextEdit | Pressed ⌘N in TextEdit","wall":"2026-10-29T17:43:42.217Z"}
+{"count":1,"event":"target_windows","ms":6182,"titles":["Untitled"],"wall":"2026-10-29T17:43:42.367Z"}
+{"event":"hud","ms":6449,"text":"Transcribing… | Press ⌥ Space to stop · 1 command so far | Can you open up Text Edit for me? And once you're there, can you create a new document? | Opened TextEdit | Pressed ⌘N in TextEdit","wall":"2026-10-29T17:43:42.510Z"}
+{"event":"hud","ms":6649,"text":"Done | “Can you open up Text Edit for me? And once you're there, can you create a new document and” | Opened TextEdit (pid 3279, com.apple.TextEdit). No window has appeared yet. | Opened TextEdit while you were speaking | Pressed ⌘N in TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create a new docume","wall":"2026-10-29T17:43:42.713Z"}
+{"event":"hud","ms":7046,"text":"Done | “Can you open up Text Edit for me? And once you're there, can you create a new document and” | Opened TextEdit (pid 3279, com.apple.TextEdit). No window has appeared yet. | Opened TextEdit while you were speaking | Pressed ⌘N in TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create a new docume","wall":"2026-10-29T17:43:43.110Z"}
+{"event":"hud","ms":7511,"text":"Done | “Can you open up Text Edit for me? And once you're there, can you create a new document and” | Opened TextEdit (pid 3279, com.apple.TextEdit). No window has appeared yet. | Opened TextEdit while you were speaking | Pressed ⌘N in TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create a new docume","wall":"2026-10-29T17:43:43.576Z"}
+{"event":"hud","ms":8032,"text":"Done | “Can you open up Text Edit for me? And once you're there, can you create a new document and” | Opened TextEdit (pid 3279, com.apple.TextEdit). No window has appeared yet. | Opened TextEdit while you were speaking | Pressed ⌘N in TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create a new docume","wall":"2026-10-29T17:43:44.095Z"}
+{"event":"hud","ms":8549,"text":"Done | “Can you open up Text Edit for me? And once you're there, can you create a new document and” | Opened TextEdit (pid 3279, com.apple.TextEdit). No window has appeared yet. | Opened TextEdit while you were speaking | Pressed ⌘N in TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create a new docume","wall":"2026-10-29T17:43:44.613Z"}
+{"event":"hud","ms":8664,"text":"Listening… | Press ⌥ Space to stop · 1 command so far | And let's make the title say hello.","wall":"2026-10-29T17:43:44.726Z"}
+{"event":"hud","ms":9049,"text":"Listening… | Press ⌥ Space to stop · 1 command so far | and let's make the title say hello.","wall":"2026-10-29T17:43:45.110Z"}
+{"event":"hud","ms":9541,"text":"Transcribing… | Press ⌥ Space to stop · 2 commands so far | and let's make the title say hello.","wall":"2026-10-29T17:43:45.615Z"}
+{"event":"hud","ms":9660,"text":"Done | “And let's make the title say hello.” | Typed “hello” in TextEdit (pid 3279). | Typing “hello” in TextEdit | Type Text | Listening: Go ahead, I’m listening.","wall":"2026-10-29T17:43:45.725Z"}
+{"event":"hud","ms":11690,"text":"Listening… | Press ⌥ Space to stop · 2 commands so far | Go ahead, I’m listening.","wall":"2026-10-29T17:43:47.757Z"}
+{"event":"hotkey_stop_session","ms":18887,"wall":"2026-10-29T17:43:54.945Z"}

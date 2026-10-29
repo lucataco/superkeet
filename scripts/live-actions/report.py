@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Score live-actions runs and write report.md and verdict.json.
 
-usage: report.py <runs-dir>
+usage: report.py <runs-dir> [--loopback-ms N]
 
 A runs dir holds scenario.json, speech-clock.tsv, and one run-NN/ folder per run with observer.ndjson,
 log.ndjson, audit.ndjson, documents.json, and meta.json. Latency is the time the probe first passes minus
@@ -9,6 +9,7 @@ the end of the phrase that asked for it, less the calibrated loopback delay. Neg
 landed before the speaker finished the phrase.
 """
 
+import argparse
 import json
 import re
 import sys
@@ -125,6 +126,23 @@ def duplicate_dispatches(audit):
     return sum(n - 1 for n in seen.values())
 
 
+def first_words_ms(rows, scenario, first_word_end):
+    """When live words first reached the HUD: the first update that shows two consecutive script words
+    that were not on screen before, minus the end of the first spoken word. Independent of the HUD layout."""
+    script_words = common.tokens(" ".join(u["text"] for u in scenario["utterances"]))
+    script = set(zip(script_words, script_words[1:]))
+    previous = set()
+    for ms, e in rows:
+        if e["event"] != "hud":
+            continue
+        words = common.tokens(e.get("text", ""))
+        now = set(zip(words, words[1:]))
+        if ms >= 0 and (now & script) - previous:
+            return ms - first_word_end
+        previous = now
+    return None
+
+
 def analyze_run(run, scenario, clock, loopback_ms=0):
     origin = audio_origin_ms(run["events"])
     out = {"name": run["name"], "errors": [], "expect": {}, "forbidden": {}, "details": []}
@@ -159,12 +177,11 @@ def analyze_run(run, scenario, clock, loopback_ms=0):
         out["details"].append(f"planner started at {planner} ms")
     if missing:
         out["details"].append(f"typed claims {missing} but the documents read back {document_text(run)!r}")
-    huds = [ms for ms, e in rows if e["event"] == "hud" and ms >= 0]
     first_word = next((c for c in clock if c[1] is not None), None)
-    during = [ms for ms in huds if first_word and first_word[0] <= ms <= speech_end]
+    during = [ms for ms, e in rows if e["event"] == "hud" and first_word and first_word[0] <= ms <= speech_end]
     out["hud"] = {
-        "first_words_ms": during[0] - first_word[1] if during else None,
-        "changes_during_speech": len(during),
+        "first_words_ms": first_words_ms(rows, scenario, first_word[1]) if first_word else None,
+        "updates_during_speech": len(during),
         "max_gap_ms": max((b - a for a, b in zip(during, during[1:])), default=None),
     }
     out["documents"] = None if run["documents"] is None else len(run["documents"])
@@ -211,7 +228,7 @@ def render(results, verdict, scenario, loopback_ms):
     lines = [f"# Live actions report: {scenario['name']}", "",
              f"{verdict['runs']} runs. Verdict: **{'PASS' if verdict['pass'] else 'FAIL'}**."]
     lines += [f"- {reason}" for reason in verdict["reasons"]]
-    lines += ["", f"Latency is probe time minus phrase end, in ms, less a loopback delay of {loopback_ms} ms. Negative means before the phrase ended.",
+    lines += ["", f"Latency is probe time minus phrase end, in ms, less a loopback delay of {loopback_ms} ms (not calibrated unless set with --loopback-ms). Negative means before the phrase ended.",
               "", "## Expectations", "", "| id | after | budget p50/p90 | p50 | p90 | within budget | missed |", "|---|---|---|---|---|---|---|"]
     for key, v in verdict["expectations"].items():
         lines.append(f"| {key} | {v['after']} | {v['budget_ms']}/{v['budget_p90_ms']} | {ms(v['p50_ms'])} | {ms(v['p90_ms'])} | {v['within_budget']}/{verdict['runs']} | {v['missed']} |")
@@ -237,12 +254,10 @@ def render(results, verdict, scenario, loopback_ms):
     return "\n".join(lines) + "\n"
 
 
-def write(root):
+def write(root, loopback_ms=0):
     root = Path(root)
     scenario = json.loads((root / "scenario.json").read_text())
     clock = common.read_clock(root / "speech-clock.tsv")
-    calibration = common.BUILD / "calibration.json"
-    loopback_ms = json.loads(calibration.read_text())["loopback_ms"] if calibration.exists() else 0
     results = [analyze_run(load_run(d), scenario, clock, loopback_ms) for d in sorted(root.glob("run-*"))]
     verdict = summarize(results, scenario)
     verdict["loopback_ms"] = loopback_ms
@@ -254,4 +269,8 @@ def write(root):
 
 
 if __name__ == "__main__":
-    write(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("runs_dir")
+    parser.add_argument("--loopback-ms", type=int, default=0, help="measured delay from playback to the app hearing it")
+    args = parser.parse_args()
+    write(args.runs_dir, args.loopback_ms)
