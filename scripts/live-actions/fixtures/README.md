@@ -5,3 +5,5 @@
 - `speech-clock.tsv` is the WhisperX alignment of that run's stimulus.
 - `audit.ndjson` holds the three audit rows that run wrote.
 - `documents.json` is reconstructed, not recorded. The spike found the TextEdit document empty after `type_text` reported success.
+
+`planner-guard/` is run 2 of a five-run batch on the final rig, recorded as the rig writes it. The take split, the planner started, and the rig cancelled the app with Escape. `log.ndjson` is reduced the same way as above. Nothing else was changed.

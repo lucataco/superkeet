@@ -14,6 +14,7 @@ import common  # noqa: E402
 import report  # noqa: E402
 
 BH1 = RIG / "fixtures" / "bh1"
+PLANNER_GUARD = RIG / "fixtures" / "planner-guard"
 SCENARIO = RIG / "scenarios" / "textedit-three-steps.json"
 
 
@@ -171,10 +172,44 @@ class AuditScoringTests(unittest.TestCase):
         result = report.analyze_run(run, scenario(), [(0, 100, "x")])
         self.assertEqual(result["forbidden"]["success_without_effect"], 0)
 
+    def test_a_hud_card_left_over_from_the_previous_run_is_not_a_claim(self):
+        events = [
+            {"event": "audio_play", "t": 10_000},
+            {"event": "hud", "t": 9_000, "text": "Done | Typed “hello” in TextEdit"},
+            {"event": "hud", "t": 10_500, "text": "Listening… | Can you"},
+        ]
+        run = {"name": "r", "events": events, "log": [], "meta": {}, "documents": [], "audit": []}
+        result = report.analyze_run(run, scenario(), [(0, 100, "x")])
+        self.assertEqual(result["forbidden"]["success_without_effect"], 0)
+
     def test_typing_two_different_texts_is_not_a_duplicate(self):
         args = '{"app":"TextEdit","text":"***"}'
         audit = [self.row("type_text", args, "succeeded", "Typed “one” in TextEdit"), self.row("type_text", args, "succeeded", "Typed “two” in TextEdit")]
         self.assertEqual(report.duplicate_dispatches(audit), 0)
+
+
+class PlannerGuardFixtureTests(unittest.TestCase):
+    """A recorded run on the final rig. The take split, the planner started, and the rig pressed Escape."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = report.analyze_run(report.load_run(PLANNER_GUARD), scenario(), common.read_clock(PLANNER_GUARD / "speech-clock.tsv"))
+
+    def test_the_open_landed_and_the_cancelled_steps_are_misses(self):
+        expect = self.result["expect"]
+        self.assertEqual(expect["open"]["latency_ms"], 1893 - 1213)
+        self.assertIsNone(expect["new_doc"]["latency_ms"])
+        self.assertIsNone(expect["hello"]["latency_ms"])
+
+    def test_the_split_and_the_planner_are_counted_from_the_log(self):
+        self.assertEqual(self.result["forbidden"]["take_split"], 1)
+        self.assertEqual(self.result["forbidden"]["planner_call"], 1)
+
+    def test_the_report_says_the_rig_cancelled_the_app(self):
+        self.assertTrue(any("cancelled the app" in d for d in self.result["details"]))
+
+    def test_no_typing_claim_means_no_success_without_effect(self):
+        self.assertEqual(self.result["forbidden"]["success_without_effect"], 0)
 
 
 class FixtureRunTests(unittest.TestCase):

@@ -276,8 +276,8 @@ class PlannerGuard(threading.Thread):
         while not self.stopped.wait(0.1):
             complete, _, pending = (pending + self.read_new()).rpartition("\n")
             if any(cat == "ActionPlanner" and msg.startswith("Planning with") for _, cat, msg in common.parse_log(complete)):
-                cancel_active_work()
                 self.fired.append(round(time.time() * 1000))
+                cancel_active_work()
 
 
 def count_messages(log, prefix):

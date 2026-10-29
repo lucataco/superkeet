@@ -70,7 +70,7 @@ Superkeet's approval policy decides what its planner may do on its own. A clause
 ## Limits
 
 - The loopback delay between playback and the app hearing the audio is not calibrated, because that needs microphone access for the terminal. `report.py --loopback-ms N` subtracts a measured value. Until then, every latency includes the delay.
-- Accessibility polling can lag. The report prints the longest poll per source. The workspace loop is under 2 ms. The target-app loop stalled up to about 300 ms while TextEdit launched.
+- Accessibility polling can lag. The report prints the longest poll per source. The workspace loop is under 2 ms. The target-app loop stalled for about 210 ms while TextEdit launched, so window and text probes can be late by that much around a launch.
 - Events are timestamped when the observer sees them, so each latency has an error of up to one poll.
 - The first-words column is the time from the end of the first spoken word to the first HUD update that shows two consecutive script words. It does not depend on the HUD layout.
 - `fixtures/` holds a recorded run that the unit tests in `scripts/test_live_actions.py` score. The tests need no audio, network, or app.

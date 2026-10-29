@@ -111,14 +111,16 @@ def document_text(run):
     return texts[-1] if texts else ""
 
 
-def typed_claims(run):
+def typed_claims(run, rows):
+    """Texts that the audit log or the HUD says were typed. A HUD card from the previous run can still be on
+    screen when playback starts, so only HUD updates after the first sample count."""
     claims = set()
     for row in run["audit"]:
         if row.get("toolName") == "type_text" and row.get("outcome", "").startswith("succeeded"):
             match = TYPED.search(row.get("detail") or "")
             claims.add(match.group(1) if match else None)
-    for e in run["events"]:
-        if e["event"] == "hud":
+    for ms, e in rows:
+        if e["event"] == "hud" and ms >= 0:
             claims.update(TYPED.findall(e.get("text", "")))
     return {c for c in claims if c}
 
@@ -170,7 +172,7 @@ def analyze_run(run, scenario, clock, loopback_ms=0):
     dispatches = [t - origin for t, cat, msg in run["log"] if msg == DISPATCH]
     early = [d for d in dispatches if d < speech_end]
     planner = [t - origin for t, cat, msg in run["log"] if cat == "ActionPlanner" and msg.startswith("Planning with")]
-    missing = [c for c in sorted(typed_claims(run)) if squash(c.rstrip("…")) not in squash(document_text(run))]
+    missing = [c for c in sorted(typed_claims(run, rows)) if squash(c.rstrip("…")) not in squash(document_text(run))]
     out["forbidden"] = {
         "take_split": len(early),
         "planner_call": len(planner),
