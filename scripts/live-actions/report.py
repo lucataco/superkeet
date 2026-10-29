@@ -24,6 +24,12 @@ DISPATCH = "Pause detected; dispatching the utterance"
 DEFAULT_P90_BUDGET_MS = 1000
 NON_DOCUMENT_TITLES = ("", "Open")
 TYPED = re.compile(r"Typed [“\"](.+?)[”\"]")
+QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"'})
+
+
+def squash(text):
+    """Compare text the way a reader does. TextEdit turns straight quotes into curly ones."""
+    return re.sub(r"\s+", " ", text.translate(QUOTES)).strip().lower()
 
 
 def read_ndjson(path):
@@ -164,7 +170,7 @@ def analyze_run(run, scenario, clock, loopback_ms=0):
     dispatches = [t - origin for t, cat, msg in run["log"] if msg == DISPATCH]
     early = [d for d in dispatches if d < speech_end]
     planner = [t - origin for t, cat, msg in run["log"] if cat == "ActionPlanner" and msg.startswith("Planning with")]
-    missing = [c for c in sorted(typed_claims(run)) if c.rstrip("…").lower() not in document_text(run).lower()]
+    missing = [c for c in sorted(typed_claims(run)) if squash(c.rstrip("…")) not in squash(document_text(run))]
     out["forbidden"] = {
         "take_split": len(early),
         "planner_call": len(planner),
@@ -189,6 +195,7 @@ def analyze_run(run, scenario, clock, loopback_ms=0):
     out["max_poll_ms"] = stats.get("max_poll_ms")
     out["icloud_files"] = run["meta"].get("icloud_files", [])
     out["settled"] = run["meta"].get("settled")
+    out["loadavg"] = run["meta"].get("loadavg_after")
     out["jitter_ms"] = run["meta"].get("jitter_ms")
     return out
 
@@ -236,13 +243,13 @@ def render(results, verdict, scenario, loopback_ms):
     for key, v in verdict["forbidden"].items():
         lines.append(f"| {key} | {v['runs_affected']}/{verdict['runs']} | {v['rate']:.0%} | {v['total']} | {'yes' if v['forbidden_by_scenario'] else 'no'} |")
     ids = list(verdict["expectations"])
-    lines += ["", "## Runs", "", "| run | jitter | " + " | ".join(ids) + " | split | planner | duplicate | no effect | docs | first words | max poll |",
-              "|---|---|" + "---|" * (len(ids) + 7)]
+    lines += ["", "## Runs", "", "| run | jitter | " + " | ".join(ids) + " | split | planner | duplicate | no effect | docs | first words | max poll | load |",
+              "|---|---|" + "---|" * (len(ids) + 8)]
     for r in results:
         cells = [ms(r["expect"][i]["latency_ms"]) for i in ids]
         f, h = r["forbidden"], r["hud"]
         lines.append(f"| {r['name']} | {r['jitter_ms']} | " + " | ".join(cells) +
-                     f" | {f['take_split']} | {f['planner_call']} | {f['duplicate_dispatch']} | {f['success_without_effect']} | {r['documents']} | {ms(h['first_words_ms'])} | {r['max_poll_ms']} |")
+                     f" | {f['take_split']} | {f['planner_call']} | {f['duplicate_dispatch']} | {f['success_without_effect']} | {r['documents']} | {ms(h['first_words_ms'])} | {r['max_poll_ms']} | {r['loadavg']} |")
     lines += ["", "## Evidence for flagged events", ""]
     for r in results:
         for detail in r["details"] + r["errors"]:

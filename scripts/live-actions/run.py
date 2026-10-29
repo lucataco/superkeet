@@ -28,6 +28,7 @@ import common  # noqa: E402
 import report  # noqa: E402
 
 DOMAIN = common.APP_BUNDLE_ID
+LOG_PREDICATE = f'subsystem == "{DOMAIN}" AND processImagePath == "{common.APP}/Contents/MacOS/Superkeet"'
 OBSERVER_SRC = Path(__file__).resolve().parent / "observer.swift"
 OBSERVER = common.BUILD / "observer"
 RESTORE_FILE = common.BUILD / "restore.json"
@@ -59,7 +60,9 @@ def defaults_read(key):
 
 
 class LogStream:
-    """`log stream` of the app's subsystem into a file, so a run can replay it with millisecond timestamps."""
+    """`log stream` of the installed app into a file, so a run can replay it with millisecond timestamps.
+
+    The process filter matters. `swift test` runs of the same code log under the same subsystem."""
 
     def __init__(self, path):
         self.path = Path(path)
@@ -68,7 +71,7 @@ class LogStream:
     def start(self):
         self.file = open(self.path, "wb")
         self.proc = subprocess.Popen(
-            ["log", "stream", "--style", "ndjson", "--level", "debug", "--predicate", f'subsystem == "{DOMAIN}"'],
+            ["log", "stream", "--style", "ndjson", "--level", "debug", "--predicate", LOG_PREDICATE],
             stdout=self.file, stderr=subprocess.DEVNULL, start_new_session=True,
         )
         children.append(self.proc)
@@ -262,7 +265,8 @@ def one_run(scenario, stimulus, run_dir, rng, hotkey):
     before = icloud_files()
     log = LogStream(run_dir / "log.ndjson")
     log.start()
-    meta = {"started": datetime.now().isoformat(timespec="milliseconds"), "jitter_ms": rng.randint(0, JITTER_MS)}
+    meta = {"started": datetime.now().isoformat(timespec="milliseconds"), "jitter_ms": rng.randint(0, JITTER_MS),
+            "loadavg_before": round(os.getloadavg()[0], 2)}
     meta["lead_ms"] = LEAD_BASE_MS + meta["jitter_ms"]
     documents = {"tail": None, "final": None}
     start_epoch = time.time()
@@ -288,6 +292,7 @@ def one_run(scenario, stimulus, run_dir, rng, hotkey):
             proc.wait()
             watchdog.cancel()
         meta["observer_exit"] = proc.returncode
+        meta["loadavg_after"] = round(os.getloadavg()[0], 2)
         time.sleep(1.0)
         meta["settled"] = settle(log, hotkey)
         time.sleep(0.8)

@@ -165,6 +165,12 @@ class AuditScoringTests(unittest.TestCase):
         ]
         self.assertEqual(report.duplicate_dispatches(audit), 1)
 
+    def test_smart_quotes_do_not_hide_text_that_landed(self):
+        run = {"name": "r", "events": [], "log": [], "meta": {}, "documents": [{"name": "Untitled", "text": "Let’s  go"}],
+               "audit": [self.row("type_text", "{}", "succeeded (auto-approved)", "Typed “Let's go” in TextEdit")]}
+        result = report.analyze_run(run, scenario(), [(0, 100, "x")])
+        self.assertEqual(result["forbidden"]["success_without_effect"], 0)
+
     def test_typing_two_different_texts_is_not_a_duplicate(self):
         args = '{"app":"TextEdit","text":"***"}'
         audit = [self.row("type_text", args, "succeeded", "Typed “one” in TextEdit"), self.row("type_text", args, "succeeded", "Typed “two” in TextEdit")]
