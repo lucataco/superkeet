@@ -3,6 +3,7 @@
 
 import argparse
 import ctypes
+from contextlib import ExitStack
 import dataclasses
 import enum
 import fcntl
@@ -88,7 +89,7 @@ def validate_schema(value, schema):
             raise ValueError("wrong JSON type")
     if "const" in schema and (type(value) is not type(schema["const"]) or value != schema["const"]):
         raise ValueError("wrong constant")
-    if "enum" in schema and value not in schema["enum"]:
+    if "enum" in schema and not any(type(value) is type(option) and value == option for option in schema["enum"]):
         raise ValueError("unknown enum")
     if isinstance(value, dict):
         properties = schema.get("properties", {})
@@ -111,6 +112,19 @@ def validate_schema(value, schema):
     if type(value) in (int, float):
         if value < schema.get("minimum", -float("inf")) or value > schema.get("maximum", float("inf")):
             raise ValueError("number bound")
+
+
+def verify_contract_inventory():
+    index = strict_json((FIXTURES / "contract-index.json").read_bytes())
+    if not isinstance(index, dict) or not index or len(index) > 1000:
+        raise ProbeError(2, "invalid-contract-inventory")
+    for relative, expected in index.items():
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts or not isinstance(expected, str):
+            raise ProbeError(2, "invalid-contract-member")
+        member = safe_path(str(FIXTURES / path))
+        if not member.is_file() or sha256(member) != expected:
+            raise ProbeError(2, "contract-member-hash-mismatch")
 
 
 def sha256(path):
@@ -177,6 +191,7 @@ class Manifest:
             safe_path(item["path"])
         if data["contract_sha256"] != sha256(FIXTURES / "contract-index.json"):
             raise ProbeError(2, "contract-hash-mismatch")
+        verify_contract_inventory()
         return cls(data, hashlib.sha256(raw).hexdigest(), root, source)
 
     def environment(self, desktop=False):
@@ -304,6 +319,8 @@ class LegacyTrace:
             raise ProbeError(1, "invalid-truncation-metadata")
         if kind not in ("session_started", "partial", "transcribing", "complete"):
             raise ProbeError(1, "unknown-legacy-event")
+        if "status" in event and (kind != "complete" or event["status"] not in ("ok", "partial", "empty", "error")):
+            raise ProbeError(1, "invalid-status-metadata")
         if kind == "session_started":
             if self.count or self.started:
                 raise ProbeError(1, "duplicate-or-late-session-start")
@@ -345,6 +362,8 @@ def validate_protocol3_trace(rows):
     session, clock, published = None, None, -1
     revisions, finals, candidates = {}, {}, {}
     accepted, accounted, loss_count = 0, 0, 0
+    final_failures, final_drops, bad_final = 0, 0, False
+    accounted_turns, loss_ranges, loss_partitions = set(), [], []
     terminal = None
     for index, row in enumerate(rows, 1):
         validate_schema(row, schema)
@@ -382,6 +401,9 @@ def validate_protocol3_trace(rows):
                 if row["status"] == "ok" and (row["failed_segments"] or row["dropped_samples"]):
                     raise ValueError("false successful final")
                 finals[turn] = owned
+                final_failures += row["failed_segments"]
+                final_drops += row["dropped_samples"]
+                bad_final = bad_final or row["status"] != "ok"
         elif kind == "turn_candidate":
             if turn in finals or row["candidate_revision"] <= candidates.get(turn, 0):
                 raise ValueError("stale candidate")
@@ -394,19 +416,32 @@ def validate_protocol3_trace(rows):
             owned = row["source_range"]
             if owned["start"] != accounted or owned["end"] > accepted:
                 raise ValueError("source partition gap or overlap")
-            if row["kind"] == "speech" and finals.get(turn) != owned:
-                raise ValueError("speech owner mismatch")
-            if row["kind"] != "speech" and turn:
-                raise ValueError("non-speech cannot own turn")
+            if row["kind"] == "speech":
+                if finals.get(turn) != owned or turn in accounted_turns:
+                    raise ValueError("speech owner mismatch")
+                accounted_turns.add(turn)
+            else:
+                if turn or any(owned["start"] < final["end"] and final["start"] < owned["end"] for final in finals.values()):
+                    raise ValueError("non-speech cannot own finalized speech")
+                if row["kind"] == "loss":
+                    loss_partitions.append((owned["start"], owned["end"]))
             accounted = owned["end"]
         elif kind == "loss":
             if row["source_range"]["end"] > accepted:
                 raise ValueError("loss beyond accepted source")
+            owned = row["source_range"]
+            if row["dropped_samples"] != owned["end"] - owned["start"]:
+                raise ValueError("loss sample count mismatch")
+            loss_ranges.append((owned["start"], owned["end"]))
             loss_count += row["dropped_samples"]
         elif kind == "session_terminal":
             if row["accepted_through"] != accepted or accounted != accepted or row["dropped_samples"] != loss_count:
                 raise ValueError("incomplete terminal accounting")
-            if row["status"] == "finished" and (loss_count or row["failed_segments"]):
+            if accounted_turns != set(finals) or sorted(loss_ranges) != sorted(loss_partitions):
+                raise ValueError("unreconciled speech or loss ownership")
+            if row["failed_segments"] < final_failures or row["dropped_samples"] < final_drops:
+                raise ValueError("unreconciled final counters")
+            if row["status"] == "finished" and (loss_count or row["failed_segments"] or bad_final):
                 raise ValueError("false successful terminal")
             terminal = row
     if terminal is None:
@@ -419,6 +454,8 @@ def redacted_event(event):
     types = {"type": str, "session_id": str, "sequence": int, "status": str,
              "failed_segments": int, "dropped_samples": int, "audio_ms": int, "truncated": bool}
     result = {key: event[key] for key in allowed if key in event and type(event[key]) is types[key]}
+    if event.get("type") != "complete" or event.get("status") not in ("ok", "partial", "empty", "error"):
+        result.pop("status", None)
     if isinstance(event.get("text"), str):
         result["text_length"] = len(event["text"])
     return result
@@ -435,6 +472,7 @@ class OwnedRun:
         self.manifest, self.out = manifest, out
         self.children, self.processing_ns, self.assertions = [], [], []
         self.descendants = []
+        self.unresolved_descendants = set()
         self.events = None
         self.raw = None
         self.wire = None
@@ -453,8 +491,9 @@ class OwnedRun:
 
     def spawn(self, argv, **kwargs):
         executable = safe_path(argv[0])
-        expected = next((artifact for artifact in self.manifest.data["artifacts"].values()
-                         if artifact["path"] == str(executable)), None)
+        role = next((name for name, artifact in self.manifest.data["artifacts"].items()
+                     if artifact["path"] == str(executable)), None)
+        expected = self.manifest.data["artifacts"].get(role)
         if expected is None or sha256(executable) != expected["sha256"]:
             raise ProbeError(2, "unbound-or-changed-executable")
         child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **kwargs)
@@ -465,6 +504,7 @@ class OwnedRun:
             child.wait(timeout=5)
             raise
         identity["argv"] = argv
+        identity["role"] = role
         self.children.append((child, identity))
         write_json(self.out / f"process-{child.pid}.json", identity)
         if identity["ppid"] != os.getpid() or identity["uid"] != os.getuid():
@@ -491,6 +531,7 @@ class OwnedRun:
         with selectors.DefaultSelector() as selector:
             selector.register(child.stdout, selectors.EVENT_READ)
             while True:
+                self.track_descendants()
                 if tick:
                     tick()
                 if time.monotonic() > deadline:
@@ -605,6 +646,7 @@ class OwnedRun:
     def track_descendants(self):
         active = {identity["pid"]: identity for child, identity in self.children
                   if child.poll() is None and matches_process(identity)}
+        active.update({identity["pid"]: identity for identity in self.descendants if matches_process(identity)})
         if not active:
             return
         rows = subprocess.check_output(["/bin/ps", "-axo", "pid=,ppid="], text=True)
@@ -618,6 +660,7 @@ class OwnedRun:
                 try:
                     identity = process_identity(pid)
                 except (ProbeError, OSError):
+                    self.unresolved_descendants.add((pid, ppid))
                     continue
                 if identity["uid"] == os.getuid() and identity["ppid"] == ppid:
                     active[pid] = identity
@@ -632,6 +675,8 @@ class OwnedRun:
         except (OSError, ValueError, subprocess.SubprocessError):
             cleanup.append({"state": "descendant-accounting-incomplete"})
         for child, identity in reversed(self.children):
+            if child.poll() is not None and identity.get("role") not in ("engine", "helper"):
+                cleanup.append({"pid": child.pid, "state": "parent-exited-before-descendant-reconciliation"})
             if child.poll() is None:
                 if not matches_process(identity):
                     cleanup.append({"pid": child.pid, "state": "identity-mismatch-not-signalled"})
@@ -661,6 +706,8 @@ class OwnedRun:
                 cleanup.append({"pid": pid, "state": "unresolved" if matches_process(identity) else "exited"})
             else:
                 cleanup.append({"pid": pid, "state": "exited-or-identity-changed-not-signalled"})
+        cleanup.extend({"pid": pid, "ppid": ppid, "state": "descendant-identity-unavailable"}
+                       for pid, ppid in sorted(self.unresolved_descendants))
         for stream in (self.events, self.raw, self.wire):
             if stream:
                 stream.close()
@@ -698,7 +745,7 @@ def capability_preflight(manifest):
     data = manifest.data
     requested = data["requested_capability"]
     if requested != "legacy-session":
-        return {"state": State.UNSUPPORTED.value, "requested": requested, "reason": "future-driver-unavailable"}
+        return {"state": State.BLOCKED.value, "requested": requested, "reason": "future-driver-unavailable"}
     protocol = engine_protocol(data["artifacts"]["engine"]["path"])
     return {"state": State.VERIFIED.value, "scope": "legacy-engine-protocol-only", "protocol": protocol,
             "native": State.BLOCKED.value, "native_reason": "requires-disposable-AX-and-screenshot-proof"}
@@ -706,11 +753,15 @@ def capability_preflight(manifest):
 
 def receipt(manifest, out, code, reason, assertions):
     write_json(out / "assertions.json", assertions)
-    write_json(out / "receipt.json", {"schema_version": 1, "run_id": manifest.data["run_id"],
+    payload = {"schema_version": 1, "run_id": manifest.data["run_id"],
                "manifest_sha256": manifest.digest, "probe_sha256": sha256(Path(__file__)),
+               "harness_inventory": {name: sha256(Path(__file__).with_name(name))
+                                     for name in ("actions_probe.py", "actions_probe_browser.py")},
                "contract_sha256": manifest.data["contract_sha256"], "exit_code": code,
                "state": "PASS" if code == 0 else "BLOCKED" if code == 3 else "INCOMPLETE" if code in (4, 130) else "FAIL",
-               "reason": reason, "program_verified": False})
+               "reason": reason, "program_verified": False}
+    validate_schema(payload, strict_json((FIXTURES / "schemas/receipt-v1.json").read_bytes()))
+    write_json(out / "receipt.json", payload)
     write_json(out / "evidence-index.json", {p.name: sha256(p) for p in sorted(out.iterdir()) if p.is_file()})
 
 
@@ -726,8 +777,12 @@ def execute(args, manifest, out):
     manifest.environment(desktop=scenario in ("notes-target", "chrome-fixture", "chrome-public-smoke", "legacy-microphone"))
     manifest.output(str(out))
     code, reason, assertions = 0, "requested-scope-complete", []
-    with OwnedRun(manifest, out) as run:
-        try:
+    run = None
+    try:
+        with ExitStack() as stack:
+            if scenario in ("notes-target", "chrome-fixture", "chrome-public-smoke", "legacy-microphone"):
+                stack.enter_context(DesktopLease())
+            run = stack.enter_context(OwnedRun(manifest, out))
             preflight = capability_preflight(manifest)
             write_json(out / "preflight.json", preflight)
             if preflight["state"] != State.VERIFIED.value:
@@ -737,26 +792,25 @@ def execute(args, manifest, out):
             elif scenario == "legacy-wav":
                 run.legacy_wav()
             elif scenario == "legacy-microphone":
-                with DesktopLease():
-                    run.legacy_microphone()
+                run.legacy_microphone()
             elif scenario == "notes-target":
-                with DesktopLease():
-                    observe_notes(run)
+                observe_notes(run)
             elif scenario in ("chrome-fixture", "chrome-public-smoke"):
-                with DesktopLease():
-                    from actions_probe_browser import observe_chrome
-                    observe_chrome(run, public=scenario == "chrome-public-smoke")
+                from actions_probe_browser import observe_chrome
+                observe_chrome(run, public=scenario == "chrome-public-smoke")
             else:
                 raise ProbeError(3, "scenario-driver-unavailable")
-        except ProbeError as error:
-            code, reason = error.code, error.reason
-        except KeyboardInterrupt:
-            code, reason = 130, "interrupted"
-        except (OSError, ValueError, subprocess.SubprocessError):
-            code, reason = 4, "external-operation-incomplete"
-        finally:
+    except ProbeError as error:
+        code, reason = error.code, error.reason
+    except KeyboardInterrupt:
+        code, reason = 130, "interrupted"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        code, reason = 4, "external-operation-incomplete"
+    finally:
+        if run is not None:
             assertions.extend(run.assertions)
-    receipt(manifest, out, code, reason, assertions)
+    if out.exists():
+        receipt(manifest, out, code, reason, assertions)
     return code, reason
 
 
@@ -837,7 +891,9 @@ def assess_samples(samples):
     summaries = {arm: {"median_ms": statistics.median(values), "range_ms": [min(values), max(values)]}
                  for arm, values in arms.items() if values}
     processing = [value for row in samples for value in row.get("recorder_ns", [])]
-    complete = len(samples) == 20 and all(len(arms[arm]) == 10 for arm in arms)
+    complete = (len(samples) == 20 and all(len(arms[arm]) == 10 for arm in arms)
+                and all(row.get("event_count", 0) > 0 and row["event_count"] == len(row.get("recorder_ns", []))
+                        for row in samples))
     regression = False
     if len(summaries) == 2:
         a, b = (summaries[arm]["median_ms"] for arm in ("A", "B"))

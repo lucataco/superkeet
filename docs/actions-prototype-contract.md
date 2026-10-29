@@ -6,6 +6,8 @@ This is the P01 reference contract for a bounded continuous Actions prototype. P
 
 `Tests/Fixtures/actions-prototype/contract-index.json` lists the SHA-256 of each schema and golden fixture. Its own SHA-256 is the contract identity. `test_actions_probe.py` rejects file drift. Downstream dependency manifests must record this identity and the exact app, engine, probe, model, and fixture identities. A changed contract or artifact invalidates affected receipts.
 
+Admission verifies every indexed member before operational work. Receipts also hash the Python runner and imported browser verifier. The template manifest contains placeholders and is not executable evidence.
+
 The version-1 JSON schemas use a closed subset of JSON Schema. Unknown fields, duplicate keys, nonfinite numbers, boolean integers, and ambiguous variants fail validation. The probe implements the subset in `validate_schema`. These files are authoritative for field names. The prose defines the additional ordering and ownership invariants.
 
 ## Identity and ownership
@@ -71,7 +73,7 @@ The fixed scenario table is in `SCENARIOS`. `legacy-wav` executes actual `transc
 
 An admitted attempt creates a private new output directory. It contains the exact manifest, `preflight.json`, `events.ndjson`, `assertions.json`, `receipt.json`, `cleanup.json`, process journals, and a hashed evidence index. Legacy work also writes `baseline.json`. The native observer writes `native-target-proof.json` with an explicit blocked state until independent screenshot and title/body correlation complete the proof. No placeholder screenshot counts as evidence.
 
-Ordinary event traces omit transcript, AX values, query strings, source error messages, and unapproved event fields. The exact manifest can contain expected fixture content and is private evidence, not an ordinary log or public attachment. `privacy.retain_content=true` separately retains local source events and readable observations. Raw audio retention is not implemented. Nothing is uploaded automatically. Private files use the process umask `077`. The original local evidence is never altered for publication.
+Ordinary event traces omit transcript, AX values, query strings, source error messages, and unapproved event fields. The exact manifest can contain expected fixture content and is private evidence, not an ordinary log or public attachment. `privacy.retain_content=true` separately retains exact source-wire bytes, timestamped source events, and readable observations. Raw audio retention is not implemented. Nothing is uploaded automatically. Private files use the process umask `077`. The original local evidence is never altered for publication.
 
 Each event records actual host monotonic receipt time. Source audio availability, engine publication, action commitment, dispatch, and verified effect remain separately labelled unavailable when unobserved. Source `audio_ms`, synthetic fixture timestamps, and old replay delays are not end-to-end timing evidence.
 
@@ -88,7 +90,9 @@ Exit meanings are fixed:
 
 Unsafe output requests write no evidence there and emit a redacted diagnostic to stdout. Assertions require a real authoritative completion, successful status, explicit zero loss counters, expected phrases, and process success. Phrase coverage is not exact transcript matching. Partial-only output, malformed or truncated frames, duplicate terminals, foreign sessions, and events after completion fail.
 
-The OS desktop lease uses a fixed per-user temporary lock inode and `flock`, not a run-selected lock. Contention refuses before desktop interaction. Closing the descriptor releases the lease; the lock file is not deleted. Process cleanup rechecks PID, UID, kernel microsecond start time, executable path, and hash before signaling a recorded child. It never uses `killall`, adopts a pre-existing Notes process, or deletes fixture data. SIGKILL or machine failure cannot execute cleanup. Incomplete journals need operator reconciliation.
+The OS desktop lease uses a fixed per-user temporary lock inode and `flock`, not a run-selected lock. It remains held through owned-process cleanup. Contention refuses before desktop interaction. Closing the descriptor releases the lease; the lock file is not deleted. Process cleanup rechecks PID, UID, kernel microsecond start time, executable path, and hash before signaling a recorded child. It records observed descendants while the browser remains live and retains those identities after reparenting. An unexpectedly exited browser parent makes descendant accounting incomplete rather than certifying cleanup. The pinned engine and native helper are reviewed leaf executables, not arbitrary subprocess drivers. The manifest is accident prevention, not an OS sandbox for hostile same-user code.
+
+Cleanup never uses `killall`, adopts a pre-existing Notes process, or deletes fixture data. SIGKILL or machine failure cannot execute cleanup. Incomplete journals need operator reconciliation.
 
 ## Performance comparison scope
 

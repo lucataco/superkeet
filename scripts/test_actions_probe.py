@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -110,7 +111,7 @@ class ProbeTests(unittest.TestCase):
             self.load()
 
     def test_duplicate_keys_and_nonfinite_json_refused(self):
-        for raw in ('{"a":1,"a":2}', '{"a":NaN}', '{"a":Infinity}'):
+        for raw in ('{"a":1,"a":2}', '{"a":NaN}', '{"a":Infinity}', '{"a":1e999}'):
             with self.assertRaises(ValueError):
                 probe.strict_json(raw)
 
@@ -158,11 +159,124 @@ class ProbeTests(unittest.TestCase):
             self.assertNotIn(text, redacted)
         self.assertIn("text_length", redacted)
 
+    def test_free_form_status_cannot_leak_through_metadata(self):
+        event = {"type": "partial", "session_id": "replay", "sequence": 1,
+                 "text": "PRIVATE_WORDS", "status": "PRIVATE_STATUS"}
+        with self.assertRaisesRegex(probe.ProbeError, "invalid-status-metadata"):
+            probe.LegacyTrace("replay").accept(event)
+        self.assertNotIn("PRIVATE", json.dumps(probe.redacted_event(event)))
+
+    def test_schema_enum_rejects_boolean_integer_alias(self):
+        with self.assertRaises(ValueError):
+            probe.validate_schema(True, {"enum": [0, 1, 2, 3, 4, 130]})
+
+    def test_changed_contract_member_refuses_even_with_unchanged_index(self):
+        fixture_copy = self.root / "fixtures"
+        shutil.copytree(probe.FIXTURES, fixture_copy)
+        (fixture_copy / "browser/search.html").write_text("WRONG FIXTURE")
+        with patch.object(probe, "FIXTURES", fixture_copy):
+            with self.assertRaisesRegex(probe.ProbeError, "contract-member-hash-mismatch"):
+                self.load()
+
+    def test_desktop_lease_covers_owned_cleanup(self):
+        order = []
+
+        class Lease:
+            def __enter__(self):
+                order.append("lease-acquire")
+            def __exit__(self, *_):
+                order.append("lease-release")
+
+        class Run:
+            def __init__(self, *_):
+                self.assertions = []
+            def __enter__(self):
+                order.append("owned-enter")
+                return self
+            def __exit__(self, *_):
+                order.append("owned-cleanup")
+
+        with patch.object(probe.Manifest, "environment"), patch.object(probe.Manifest, "output"), \
+             patch.object(probe, "OwnedRun", Run), patch.object(probe, "DesktopLease", Lease), \
+             patch.object(probe, "capability_preflight", return_value={"state": "VERIFIED"}), \
+             patch.object(probe, "write_json"), patch.object(probe, "receipt"), \
+             patch("actions_probe_browser.observe_chrome", side_effect=lambda *_args, **_kwargs: order.append("chrome-live")):
+            probe.execute(SimpleNamespace(command="run", scenario="chrome-fixture"), self.load(), self.root / "out")
+        self.assertEqual(order, ["lease-acquire", "owned-enter", "chrome-live", "owned-cleanup", "lease-release"])
+
+    def test_exited_browser_parent_cannot_certify_descendant_cleanup(self):
+        manifest = self.load()
+        child = SimpleNamespace(pid=123, poll=lambda: 0, stdout=None)
+        with self.assertRaisesRegex(probe.ProbeError, "cleanup-incomplete"):
+            with probe.OwnedRun(manifest, self.root / "orphan") as run:
+                run.children.append((child, {"pid": 123, "role": "chrome"}))
+        rows = json.loads((self.root / "orphan/cleanup.json").read_text())
+        self.assertTrue(any(row["state"] == "parent-exited-before-descendant-reconciliation" for row in rows))
+
+    def test_unobservable_discovered_descendant_prevents_cleanup_success(self):
+        state = {"code": None}
+        child = SimpleNamespace(pid=123, stdout=None, poll=lambda: state["code"],
+                                terminate=lambda: state.update(code=0), wait=lambda timeout: state["code"])
+        with patch.object(probe, "matches_process", return_value=True), \
+             patch.object(probe.subprocess, "check_output", return_value="123 1\n124 123\n"), \
+             patch.object(probe, "process_identity", side_effect=probe.ProbeError(2, "process-not-observable")):
+            with self.assertRaisesRegex(probe.ProbeError, "cleanup-incomplete"):
+                with probe.OwnedRun(self.load(), self.root / "unobservable") as run:
+                    run.children.append((child, {"pid": 123, "role": "chrome"}))
+        rows = json.loads((self.root / "unobservable/cleanup.json").read_text())
+        self.assertIn({"pid": 124, "ppid": 123, "state": "descendant-identity-unavailable"}, rows)
+
+    def test_recorded_descendant_is_reconciled_after_parent_exit(self):
+        manifest = self.load()
+        parent = SimpleNamespace(pid=123, poll=lambda: 0, stdout=None)
+        descendant = {"pid": 456, "uid": 502, "ppid": 1, "start_us": 5,
+                      "executable": "/fixture/helper", "sha256": "a" * 64}
+        alive = {456}
+        signalled = []
+
+        def signal_owned(pid, _signal):
+            signalled.append(pid)
+            alive.discard(pid)
+
+        with patch.object(probe, "matches_process", side_effect=lambda identity: identity["pid"] in alive), \
+             patch.object(probe.subprocess, "check_output", return_value="456 1\n"), \
+             patch.object(probe.os, "kill", side_effect=signal_owned):
+            with self.assertRaisesRegex(probe.ProbeError, "cleanup-incomplete"):
+                with probe.OwnedRun(manifest, self.root / "reparented") as run:
+                    run.children.append((parent, {"pid": 123, "role": "chrome"}))
+                    run.descendants.append(descendant)
+        self.assertEqual(signalled, [456])
+        self.assertFalse(alive)
+
     def test_stale_pid_never_matches(self):
         with patch.object(probe, "process_identity", return_value={"pid": 42, "uid": 502, "start_us": 11,
                           "executable": "/fixture/engine", "sha256": "a" * 64}):
             self.assertFalse(probe.matches_process({"pid": 42, "uid": 502, "start_us": 10,
                              "executable": "/fixture/engine", "sha256": "a" * 64}))
+
+    def test_native_helper_compiles_lints_and_refuses_unsafe_account_before_ax(self):
+        if sys.platform != "darwin":
+            self.skipTest("standalone macOS helper")
+        source = probe.ROOT / "scripts/ActionsProbe/main.swift"
+        binary = self.root / "ActionsProbe-test"
+        built = subprocess.run(["swiftc", "-warnings-as-errors", str(source), "-o", str(binary)],
+                               capture_output=True, text=True, timeout=60)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        lint_tool = os.environ.get("SWIFTLINT") or shutil.which("swiftlint")
+        self.assertTrue(lint_tool, "SwiftLint is required by the repository gates")
+        lint = subprocess.run([lint_tool, "lint", "--strict", "--no-cache", "--config",
+                               str(probe.ROOT / ".swiftlint.yml"), str(source)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(lint.returncode, 0, lint.stdout + lint.stderr)
+        facts = subprocess.run([str(binary), "--process-facts", str(os.getpid())],
+                               capture_output=True, text=True, timeout=10)
+        self.assertEqual(facts.returncode, 0, facts.stderr)
+        actual = json.loads(facts.stdout)
+        self.assertEqual(actual["start_us"], probe.process_identity(os.getpid())["start_us"])
+        refused = subprocess.run([str(binary), "--observe", "--pid", str(os.getpid()), "--uid", "0",
+                                  "--start-us", "1", "--samples", "1", "--interval-ms", "50"],
+                                 capture_output=True, text=True, timeout=10)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(json.loads(refused.stdout)["reason"], "unsafe_observer_account")
 
     def test_kernel_identity_for_this_test_process(self):
         if sys.platform != "darwin":
@@ -252,21 +366,24 @@ class ProbeTests(unittest.TestCase):
         manifest = self.load()
         manifest.data["requested_capability"] = "continuous-turns-v1"
         with patch.object(probe, "engine_protocol") as engine:
-            self.assertEqual(probe.capability_preflight(manifest)["state"], "UNSUPPORTED")
+            self.assertEqual(probe.capability_preflight(manifest)["state"], "BLOCKED")
             engine.assert_not_called()
 
     def test_compare_requires_complete_work_and_recorder_counts(self):
         samples = [{"arm": arm, "exit_code": 0, "elapsed_ns": 1000000000,
-                    "recorder_ns": [1000, 2000]} for _ in range(10) for arm in ("A", "B")]
+                    "event_count": 2, "recorder_ns": [1000, 2000]} for _ in range(10) for arm in ("A", "B")]
         self.assertTrue(probe.assess_samples(samples)["budgets_passed"])
         self.assertEqual(probe.assess_samples(samples)["event_count"], 40)
         self.assertFalse(probe.assess_samples(samples[:-1])["budgets_passed"])
+        samples[0]["event_count"] = 3
+        self.assertFalse(probe.assess_samples(samples)["budgets_passed"])
+        samples[0]["event_count"] = 100
         samples[0]["recorder_ns"] = [3000000] * 100
         self.assertFalse(probe.assess_samples(samples)["budgets_passed"])
 
     def test_shared_median_budget_needs_both_limits(self):
         samples = [{"arm": arm, "exit_code": 0, "elapsed_ns": (1000 if arm == "A" else 1150) * 1000000,
-                    "recorder_ns": [1000]} for _ in range(10) for arm in ("A", "B")]
+                    "event_count": 1, "recorder_ns": [1000]} for _ in range(10) for arm in ("A", "B")]
         self.assertTrue(probe.assess_samples(samples)["budgets_passed"])
         for row in samples:
             if row["arm"] == "B":
@@ -296,7 +413,10 @@ class ProbeTests(unittest.TestCase):
                        lambda r: r[-2]["source_range"].update(start=23999),
                        lambda r: r[-1].update(accepted_through=33000),
                        lambda r: r.append(copy.deepcopy(r[-1])),
-                       lambda r: r[6].update(session_id="foreign")):
+                       lambda r: r[6].update(session_id="foreign"),
+                       lambda r: r[6].update(status="error", failed_segments=1),
+                       lambda r: r[8].update(kind="loss"),
+                       lambda r: r[7].update(kind="silence", turn_id="")):
             changed = copy.deepcopy(rows)
             change(changed)
             with self.assertRaises(ValueError):

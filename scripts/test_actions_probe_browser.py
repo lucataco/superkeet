@@ -203,6 +203,11 @@ class BindingTests(unittest.TestCase):
 
 
 class WebSocketTests(unittest.TestCase):
+    def test_json_rejects_exponent_overflow_and_nonfinite_literals(self):
+        for payload in ('{"value":1e999}', '{"value":NaN}', '{"value":Infinity}'):
+            with self.subTest(payload=payload), self.assertRaises(browser.BrowserFailure):
+                browser._json(payload)
+
     def connect(self, frames=b"", accept=True):
         stream = ScriptedSocket(frames, accept)
         with mock.patch.object(browser.socket, "create_connection", return_value=stream):

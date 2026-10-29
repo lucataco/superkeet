@@ -17,7 +17,7 @@
   "schemas/protocol3-event-v1.json": "5022ad60f2c7b4e358982dd907144013744e93cb868f0fe5a170ad653883b017",
   "schemas/protocol3-reply-v1.json": "92f0b0c2386c213510942f549e44c05bd7da1901db8b9eecb82828212c8d2e1c",
   "schemas/protocol3-request-v1.json": "40af06750756001b83747902649c4bc03a10e43d7869b2c6950f3de6e4ba2da5",
-  "schemas/receipt-v1.json": "81333897676d7961fd9f9e03f42b4a1b5519c78fd069e05005c15934f91512ab",
+  "schemas/receipt-v1.json": "ac9b86b566e1162b299c6946db06d6c3770b2e126565a0f548dc78bffed31734",
   "schemas/run-v1.json": "11a940252b983b7968606baeeeb0a401aecd9b1c3e64c7bc9c40a886123c77c7",
   "schemas/trace-v1.json": "9ca80610aa3afe61cc7194d9c06a3ad35559ff3487fcf591bb2dd37a63bbaf9c"
 }

@@ -17,6 +17,24 @@
       "type": "string",
       "pattern": "[0-9a-f]{64}"
     },
+    "harness_inventory": {
+      "type": "object",
+      "properties": {
+        "actions_probe.py": {
+          "type": "string",
+          "pattern": "[0-9a-f]{64}"
+        },
+        "actions_probe_browser.py": {
+          "type": "string",
+          "pattern": "[0-9a-f]{64}"
+        }
+      },
+      "required": [
+        "actions_probe.py",
+        "actions_probe_browser.py"
+      ],
+      "additionalProperties": false
+    },
     "contract_sha256": {
       "type": "string",
       "pattern": "[0-9a-f]{64}"
@@ -53,6 +71,7 @@
     "run_id",
     "manifest_sha256",
     "probe_sha256",
+    "harness_inventory",
     "contract_sha256",
     "exit_code",
     "state",

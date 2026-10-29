@@ -5,6 +5,7 @@ import html
 import http.client
 import http.server
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -47,8 +48,13 @@ def _json(payload):
                 _fail(2, "chrome-duplicate-json-key")
             result[key] = value
         return result
+    def number(value):
+        result = float(value)
+        if not math.isfinite(result):
+            _fail(2, "chrome-nonfinite-json")
+        return result
     try:
-        return json.loads(payload, object_pairs_hook=pairs,
+        return json.loads(payload, object_pairs_hook=pairs, parse_float=number,
                           parse_constant=lambda _: _fail(2, "chrome-nonfinite-json"))
     except (ValueError, UnicodeError, RecursionError) as error:
         raise BrowserFailure(2, "chrome-invalid-json") from error
@@ -591,6 +597,7 @@ def _observe_chrome(run, public, api):
         _same_profile(profile, original)
         if child.poll() is not None or not api.matches_process(identity):
             _fail(2, "chrome-owned-process-lost")
+        run.track_descendants()
         if read_active_port(profile, launched_ns) != endpoint:
             _fail(2, "chrome-debug-endpoint-changed")
         return verify_listener(child.pid, endpoint, deadline)
