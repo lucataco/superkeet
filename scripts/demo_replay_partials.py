@@ -6,7 +6,8 @@ the way a Superkeet listening session hears it:
 
 1. One pass over the whole file finds the pauses. A take ends when no new
    partial arrives for ENDPOINT seconds after the last one (the same rule as
-   `ListeningSessionPolicy.endpointSilence`).
+   `ListeningSessionPolicy.fallbackEndpointTimeout`, used when the engine
+   sends no ticks).
 2. Each take is cut out with ffmpeg and replayed on its own, so its partials
    restart at sequence 1 and contain only that utterance, exactly as a fresh
    `start` on the daemon would. The next take begins GAP seconds after the
