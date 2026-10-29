@@ -20,9 +20,26 @@ final class ListeningSessionPolicyTests: XCTestCase {
         XCTAssertFalse(ListeningSessionPolicy.shouldDispatch(transcript: "open Notes", isRecording: true, sessionActive: false))
     }
 
-    func testPauseIsLongerThanAnEngineTickAndShorterThanASentenceGap() {
-        XCTAssertGreaterThan(ListeningSessionPolicy.endpointSilence, .milliseconds(750))
-        XCTAssertLessThanOrEqual(ListeningSessionPolicy.endpointSilence, .milliseconds(1_500))
+    func testFallbackPauseIsLongerThanAnEngineTickAndShorterThanASentenceGap() {
+        XCTAssertGreaterThan(ListeningSessionPolicy.fallbackEndpointTimeout, .milliseconds(750))
+        XCTAssertLessThanOrEqual(ListeningSessionPolicy.fallbackEndpointTimeout, .milliseconds(1_500))
+    }
+
+    func testFallbackTimerRestartsOnNewEndingsAndWhenStopped() {
+        var take = TakeEndpoint(sessionID: "take")
+        XCTAssertEqual(take.hear("open x.com"), .restartTimer)
+        XCTAssertEqual(take.hear("Open x.com."), .none, "A re-decode of words already heard is no progress.")
+        XCTAssertEqual(take.hear(""), .cancelTimer)
+        XCTAssertEqual(take.hear("open x.com"), .restartTimer, "An ending already heard re-arms a stopped timer.")
+        XCTAssertEqual(take.timerFired(), .endTake)
+    }
+
+    func testTheFirstTickRetiresTheFallbackTimer() {
+        var take = TakeEndpoint(sessionID: "take")
+        XCTAssertEqual(take.hear("open TextEdit"), .restartTimer)
+        XCTAssertEqual(take.hear(EngineTick(sessionID: "take", audio: .milliseconds(1_000), trailingSilence: .zero)), .cancelTimer)
+        XCTAssertEqual(take.hear("open TextEdit and make a new document"), .none, "After a tick, new words leave the timer off.")
+        XCTAssertEqual(take.timerFired(), .none, "A late fire of the cancelled timer ends nothing.")
     }
 
     func testIdleEngineRearmsUnlessATakeIsAlreadyUnderway() {
@@ -59,9 +76,17 @@ final class ListeningSessionControllerTests: XCTestCase {
     private struct Fixture {
         let controller: ListeningSessionController
         let recorder: Recorder
-        let transcript: CurrentValueSubject<String?, Never>
+        let listening: CurrentValueSubject<SpeculativeLaunchCoordinator.Listening?, Never>
         let daemonState: CurrentValueSubject<ParakeetService.DaemonState, Never>
         let outcome: CurrentValueSubject<TranscriptOutcomeEvent?, Never>
+
+        func hear(_ transcript: String, take: String = "take-1") {
+            listening.send(.init(sessionID: take, transcript: transcript))
+        }
+
+        func takeEnded() {
+            listening.send(nil)
+        }
     }
 
     private nonisolated(unsafe) var savedActionsEnabled: Bool?
@@ -77,9 +102,9 @@ final class ListeningSessionControllerTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeFixture(silence: Duration = .milliseconds(60)) -> Fixture {
+    private func makeFixture(fallbackTimeout: Duration = .milliseconds(60)) -> Fixture {
         let recorder = Recorder()
-        let transcript = CurrentValueSubject<String?, Never>(nil)
+        let listening = CurrentValueSubject<SpeculativeLaunchCoordinator.Listening?, Never>(nil)
         let daemonState = CurrentValueSubject<ParakeetService.DaemonState, Never>(.idle)
         let outcome = CurrentValueSubject<TranscriptOutcomeEvent?, Never>(nil)
         let hooks = ListeningSessionController.Hooks(
@@ -93,12 +118,12 @@ final class ListeningSessionControllerTests: XCTestCase {
             forgetContext: { recorder.forgets += 1 }
         )
         let streams = ListeningSessionController.Streams(
-            transcript: transcript.eraseToAnyPublisher(),
+            listening: listening.eraseToAnyPublisher(),
             daemonState: daemonState.eraseToAnyPublisher(),
             outcome: outcome.eraseToAnyPublisher()
         )
-        let controller = ListeningSessionController(settings: .shared, hooks: hooks, streams: streams, endpointSilence: silence)
-        return Fixture(controller: controller, recorder: recorder, transcript: transcript, daemonState: daemonState, outcome: outcome)
+        let controller = ListeningSessionController(settings: .shared, hooks: hooks, streams: streams, fallbackEndpointTimeout: fallbackTimeout)
+        return Fixture(controller: controller, recorder: recorder, listening: listening, daemonState: daemonState, outcome: outcome)
     }
 
     private func settle(_ duration: Duration = .milliseconds(20)) async {
@@ -117,12 +142,12 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testAPauseAfterSpeechDispatchesTheUtterance() async {
-        let fixture = makeFixture(silence: .milliseconds(250))
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(250))
         fixture.controller.begin()
-        fixture.transcript.send("")
-        fixture.transcript.send("open")
+        fixture.hear("")
+        fixture.hear("open")
         await settle(.milliseconds(40))
-        fixture.transcript.send("open Notes")
+        fixture.hear("open Notes")
         await settle(.milliseconds(40))
         XCTAssertEqual(fixture.recorder.stops, 0, "Text still changing; no dispatch yet.")
         await settle(.milliseconds(300))
@@ -144,13 +169,13 @@ final class ListeningSessionControllerTests: XCTestCase {
         // The engine keeps flipping between readings of words already heard, faster than the
         // pause length and for well past it. Only new words may restart the timer, so the take
         // still ends. (Asserting nothing about intermediate timing keeps this stable on slow CI.)
-        let fixture = makeFixture(silence: .milliseconds(400))
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(400))
         fixture.controller.begin()
         let readings = ["can you open up x.com?", "can you open up x dot com.", "Can you open up x dot com", "can you open up x.com"]
         let deadline = ContinuousClock.now + .milliseconds(3_000)
         var index = 0
         while fixture.recorder.stops == 0, ContinuousClock.now < deadline {
-            fixture.transcript.send(readings[index % readings.count])
+            fixture.hear(readings[index % readings.count])
             index += 1
             await settle(.milliseconds(40))
         }
@@ -161,7 +186,7 @@ final class ListeningSessionControllerTests: XCTestCase {
     func testSilenceFromTheStartKeepsListening() async {
         let fixture = makeFixture()
         fixture.controller.begin()
-        fixture.transcript.send("")
+        fixture.hear("")
         await settle(.milliseconds(120))
         XCTAssertEqual(fixture.recorder.stops, 0)
         XCTAssertTrue(fixture.controller.isActive)
@@ -169,12 +194,12 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testEngineBackAtIdleReopensTheMicrophone() async {
-        let fixture = makeFixture(silence: .milliseconds(250))
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(250))
         fixture.controller.begin()
-        fixture.transcript.send("open Notes")
+        fixture.hear("open Notes")
         await settle(.milliseconds(400))
         XCTAssertEqual(fixture.recorder.stops, 1)
-        fixture.transcript.send(nil)
+        fixture.takeEnded()
         fixture.daemonState.send(.transcribing)
         await settle()
         XCTAssertEqual(fixture.recorder.starts, 1, "Not while the engine is still transcribing.")
@@ -186,9 +211,9 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testShortcutAgainRunsPendingSpeechAndCloses() async {
-        let fixture = makeFixture(silence: .milliseconds(300))
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(300))
         fixture.controller.toggle()
-        fixture.transcript.send("open Notes")
+        fixture.hear("open Notes")
         await settle()
         fixture.controller.toggle()
         XCTAssertFalse(fixture.controller.isActive)
@@ -204,9 +229,9 @@ final class ListeningSessionControllerTests: XCTestCase {
 
     func testEscapeDropsTheTakeAndCloses() async {
         // Long pause so a slow runner can't end the take before Escape does.
-        let fixture = makeFixture(silence: .seconds(5))
+        let fixture = makeFixture(fallbackTimeout: .seconds(5))
         fixture.controller.begin()
-        fixture.transcript.send("open Notes")
+        fixture.hear("open Notes")
         await settle()
         fixture.controller.end(dispatchPending: false)
         XCTAssertEqual(fixture.recorder.cancels, 1)
@@ -218,7 +243,7 @@ final class ListeningSessionControllerTests: XCTestCase {
     func testClosingWithNothingSaidCancelsTheEmptyTake() async {
         let fixture = makeFixture()
         fixture.controller.begin()
-        fixture.transcript.send("")
+        fixture.hear("")
         await settle()
         fixture.controller.toggle()
         XCTAssertEqual(fixture.recorder.cancels, 1)
