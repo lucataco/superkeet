@@ -1,6 +1,8 @@
 # Verify Actions prototype evidence
 
-P01 is not verified. The current operator supplied only the primary macOS account, UID 501. No disposable account or guest is available. Do not launch Notes, Chrome, Superkeet, microphone capture, or an AX observation on that account. A worktree is not desktop isolation.
+P01 is not verified. At the first handoff, before the 2026-10-29 Mac mini enrollment, only the primary macOS account, UID 501, was available. Do not launch Notes, Chrome, Superkeet, microphone capture, or an AX observation on UID 501. A worktree is not desktop isolation.
+
+At the initial 2026-10-29 setup snapshot, the operator had enrolled the disposable Mac mini account with UID 502 and home `/Users/lucataco`. In that account, `security find-identity` reported zero valid code-signing identities. That result does not establish whether a fixed ad-hoc test identity can gain live TCC permission. No such permission proof exists yet. At that snapshot, the native fixture and permissions were unobserved, no live tests had passed, and the preflight, native proof, microphone, and performance gates were open. Enrollment alone proves neither a usable live desktop nor passage of any live gate. P01 remains unverified.
 
 The current delivery covers tools and non-desktop tests only. Native screenshot/title/body proof aggregation and the legacy GUI outcome/performance driver are unimplemented, not just blocked by permissions. Actual Notes AX evidence must precede their design. An isolated account alone will not complete P01. Keep E01 and S01 blocked until all P01 gates pass.
 
