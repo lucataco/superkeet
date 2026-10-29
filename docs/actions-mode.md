@@ -321,7 +321,10 @@ rule. It ends when the ending of the interim text has not changed for
 emits a partial every 0.5 s of speech, and on a long take it keeps re-decoding
 words already heard, so only an ending of the transcript not yet seen in the take
 counts as new speech. Recognition lags the audio, so this rule can split one
-command at a natural pause. A take that has had a tick never uses the timer.
+command at a natural pause. A take that is receiving ticks never uses the timer.
+If its ticks stop for `ListeningSessionPolicy.tickStallTimeout` (1.5 s, three
+missed ticks), as when the engine's silence detector fails mid-take, the take
+returns to this timer for the rest of the take.
 
 The engine returning to idle reopens the microphone. The `stop` that ends each
 utterance asks the engine to keep the microphone warm (`"keep_warm": true`, parakeet-cli 0.1.10+), so

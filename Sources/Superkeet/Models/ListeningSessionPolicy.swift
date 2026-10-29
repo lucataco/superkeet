@@ -6,10 +6,10 @@ import Foundation
 enum ListeningSessionPolicy {
     static let endpointSilence: Duration = .milliseconds(900)
 
-    /// Wall time an interim-text ending must hold still to end a take that has no ticks (or whose ticks stalled). The
-    /// engine decodes every 0.5 s of audio and sends a partial only when the text changes, so this
-    /// ends the take after one decode with no new words; the next decode re-encodes a longer tail
-    /// and finishes after the timer fires.
+    /// Wall time an interim-text ending must hold still to end a take that has no ticks, or whose
+    /// ticks stalled. The engine decodes every 0.5 s of audio and sends a partial only when the
+    /// text changes, so this ends the take after one decode with no new words; the next decode
+    /// re-encodes a longer tail and finishes after the timer fires.
     static let fallbackEndpointTimeout: Duration = .milliseconds(1_000)
 
     /// Wall time without a tick (three missed ticks) after which a take that had ticks goes back
