@@ -8,9 +8,13 @@ enum SyntheticKeyEvents {
     static func events(virtualKey: CGKeyCode, flags: CGEventFlags? = nil, text: String? = nil) -> [CGEvent]? {
         guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: virtualKey, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: virtualKey, keyDown: false) else { return nil }
+        if let flags {
+            keyDown.flags = flags
+            // A keyUp that carries the modifier latches it in the HID flag state, so later typing arrives as shortcuts.
+            keyUp.flags = []
+        }
         let units = text.map { Array($0.utf16) }
         for event in [keyDown, keyUp] {
-            if let flags { event.flags = flags }
             units?.withUnsafeBufferPointer { buffer in
                 event.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
             }
