@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Play a scenario's speech into the real Superkeet app through BlackHole and record what appears on screen.
-
-usage: run.py <scenario.json> [--runs N] [--seed S]
-
-The rig points Superkeet at BlackHole 2ch, relaunches it, and for each run starts a unified-log capture, runs
-the observer, reads the TextEdit documents back, and tears the target apps down. Everything it changed is
-restored in a finally block and on SIGINT or SIGTERM. Evidence goes under .build/live-actions/runs/<timestamp>/.
-"""
+"""Play a scenario's speech into the real Superkeet app through BlackHole and record what appears on screen."""
 
 import argparse
 import json
@@ -61,10 +54,6 @@ def defaults_read(key):
 
 
 class LogStream:
-    """`log stream` of the installed app into a file, so a run can replay it with millisecond timestamps.
-
-    The process filter matters. `swift test` runs of the same code log under the same subsystem."""
-
     def __init__(self, path):
         self.path = Path(path)
         self.proc = None
@@ -128,7 +117,6 @@ def quit_superkeet():
 
 
 def relaunch_superkeet(expect_device):
-    """Quit and reopen the app until the daemon runs with expect_device (None means no --device flag)."""
     quit_superkeet()
     stream = LogStream(common.BUILD / "setup-log.ndjson")
     stream.start()
@@ -151,7 +139,6 @@ def set_device(device):
 
 
 def converge_device(device, relaunch_if_stopped):
-    """Make the defaults key and the running daemon agree with device. Safe to call twice."""
     set_device(device)
     running = superkeet_running()
     if (running or relaunch_if_stopped) and not (running and daemon_device() == device):
@@ -159,7 +146,6 @@ def converge_device(device, relaunch_if_stopped):
 
 
 def remember_original():
-    """Record the user's audioInputDevice once. restore.json survives a crash, so the next run restores from it."""
     if RESTORE_FILE.exists():
         return json.loads(RESTORE_FILE.read_text())
     current = defaults_read("audioInputDevice")
@@ -248,17 +234,10 @@ def press(hotkey_code, flags=0):
 
 
 def cancel_active_work():
-    """Escape cancels the listening session, the recording, and any running action session."""
     press(ESCAPE_KEY_CODE)
 
 
 class PlannerGuard(threading.Thread):
-    """Cancel the app's work the moment the planner starts.
-
-    A misheard clause reaches the on-device planner, which runs with the user's approval policy and can drive
-    any app on this machine. The run is already a failure at that point, so the guard trades the rest of the
-    run's evidence for not letting the planner act."""
-
     def __init__(self, log):
         super().__init__(daemon=True)
         self.path, self.offset, self.fired = log.path, 0, []
@@ -285,7 +264,6 @@ def count_messages(log, prefix):
 
 
 def settle(log, hotkey):
-    """Wait for every dispatched utterance to finish its action session, then make sure no listening session is left."""
     deadline = time.time() + SETTLE_SECONDS
     settled = False
     while time.time() < deadline:

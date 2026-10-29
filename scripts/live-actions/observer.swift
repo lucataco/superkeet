@@ -3,19 +3,6 @@ import AppKit
 import ApplicationServices
 import CoreAudio
 
-// observer play  --wav FILE --out-device NAME --hotkey-code N --hotkey-flags N --lead-ms N --tail-ms N [--target BUNDLE]...
-// observer press --hotkey-code N --hotkey-flags N
-// observer check --out-device NAME
-//
-// `play` posts the command hotkey, plays the WAV to the named output device, and writes one NDJSON event per
-// visible change: frontmost app, target windows, target document text, Superkeet HUD text. Every event has
-// `t`, wall-clock epoch milliseconds, and after playback starts `ms`, milliseconds since the first sample.
-// After the tail it prints tail_done and waits for a line on stdin before it presses the hotkey again.
-//
-// Three loops poll independently, because an Accessibility call into an app that is still launching can block
-// for the messaging timeout. The main thread watches NSWorkspace, one thread reads the target apps, and one
-// thread reads the HUD. A stall in one source then cannot delay another source's timestamps.
-
 setvbuf(stdout, nil, _IOLBF, 0)
 
 let hudBundle = "com.superkeet.app"

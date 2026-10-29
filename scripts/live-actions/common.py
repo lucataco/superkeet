@@ -1,5 +1,3 @@
-"""Shared pure helpers for the live-actions rig: paths, scenario loading, phrase matching, stats."""
-
 import hashlib
 import json
 import math
@@ -26,7 +24,6 @@ def tokens(text):
 
 
 def phrase_variants(phrase):
-    """Token sequences that count as the phrase. "TextEdit" also matches a transcript's "Text Edit"."""
     spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", phrase)
     variants = [tokens(phrase)]
     if tokens(spaced) != variants[0]:
@@ -42,7 +39,6 @@ def _find_run(haystack, needle):
 
 
 def phrase_in_text(text, phrase):
-    """True when the phrase occurs in text on word boundaries, so "ax.com" never satisfies "x.com"."""
     words = tokens(text)
     return any(_find_run(words, variant) is not None for variant in phrase_variants(phrase))
 
@@ -52,9 +48,6 @@ def missing_phrases(text, phrases):
 
 
 def phrase_end_ms(clock, phrase):
-    """End time of the first occurrence of phrase in a speech clock of (start_ms, end_ms, word) rows.
-
-    A row can hold several tokens ("x.com?"), and they all share the row's times."""
     flat = []
     for start, end, word in clock:
         for tok in tokens(word):
@@ -128,13 +121,11 @@ def validate_scenario(scenario):
 
 
 def scenario_targets(scenario):
-    """Bundles the observer should watch: the apps the rig sets up plus any app a probe names."""
     probed = {v for e in scenario["expect"] for k, v in e["probe"].items() if k in ("frontmost", "new_window")}
     return sorted(set(scenario["start_state"]) | probed)
 
 
 def parse_log(text):
-    """Rows of (epoch_ms, category, message) from `log stream --style ndjson`. Other lines are skipped."""
     rows = []
     for line in text.splitlines():
         if not line.startswith("{"):
@@ -149,7 +140,6 @@ def parse_log(text):
 
 
 def audio_key(scenario, version="1"):
-    """Hash of everything that changes the audio, so edits to expect or forbid reuse the cached stimulus."""
     body = {
         "v": version,
         "voice": scenario["voice"],
@@ -161,7 +151,6 @@ def audio_key(scenario, version="1"):
 
 
 def percentile(values, p):
-    """Nearest-rank percentile. None counts as infinity, so a missed probe never improves the number."""
     if not values:
         return None
     ranked = sorted(math.inf if v is None else v for v in values)

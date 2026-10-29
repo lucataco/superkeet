@@ -189,8 +189,6 @@ class AuditScoringTests(unittest.TestCase):
 
 
 class PlannerGuardFixtureTests(unittest.TestCase):
-    """A recorded run on the final rig. The take split, the planner started, and the rig pressed Escape."""
-
     @classmethod
     def setUpClass(cls):
         cls.result = report.analyze_run(report.load_run(PLANNER_GUARD), scenario(), common.read_clock(PLANNER_GUARD / "speech-clock.tsv"))
@@ -213,8 +211,6 @@ class PlannerGuardFixtureTests(unittest.TestCase):
 
 
 class FixtureRunTests(unittest.TestCase):
-    """bh1 is a real run in which the take split, the open and new document landed, and hello never did."""
-
     @classmethod
     def setUpClass(cls):
         cls.result = report.analyze_run(report.load_run(BH1), scenario(), common.read_clock(BH1 / "speech-clock.tsv"))

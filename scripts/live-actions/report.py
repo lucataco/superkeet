@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Score live-actions runs and write report.md and verdict.json.
-
-usage: report.py <runs-dir> [--loopback-ms N]
-
-A runs dir holds scenario.json, speech-clock.tsv, and one run-NN/ folder per run with observer.ndjson,
-log.ndjson, audit.ndjson, documents.json, and meta.json. Latency is the time the probe first passes minus
-the end of the phrase that asked for it, less the calibrated loopback delay. Negative means the action
-landed before the speaker finished the phrase.
-"""
+"""Score live-actions runs and write report.md and verdict.json."""
 
 import argparse
 import json
@@ -28,7 +20,6 @@ QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"'})
 
 
 def squash(text):
-    """Compare text the way a reader does. TextEdit turns straight quotes into curly ones."""
     return re.sub(r"\s+", " ", text.translate(QUOTES)).strip().lower()
 
 
@@ -75,13 +66,11 @@ def load_run(run_dir):
 
 
 def timeline(events, origin):
-    """Observer events with a millisecond offset from the first sample, in order. Events without a time are dropped."""
     rows = [(rel_ms(e, origin), e) for e in events]
     return sorted(((ms, e) for ms, e in rows if ms is not None), key=lambda r: r[0])
 
 
 def probe_ms(kind, value, rows):
-    """Offset at which the probe first holds, and a note when it already held before playback started."""
     if kind == "frontmost":
         hits = [ms for ms, e in rows if (e["event"] == "frontmost" and e.get("bundle") == value) or e["event"] == "target_frontmost"]
     elif kind == "new_window":
@@ -112,8 +101,6 @@ def document_text(run):
 
 
 def typed_claims(run, rows):
-    """Texts that the audit log or the HUD says were typed. A HUD card from the previous run can still be on
-    screen when playback starts, so only HUD updates after the first sample count."""
     claims = set()
     for row in run["audit"]:
         if row.get("toolName") == "type_text" and row.get("outcome", "").startswith("succeeded"):
@@ -135,8 +122,6 @@ def duplicate_dispatches(audit):
 
 
 def first_words_ms(rows, scenario, first_word_end):
-    """When live words first reached the HUD: the first update that shows two consecutive script words
-    that were not on screen before, minus the end of the first spoken word. Independent of the HUD layout."""
     script_words = common.tokens(" ".join(u["text"] for u in scenario["utterances"]))
     script = set(zip(script_words, script_words[1:]))
     previous = set()
@@ -281,9 +266,13 @@ def write(root, loopback_ms=0):
     return verdict
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("runs_dir")
     parser.add_argument("--loopback-ms", type=int, default=0, help="measured delay from playback to the app hearing it")
     args = parser.parse_args()
     write(args.runs_dir, args.loopback_ms)
+
+
+if __name__ == "__main__":
+    main()

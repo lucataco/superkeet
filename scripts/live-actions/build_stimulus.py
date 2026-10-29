@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Build the speech stimulus for a scenario.
-
-Each utterance is synthesized on its own, joined with the scenario's exact silences, scaled to about
--16 LUFS (peak at most -1 dBTP), and written as 48 kHz stereo plus a 16 kHz mono copy. Three gates follow.
-The engine must transcribe the copy with every expected phrase present on word boundaries. WhisperX must
-align every phrase inside the utterance windows. And the engine's live partials must show each phrase
-within LIVE_SLACK_MS of its end, so a voice the engine mishears cannot pass as a timing result. A failed
-gate re-synthesizes the utterances that carry the phrase, up to MAX_ATTEMPTS times.
-The result is cached under .build/live-actions/cache/.
-
-usage: build_stimulus.py <scenario.json> [--fresh]
-"""
+"""Build the speech stimulus for a scenario."""
 
 import argparse
 import base64
@@ -46,9 +35,6 @@ class GateError(RuntimeError):
 
 
 def layout(lead_ms, clip_samples, pauses_ms, rate=RATE):
-    """Sample range of each clip in the joined file and the total length.
-
-    The pause after the last clip is trailing silence, so the file ends when the engine would see quiet."""
     windows, at = [], round(lead_ms * rate / 1000)
     for samples, pause in zip(clip_samples, pauses_ms):
         windows.append((at, at + samples))
@@ -61,7 +47,6 @@ def windows_ms(windows, rate=RATE):
 
 
 def alignment_problems(clock, windows, slack_ms=ALIGN_SLACK_MS):
-    """Words that fall outside every utterance window, and windows with no word. Empty means consistent."""
     problems = []
     timed = [(s, e, w) for s, e, w in clock if s is not None and e is not None]
     for start, end, word in timed:
@@ -102,7 +87,6 @@ def read_pcm(path):
 
 
 def synthesize(text, voice, style, out_path):
-    """Gemini TTS to a trimmed 48 kHz stereo WAV. The API returns one URL, or a list for long text."""
     output = replicate(TTS_URL, {"input": {"text": text, "voice": voice, "style": style, "output_format": "wav"}})
     urls = output if isinstance(output, list) else [output]
     pcm = b""
@@ -136,7 +120,6 @@ def measure_gain_db(wav):
 
 
 def replay(wav16):
-    """The engine's session replay: the final text and the (audio_ms, text) partials it streams on the way."""
     if not common.PARAKEET.is_file():
         raise SystemExit(f"{common.PARAKEET} not found; install Superkeet first")
     out = run([common.PARAKEET, "transcribe", wav16, "--session", "--partials", "--format", "json"])
@@ -170,7 +153,6 @@ def align(wav16, out_clock):
 
 
 def live_gate_problems(partials, clock, phrases, slack_ms=LIVE_SLACK_MS):
-    """Phrases the engine's partials never showed by slack_ms after the phrase ended."""
     problems = []
     for phrase in phrases:
         end = common.phrase_end_ms(clock, phrase)
@@ -180,7 +162,6 @@ def live_gate_problems(partials, clock, phrases, slack_ms=LIVE_SLACK_MS):
 
 
 def check_phrases(scenario, transcript, partials, clock, windows):
-    """Problems as (phrase or None, message). A phrase names the utterances to synthesize again."""
     phrases = [e["after"] for e in scenario["expect"]]
     problems = [(p, f"engine transcript lacks {p!r}") for p in common.missing_phrases(transcript, phrases)]
     problems += [(p, f"speech clock lacks {p!r}") for p in phrases if common.phrase_end_ms(clock, p) is None]
@@ -189,7 +170,6 @@ def check_phrases(scenario, transcript, partials, clock, windows):
 
 
 def carrying(scenario, problems):
-    """Indexes of the utterances to synthesize again. A problem with no phrase implicates every utterance."""
     words = [p for p, _ in problems]
     return [i for i, u in enumerate(scenario["utterances"])
             if None in words or any(p and common.phrase_in_text(u["text"], p) for p in words)]
@@ -201,7 +181,6 @@ def clip_path(scenario, utterance, take):
 
 
 def assemble(scenario, clips, paths):
-    """Join the clips with the scenario's silences and level them. Returns the sample windows, total, gain, and loudness."""
     pcms = [read_pcm(c) for c in clips]
     placed, total = layout(scenario.get("lead_ms", 0), [len(p) // 4 for p in pcms], [u["pause_ms"] for u in scenario["utterances"]])
     joined = bytearray(b"\0" * (total * 4))
