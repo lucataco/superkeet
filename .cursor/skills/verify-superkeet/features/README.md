@@ -1,52 +1,37 @@
 # Superkeet verification map
 
-This directory is the maintained source for verifying the user-facing behavior of Superkeet. Read the index before driving the app, then use the matching feature file as the recipe.
+Read [the skill](../SKILL.md), select a feature, and record each entry point actually exercised. Use the existing `control-superkeet` helper. Do not treat a convenient entry point as proof of every path.
 
 ## Baseline preconditions
 
-- macOS 14 or later, Apple Silicon.
-- Superkeet is launched only by `control-superkeet launch` from this skill.
-- `control-superkeet doctor` reports a verify-owned pid, the launched bundle, and driver permission reachability. System Events also verifies the menu-bar extra; CuaDriver explicitly requires a visual check instead.
-- Never drive `/Applications/Superkeet.app` (or any other copy) if this run did not start it.
-- Do not install over the user's app. If a source build is needed, use `INSTALL_DIR="$PWD/.build/verification" CODESIGN_IDENTITY=- ./install.sh` and launch that exact bundle.
-- Put `control-superkeet` on `PATH` or invoke `.cursor/skills/verify-superkeet/scripts/control-superkeet`.
-- Artifact root is `.cursor/skills/verify-superkeet/artifacts/`. Cleanup must not delete it.
+- Use macOS 14 or later on Apple Silicon with an unlocked graphical session.
+- Launch the exact bundle through this run's fresh ownership directory. Refuse an existing app or engine owned by another run.
+- Run `doctor` and the journey's own readiness checks. Driver access does not imply recording or Actions readiness.
+- Use a disposable macOS account for mutations. Worktrees do not isolate defaults, history, runtime sockets, or desktop focus.
+- Use `$CONTROL`, `$APP`, and `$EVIDENCE` from the skill's Launch section. All evidence paths below are under `$EVIDENCE` and survive cleanup.
+- Follow the backend support table. CuaDriver supports `--surface`; most System Events commands do not.
 
 ## Driving conventions
 
-- Start every recipe from the baseline unless its preconditions say otherwise.
-- Prefer AX names and exact menu titles over coordinates. Two exceptions exist under CuaDriver. The first is the fallback for opening the status-item menu, where fresh native screenshot coordinates are unavoidable. The second is `expand` for the Diagnostic details disclosure. All other window actions use AX tokens.
-- Treat every command as literal. Keep quoted titles unchanged, including `Settings...` (ASCII dots) and `Run an Action…` (unicode ellipsis).
-- Name the window whenever more than one Superkeet window is open: `--surface settings|history|setup` or `--window "<exact title>"`. With neither, CuaDriver uses the largest on-screen window.
-- `menu dump` and `menu click` need the System Events driver. Under CuaDriver, open the menu from the visual menu entry in SKILL.md.
-- Close windows you open before starting another feature, unless the recipe says to keep them.
-- Restore any setting you change. Prefer recipes that do not change settings.
-
-## Proof and skip reporting
-
-- Capture the user action and the resulting state, not only the final screen.
-- Window proof includes an AX snapshot and a screenshot with Superkeet identity visible.
-- Menu proof includes `menu dump` output with the expected titles. A CuaDriver-only visual menu capture is not a substitute for a required textual dump.
-- Mutation proof includes a second read of the same UI after leaving and returning.
-- Record the feature ID and entry point used with every artifact.
-- Report an unreachable path with the attempted command and the unmet precondition.
-- Do not report a skipped entry point as verified through a different path.
-
-## Feature entry contract
-
-Each feature file starts with an H1 title and one paragraph describing the user-visible behavior. It then uses exactly four H2 sections in this order.
-
-1. `Sub-features` lists short IDs with one line for each behavior.
-2. `How to get to it (user POV)` lists every user entry point.
-3. `Driving it with control-superkeet` starts with `Preconditions:` and uses labeled bullets that pair each user action with an exact command and observable result.
-4. `Gotchas` lists traps that can waste or invalidate a verification run.
-
-Keep implementation details out of the map. Name only user paths, stable handles, required state, commands, and observable proof.
+- Prefer exact menu titles and AX handles. CuaDriver's status-item entry and guarded diagnostic disclosure are the documented coordinate exceptions.
+- Wait for the expected window and label after each navigation action. Use the skill's retry-count bound. A driver call can take longer than the retry sleep, so this is not a ten-second elapsed-time guarantee. Abort stalled attempts and clean up.
+- Keep only the intended window open under System Events. Under CuaDriver, select a surface and check its identity labels.
+- Do not change permissions, settings, approval policy, MCP servers, history, or clipboard contents during an inspection journey.
+- If a path needs missing data, a permission, an unsupported input command, or a disposable target, report it BLOCKED with the failed precondition. Do not substitute a weaker journey.
+- Capture action output, before/after AX state, and screenshots. Record actual side effects for recording or action execution.
+- Cleanup only owned processes. Keep evidence and confirm it still exists after teardown.
 
 ## Features
 
-- [Menu bar](./menu-bar.md) covers the status-item menu, recording controls, recovery items, and quit.
-- [Settings](./settings.md) covers opening Settings and switching General, Output & Privacy, Advanced, About, and Actions.
-- [History](./history.md) covers the history window, search, empty states, and copy.
-- [Setup](./setup.md) covers first-run and Run Setup Again.
-- [Recording](./recording.md) covers starting and stopping a take from the menu and the overlay outcomes.
+- [Menu bar](menu-bar.md) covers status, recording controls, window entries, and quit.
+- [Settings](settings.md) covers General, Output & Privacy, Advanced, About, and Actions-tab visibility.
+- [History](history.md) covers opening, empty states, search, and copy preconditions.
+- [Setup](setup.md) covers first-run onboarding and the rerun entry.
+- [Recording](recording.md) covers menu and shortcut entry points, cancellation, and transcript outcomes.
+- [Actions Mode](actions.md) separates current Actions settings inspection from listening, approval, and execution proof.
+
+## Maintain the map
+
+Each feature has exactly four H2 sections, in this order. `Sub-features`, `How to get to it (user POV)`, `Driving it with control-superkeet`, and `Gotchas`.
+
+Keep IDs stable. Add a concrete end-state assertion when adding a journey. Mark missing driver support explicitly rather than dropping the entry point. Use `/maintain-verification-skill` when the app changes.

@@ -1,40 +1,41 @@
 # Menu bar
 
-The Superkeet status item is the home surface. A user opens it to see status, start or stop recording, recover the last transcript, open History or Settings, re-run setup, and quit.
+The Superkeet status item exposes recording, transcript recovery, Actions Mode, History, Settings, Setup, and Quit.
 
 ## Sub-features
 
-- `menu-open` shows the extra and a disabled status line.
-- `menu-permissions` offers `Open Accessibility Settings...` when shortcut listening is unavailable.
-- `menu-record` offers `Start Recording` when idle, or `Stop Recording` while a take is running.
-- `menu-recover` lists `Copy Last Transcript`, `Copy Original Transcript`, and `Undo Text Changes and Copy`.
-- `menu-actions` shows Actions controls when Actions Mode is on, `Try Actions Mode…` on supported systems when it is off, and `Stop Action` while an action runs.
-- `menu-windows` opens History, Settings, and Setup from the menu.
-- `menu-quit` quits Superkeet.
+- `menu-open` exposes the menu and current status.
+- `menu-permissions` offers Accessibility setup when shortcuts are unavailable.
+- `menu-record` switches between recording start, pending-start cancellation, and stop controls.
+- `menu-recover` exposes transcript copy and recovery actions.
+- `menu-actions` exposes current Actions entry and stop controls.
+- `menu-windows` opens History, Settings, and Setup.
+- `menu-quit` exits the owned app through its menu.
 
 ## How to get to it (user POV)
 
-- Click the waveform (or mic / wand) extra in the menu bar.
-- VoiceOver / Accessibility can activate the extra named `Superkeet`.
+- Click the Superkeet waveform, microphone, or working icon in the menu bar.
+- Activate the status item through Accessibility.
 
 ## Driving it with control-superkeet
 
 Preconditions:
 
-- With System Events, `control-superkeet doctor` reports `menu-bar extra: yes`. CuaDriver-only mode cannot complete this feature's textual dump proof.
-- No Settings, History, or Setup window needs to be open.
+- Complete Launch and Doctor. Wait for the actual status item to appear before selecting coordinates.
+- System Events must have AppleEvent and Accessibility access for textual menu enumeration.
 
-- **Open menu.** Show the extra. Run `control-superkeet menu dump` (System Events only). Output includes `Start Recording` or `Stop Recording`, `History`, `Settings...`, `Run Setup Again...`, and `Quit Superkeet`.
-- **Idle recording control.** With no take in progress, `Start Recording` is present and `Stop Recording` is not.
-- **Recovery items.** The dump includes `Copy Last Transcript`, `Copy Original Transcript`, and `Undo Text Changes and Copy`. Disabled rows are still listed. `Copy Original Transcript` is enabled only when processing changed the last take, such as removing filler words or applying a replacement. A plain take leaves it disabled.
-- **Actions items.** If the dump includes `Auto-Approve Actions`, it also includes exactly one of `Start Listening for Actions`, `Stop Listening`, or `Run an Action…`. On macOS 26+, `Try Actions Mode…` may appear while Actions Mode is off. During an action, `Stop Action` appears.
-- **Status line.** The first printed title is a status such as `Listening…`, `Recording…`, `Transcribing…`, `Shortcuts are off. Turn on Accessibility.`, or a session status. Do not click it.
-- **Proof.** Write the dump to `artifacts/menu-bar/menu.txt` (System Events only). The file contains `History`, `Settings...`, and `Quit Superkeet`.
+1. Under System Events, run `"$CONTROL" menu dump > "$EVIDENCE/menu.txt"`. Assert `History`, `Settings...`, `Run Setup Again...`, and `Quit Superkeet`. Under CuaDriver, use the fresh desktop screenshot and click procedure, saving `$EVIDENCE/menu.png` and the click output. That proves only the visual entry.
+2. When idle, expect `Start Recording`. During recording, expect `Stop Recording`. During a pending start, expect `Cancel Starting Recording`. Do not change recording state during this inspection.
+3. Inspect the disabled status line. It can report `Shortcuts are off. Turn on Accessibility.`, `Recording…`, `Listening…`, or transcription/action progress. Do not click a status row.
+4. Inspect recovery entries. `Copy Last Transcript`, `Copy Original Transcript`, and `Undo Text Changes and Copy` can be disabled. Their presence does not prove clipboard behavior.
+5. When Actions is enabled, inspect `Auto-Approve Actions` and the state-dependent entry `Start Listening for Actions`, `Stop Listening`, or `Run an Action…`. Supported systems can show `Try Actions Mode…` when Actions is off. Do not toggle the approval policy during inspection.
+6. Use the corresponding feature recipe for each window entry. Save its menu action and resulting window evidence.
+7. For a user-menu quit proof, choose `Quit Superkeet` only at the end of the run. System Events uses `"$CONTROL" menu click "Quit Superkeet"`. CuaDriver uses its observed menu row. Confirm the recorded app and engine exit, then run cleanup to clear stale ownership state. Signal-based cleanup alone does not prove menu quit.
 
 ## Gotchas
 
-- `Settings...` and `Run Setup Again...` use ASCII dots. `Try Actions Mode…` and `Run an Action…` use a unicode ellipsis. A title mismatch fails the click.
-- Textual `menu dump` proof requires the System Events driver. CuaDriver can provide visual menu evidence only; do not mark the textual recipe verified from that fallback.
-- The extra's AX name is empty. Find it by description (`Superkeet` or `Superkeet: Ready`). It is usually menu bar 1 item 1, not menu bar 2.
-- Icon tint (red / orange / blue / purple) is not an AX name. Prove state from menu titles, not from a screenshot of the extra alone.
-- `Quit Superkeet` ends the verify instance. Do not choose it until cleanup.
+- `Settings...` and `Run Setup Again...` use ASCII dots. Actions titles can use the Unicode ellipsis.
+- CuaDriver cannot provide a textual status-item menu dump. Mark that entry point unverified instead of substituting a screenshot for the textual recipe.
+- The status icon may appear after launch returns. Observe it before clicking.
+- Recovery actions can change the clipboard. Use a disposable known transcript before testing their effect.
+- Icon color alone does not prove a recording or action state. Capture the relevant menu text or HUD as well.
