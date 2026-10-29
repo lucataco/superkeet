@@ -21,6 +21,7 @@ final class ListeningSessionController: ObservableObject {
 
     struct Streams {
         var listening: AnyPublisher<SpeculativeLaunchCoordinator.Listening?, Never>
+        var ticks: AnyPublisher<EngineTick, Never>
         var daemonState: AnyPublisher<ParakeetService.DaemonState, Never>
         var outcome: AnyPublisher<TranscriptOutcomeEvent?, Never>
     }
@@ -65,6 +66,7 @@ final class ListeningSessionController: ObservableObject {
     private static func defaultStreams() -> Streams {
         Streams(
             listening: SpeculativeLaunchCoordinator.shared.$listening.eraseToAnyPublisher(),
+            ticks: ParakeetService.shared.ticks.eraseToAnyPublisher(),
             daemonState: ParakeetService.shared.$daemonState.eraseToAnyPublisher(),
             outcome: ParakeetService.shared.$lastOutcome.eraseToAnyPublisher()
         )
@@ -128,6 +130,10 @@ final class ListeningSessionController: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] listening in self?.listeningChanged(listening) }
             .store(in: &cancellables)
+        streams.ticks
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] tick in self?.tickArrived(tick) }
+            .store(in: &cancellables)
         streams.daemonState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in self?.daemonStateChanged(state) }
@@ -146,6 +152,14 @@ final class ListeningSessionController: ObservableObject {
             take = TakeEndpoint(sessionID: listening.sessionID)
         }
         if let effect = take?.hear(listening.transcript) { apply(effect) }
+    }
+
+    private func tickArrived(_ tick: EngineTick) {
+        guard isActive, let effect = take?.hear(tick) else { return }
+        if effect == .endTake {
+            sessionLog.info("The engine measured \(String(describing: tick.trailingSilence), privacy: .public) of silence at \(String(describing: tick.audio), privacy: .public) of audio")
+        }
+        apply(effect)
     }
 
     private func apply(_ effect: TakeEndpoint.Effect) {
@@ -167,15 +181,11 @@ final class ListeningSessionController: ObservableObject {
         case .endTake:
             endpointTimer?.cancel()
             endpointTimer = nil
-            endpointReached()
+            guard hooks.isRecording() else { return }
+            sessionLog.info("Pause detected; dispatching the utterance")
+            dispatchedCommands += 1
+            (hooks.stopForNextTake ?? hooks.stopRecording)()
         }
-    }
-
-    private func endpointReached() {
-        guard ListeningSessionPolicy.shouldDispatch(transcript: take?.transcript ?? "", isRecording: hooks.isRecording(), sessionActive: isActive) else { return }
-        sessionLog.info("Pause detected; dispatching the utterance")
-        dispatchedCommands += 1
-        (hooks.stopForNextTake ?? hooks.stopRecording)()
     }
 
     private func forgetTake() {

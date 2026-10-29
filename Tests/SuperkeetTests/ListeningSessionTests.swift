@@ -15,9 +15,6 @@ final class ListeningSessionPolicyTests: XCTestCase {
         XCTAssertFalse(ListeningSessionPolicy.shouldArmEndpoint(transcript: ""))
         XCTAssertFalse(ListeningSessionPolicy.shouldArmEndpoint(transcript: "  \n"))
         XCTAssertTrue(ListeningSessionPolicy.shouldArmEndpoint(transcript: "open"))
-        XCTAssertTrue(ListeningSessionPolicy.shouldDispatch(transcript: "open Notes", isRecording: true, sessionActive: true))
-        XCTAssertFalse(ListeningSessionPolicy.shouldDispatch(transcript: "open Notes", isRecording: false, sessionActive: true))
-        XCTAssertFalse(ListeningSessionPolicy.shouldDispatch(transcript: "open Notes", isRecording: true, sessionActive: false))
     }
 
     func testFallbackPauseIsLongerThanAnEngineTickAndShorterThanASentenceGap() {
@@ -77,6 +74,7 @@ final class ListeningSessionControllerTests: XCTestCase {
         let controller: ListeningSessionController
         let recorder: Recorder
         let listening: CurrentValueSubject<SpeculativeLaunchCoordinator.Listening?, Never>
+        let ticks: PassthroughSubject<EngineTick, Never>
         let daemonState: CurrentValueSubject<ParakeetService.DaemonState, Never>
         let outcome: CurrentValueSubject<TranscriptOutcomeEvent?, Never>
 
@@ -86,6 +84,10 @@ final class ListeningSessionControllerTests: XCTestCase {
 
         func takeEnded() {
             listening.send(nil)
+        }
+
+        func tick(silence: Int, audio: Int = 6_000, take: String = "take-1") {
+            ticks.send(EngineTick(sessionID: take, audio: .milliseconds(audio), trailingSilence: .milliseconds(silence)))
         }
     }
 
@@ -105,6 +107,7 @@ final class ListeningSessionControllerTests: XCTestCase {
     private func makeFixture(fallbackTimeout: Duration = .milliseconds(60)) -> Fixture {
         let recorder = Recorder()
         let listening = CurrentValueSubject<SpeculativeLaunchCoordinator.Listening?, Never>(nil)
+        let ticks = PassthroughSubject<EngineTick, Never>()
         let daemonState = CurrentValueSubject<ParakeetService.DaemonState, Never>(.idle)
         let outcome = CurrentValueSubject<TranscriptOutcomeEvent?, Never>(nil)
         let hooks = ListeningSessionController.Hooks(
@@ -119,11 +122,12 @@ final class ListeningSessionControllerTests: XCTestCase {
         )
         let streams = ListeningSessionController.Streams(
             listening: listening.eraseToAnyPublisher(),
+            ticks: ticks.eraseToAnyPublisher(),
             daemonState: daemonState.eraseToAnyPublisher(),
             outcome: outcome.eraseToAnyPublisher()
         )
         let controller = ListeningSessionController(settings: .shared, hooks: hooks, streams: streams, fallbackEndpointTimeout: fallbackTimeout)
-        return Fixture(controller: controller, recorder: recorder, listening: listening, daemonState: daemonState, outcome: outcome)
+        return Fixture(controller: controller, recorder: recorder, listening: listening, ticks: ticks, daemonState: daemonState, outcome: outcome)
     }
 
     private func settle(_ duration: Duration = .milliseconds(20)) async {
@@ -180,6 +184,66 @@ final class ListeningSessionControllerTests: XCTestCase {
             await settle(.milliseconds(40))
         }
         XCTAssertEqual(fixture.recorder.stops, 1, "Only new words restart the pause timer.")
+        fixture.controller.end(dispatchPending: false)
+    }
+
+    func testAPauseBetweenSentencesOfOneCommandKeepsTheTakeOpen() async {
+        let fixture = makeFixture()
+        fixture.controller.begin()
+        fixture.hear("")
+        fixture.tick(silence: 500, audio: 500)
+        fixture.hear("Can you open TextEdit and make a new document?")
+        for silence in [0, 230, 740] {
+            fixture.tick(silence: silence)
+            await settle(.milliseconds(100))
+        }
+        XCTAssertEqual(fixture.recorder.stops, 0, "A 742 ms pause between sentences is still one command.")
+        fixture.hear("Can you open TextEdit and make a new document? And let's make the title say hello.")
+        await settle(.milliseconds(100))
+        XCTAssertEqual(fixture.recorder.stops, 0, "Once ticks arrive, new words no longer start the wall-clock fallback.")
+        fixture.tick(silence: 0)
+        fixture.tick(silence: 900)
+        await settle()
+        XCTAssertEqual(fixture.recorder.stops, 1, "900 ms of measured silence after speech ends the take.")
+        XCTAssertEqual(fixture.recorder.warmStops, 1, "A pause keeps the microphone warm for the next take.")
+        XCTAssertEqual(fixture.controller.dispatchedCommands, 1)
+        XCTAssertTrue(fixture.controller.isActive)
+        fixture.controller.end(dispatchPending: false)
+    }
+
+    func testMeasuredSilenceBeforeAnySpeechNeverEndsTheTake() async {
+        let fixture = makeFixture()
+        fixture.controller.begin()
+        fixture.hear("")
+        for audio in [500, 1_000, 1_500, 3_000] {
+            fixture.tick(silence: audio, audio: audio)
+        }
+        await settle(.milliseconds(120))
+        XCTAssertEqual(fixture.recorder.stops, 0)
+        XCTAssertTrue(fixture.controller.isActive)
+        fixture.hear("open Notes")
+        fixture.tick(silence: 0, audio: 3_500)
+        fixture.tick(silence: 1_000, audio: 4_500)
+        await settle()
+        XCTAssertEqual(fixture.recorder.stops, 1, "Silence after the first words does end it.")
+        fixture.controller.end(dispatchPending: false)
+    }
+
+    func testTicksFromAnotherTakeOrAfterRecordingAreIgnored() async {
+        let fixture = makeFixture(fallbackTimeout: .seconds(5))
+        fixture.controller.begin()
+        fixture.hear("open Notes")
+        fixture.tick(silence: 2_000, take: "take-0")
+        await settle()
+        XCTAssertEqual(fixture.recorder.stops, 0, "A late tick from the previous take ends nothing.")
+        fixture.recorder.recording = false
+        fixture.tick(silence: 2_000)
+        await settle()
+        XCTAssertEqual(fixture.recorder.stops, 0, "A tick after recording stopped ends nothing.")
+        fixture.recorder.recording = true
+        fixture.tick(silence: 2_000)
+        await settle()
+        XCTAssertEqual(fixture.recorder.stops, 1)
         fixture.controller.end(dispatchPending: false)
     }
 

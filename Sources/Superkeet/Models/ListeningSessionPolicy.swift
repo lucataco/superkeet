@@ -42,10 +42,6 @@ enum ListeningSessionPolicy {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    static func shouldDispatch(transcript: String, isRecording: Bool, sessionActive: Bool) -> Bool {
-        sessionActive && isRecording && shouldArmEndpoint(transcript: transcript)
-    }
-
     enum RearmAction: Equatable {
         case rearm
         case wait
