@@ -42,6 +42,24 @@ final class TranscriptProtocolTests: XCTestCase {
         try stream.finish()
     }
 
+    func testTickEventsCarryMeasuredSilenceAndIgnoreUnknownFields() throws {
+        var stream = TranscriptEventStream()
+        let wire = #"{"type":"tick","session_id":"one","audio_ms":6120,"trailing_silence_ms":740,"vad_probability":0.12}"# + "\n"
+            + #"{"type":"partial","session_id":"one","sequence":3,"text":"make a new document","audio_ms":6120}"# + "\n"
+        let events = try stream.append(Data(wire.utf8))
+        XCTAssertEqual(events.map(\.kind), [.tick, .partial])
+        XCTAssertEqual(events[0].tick, EngineTick(sessionID: "one", audio: .milliseconds(6_120), trailingSilence: .milliseconds(740)))
+        XCTAssertNil(events[0].interimTranscript, "A tick carries no text.")
+        XCTAssertNil(events[1].tick, "Only tick events carry measured silence.")
+        try stream.finish()
+    }
+
+    func testMalformedTickEventsYieldNoTick() {
+        XCTAssertNil(TranscriptEvent(type: "tick", sessionID: "one", audioMS: 500).tick, "A tick without silence is unusable.")
+        XCTAssertNil(TranscriptEvent(type: "tick", sessionID: "one", trailingSilenceMS: 500).tick, "A tick without audio is unusable.")
+        XCTAssertNil(TranscriptEvent(type: "tick", sessionID: "one", audioMS: 500, trailingSilenceMS: -1).tick)
+    }
+
     func testMalformedPartialEventsYieldNoInterimTranscript() {
         XCTAssertNil(TranscriptEvent(type: "partial", sessionID: "one", text: "x").interimTranscript, "A partial without a sequence is unusable.")
         XCTAssertNil(TranscriptEvent(type: "partial", sessionID: "one", sequence: 3).interimTranscript, "A partial without text is unusable.")

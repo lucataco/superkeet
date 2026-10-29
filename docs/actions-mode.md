@@ -307,13 +307,27 @@ Inside a listening session no key is needed: each pause hands the utterance to
 the runner and the microphone reopens as soon as the engine is idle again, so
 the next command can be spoken while the previous one still runs. Utterances
 queue in arrival order like any other command. `ListeningSessionController`
-owns the session: a pause is interim text unchanged for
-`ListeningSessionPolicy.endpointSilence` (1 s; the engine emits a partial every
-0.5 s of speech, and on a long take it keeps re-decoding words already heard, so
-only an ending of the transcript not yet seen in the take counts as new speech);
-the engine returning to
-idle reopens the microphone. The `stop` that ends each utterance asks the engine
-to keep the microphone warm (`"keep_warm": true`, parakeet-cli 0.1.10+), so
+owns the session, and `TakeEndpoint` decides when a pause ends a take. The engine
+sends a `tick` event about every 0.5 s of audio, carrying `trailing_silence_ms`,
+the silence its voice-activity detector measured at the end of the audio so far.
+Once the take has words, the first tick that reports at least
+`ListeningSessionPolicy.endpointSilence` (0.9 s) ends it. The pauses between the
+sentences of one command (742 ms in a recorded three-step command) stay inside
+one take, and only ticks for the take being recorded count.
+
+A take that gets no tick, from an engine that predates them, keeps the older
+rule. It ends when the ending of the interim text has not changed for
+`ListeningSessionPolicy.fallbackEndpointTimeout` (1 s of wall time). The engine
+emits a partial every 0.5 s of speech, and on a long take it keeps re-decoding
+words already heard, so only an ending of the transcript not yet seen in the take
+counts as new speech. Recognition lags the audio, so this rule can split one
+command at a natural pause. A take that is receiving ticks never uses the timer.
+If its ticks stop for `ListeningSessionPolicy.tickStallTimeout` (1.5 s, three
+missed ticks), as when the engine's silence detector fails mid-take, the take
+returns to this timer for the rest of the take.
+
+The engine returning to idle reopens the microphone. The `stop` that ends each
+utterance asks the engine to keep the microphone warm (`"keep_warm": true`, parakeet-cli 0.1.10+), so
 words spoken while the take finishes become the start of the next one instead
 of being lost; closing the session releases the microphone; two failed takes in a row, the engine stopping,
 Escape, or the shortcut end the session. One start sound plays when the session

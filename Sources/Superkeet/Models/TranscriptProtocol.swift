@@ -10,12 +10,16 @@ struct TranscriptEvent: Codable, Equatable {
     var message: String?
     var sequence: Int?
     var truncated: Bool?
+    var audioMS: Int?
+    var trailingSilenceMS: Int?
 
     enum CodingKeys: String, CodingKey {
         case type, text, status, message, sequence, truncated
         case sessionID = "session_id"
         case failedSegments = "failed_segments"
         case droppedSamples = "dropped_samples"
+        case audioMS = "audio_ms"
+        case trailingSilenceMS = "trailing_silence_ms"
     }
 
     var isPartial: Bool {
@@ -27,6 +31,7 @@ struct TranscriptEvent: Codable, Equatable {
         case "session_started": return .sessionStarted
         case "transcribing": return .transcribing
         case "partial": return .partial
+        case "tick": return .tick
         case "complete": return .complete
         default: return .unrecognized(type)
         }
@@ -36,12 +41,27 @@ struct TranscriptEvent: Codable, Equatable {
         guard kind == .partial, let text, let sequence, sequence > 0 else { return nil }
         return PartialTranscript(text: text, isFinal: false, sequence: sequence)
     }
+
+    var tick: EngineTick? {
+        guard kind == .tick, let audioMS, let trailingSilenceMS, audioMS >= 0, trailingSilenceMS >= 0 else { return nil }
+        return EngineTick(sessionID: sessionID, audio: .milliseconds(audioMS), trailingSilence: .milliseconds(trailingSilenceMS))
+    }
+}
+
+/// Sent on every preview tick of a take that streams partials, about every 0.5 s of audio,
+/// whether or not the text changed. `trailingSilence` is how much of the end of the audio the
+/// engine's voice-activity detector heard as silence; before any speech it is all of it.
+struct EngineTick: Equatable, Sendable {
+    let sessionID: String
+    let audio: Duration
+    let trailingSilence: Duration
 }
 
 enum TranscriptEventKind: Equatable {
     case sessionStarted
     case transcribing
     case partial
+    case tick
     case complete
     case unrecognized(String)
 }

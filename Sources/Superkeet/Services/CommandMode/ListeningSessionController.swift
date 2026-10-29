@@ -20,7 +20,8 @@ final class ListeningSessionController: ObservableObject {
     }
 
     struct Streams {
-        var transcript: AnyPublisher<String?, Never>
+        var listening: AnyPublisher<SpeculativeLaunchCoordinator.Listening?, Never>
+        var ticks: AnyPublisher<EngineTick, Never>
         var daemonState: AnyPublisher<ParakeetService.DaemonState, Never>
         var outcome: AnyPublisher<TranscriptOutcomeEvent?, Never>
     }
@@ -30,24 +31,25 @@ final class ListeningSessionController: ObservableObject {
 
     private let settings: AppSettings
     private let hooks: Hooks
-    private let endpointSilence: Duration
+    private let fallbackEndpointTimeout: Duration
+    private let tickStallTimeout: Duration
     private var cancellables: Set<AnyCancellable> = []
+    private var take: TakeEndpoint?
     private var endpointTimer: Task<Void, Never>?
     private var consecutiveFailures = 0
-    private var currentTranscript = ""
-    private var seenProgress: Set<String> = []
-    private var endpointGeneration = UUID()
     private var lastOutcomeID: UUID?
 
     init(
         settings: AppSettings = .shared,
         hooks: Hooks? = nil,
         streams: Streams? = nil,
-        endpointSilence: Duration = ListeningSessionPolicy.endpointSilence
+        fallbackEndpointTimeout: Duration = ListeningSessionPolicy.fallbackEndpointTimeout,
+        tickStallTimeout: Duration = ListeningSessionPolicy.tickStallTimeout
     ) {
         self.settings = settings
         self.hooks = hooks ?? Self.defaultHooks()
-        self.endpointSilence = endpointSilence
+        self.fallbackEndpointTimeout = fallbackEndpointTimeout
+        self.tickStallTimeout = tickStallTimeout
         observe(streams ?? Self.defaultStreams())
     }
 
@@ -66,7 +68,8 @@ final class ListeningSessionController: ObservableObject {
 
     private static func defaultStreams() -> Streams {
         Streams(
-            transcript: SpeculativeLaunchCoordinator.shared.$listening.map { $0?.transcript }.eraseToAnyPublisher(),
+            listening: SpeculativeLaunchCoordinator.shared.$listening.eraseToAnyPublisher(),
+            ticks: ParakeetService.shared.ticks.eraseToAnyPublisher(),
             daemonState: ParakeetService.shared.$daemonState.eraseToAnyPublisher(),
             outcome: ParakeetService.shared.$lastOutcome.eraseToAnyPublisher()
         )
@@ -87,8 +90,6 @@ final class ListeningSessionController: ObservableObject {
         isActive = true
         HotkeyManager.shared.noteListeningSessionActive(true)
         consecutiveFailures = 0
-        currentTranscript = ""
-        seenProgress = []
         dispatchedCommands = 0
         sessionLog.info("Listening session started")
         hooks.playSound(.start)
@@ -98,16 +99,13 @@ final class ListeningSessionController: ObservableObject {
     func end(dispatchPending: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard isActive else { return }
-        endpointTimer?.cancel()
-        endpointTimer = nil
         isActive = false
         HotkeyManager.shared.noteListeningSessionActive(false)
         let action = ListeningSessionPolicy.endAction(
             isRecording: hooks.isRecording(), startPending: hooks.isStartPending(),
-            hasSpeech: ListeningSessionPolicy.shouldArmEndpoint(transcript: currentTranscript), dispatchPending: dispatchPending
+            hasSpeech: take?.hasSpeech ?? false, dispatchPending: dispatchPending
         )
-        currentTranscript = ""
-        seenProgress = []
+        forgetTake()
         switch action {
         case .stopAndDispatch:
             dispatchedCommands += 1
@@ -131,9 +129,13 @@ final class ListeningSessionController: ObservableObject {
     }
 
     private func observe(_ streams: Streams) {
-        streams.transcript
+        streams.listening
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] transcript in self?.transcriptChanged(transcript) }
+            .sink { [weak self] listening in self?.listeningChanged(listening) }
+            .store(in: &cancellables)
+        streams.ticks
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] tick in self?.tickArrived(tick) }
             .store(in: &cancellables)
         streams.daemonState
             .receive(on: DispatchQueue.main)
@@ -145,42 +147,54 @@ final class ListeningSessionController: ObservableObject {
             .store(in: &cancellables)
     }
 
-    private func transcriptChanged(_ transcript: String?) {
+    private func listeningChanged(_ listening: SpeculativeLaunchCoordinator.Listening?) {
         guard isActive else { return }
-        guard let transcript else {
-            currentTranscript = ""
-            seenProgress = []
+        guard let listening else { return forgetTake() }
+        if take?.sessionID != listening.sessionID {
+            forgetTake()
+            take = TakeEndpoint(sessionID: listening.sessionID)
+        }
+        if let effect = take?.hear(listening.transcript) { apply(effect) }
+    }
+
+    private func tickArrived(_ tick: EngineTick) {
+        guard isActive, let effect = take?.hear(tick) else { return }
+        if effect == .endTake {
+            sessionLog.info("The engine measured \(String(describing: tick.trailingSilence), privacy: .public) of silence at \(String(describing: tick.audio), privacy: .public) of audio")
+        }
+        apply(effect)
+    }
+
+    private func apply(_ effect: TakeEndpoint.Effect) {
+        switch effect {
+        case .none:
+            break
+        case .startTimer(let timer):
+            endpointTimer?.cancel()
+            let timeout = timer == .stall ? tickStallTimeout : fallbackEndpointTimeout
+            endpointTimer = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard !Task.isCancelled, let self else { return }
+                self.endpointTimer = nil
+                if let effect = self.take?.timerFired() { self.apply(effect) }
+            }
+        case .cancelTimer:
             endpointTimer?.cancel()
             endpointTimer = nil
-            return
-        }
-        guard transcript != currentTranscript else { return }
-        currentTranscript = transcript
-        guard ListeningSessionPolicy.shouldArmEndpoint(transcript: transcript) else {
+        case .endTake:
             endpointTimer?.cancel()
             endpointTimer = nil
-            return
-        }
-        let isNewSpeech = seenProgress.insert(ListeningSessionPolicy.progressKey(for: transcript)).inserted
-        guard isNewSpeech || endpointTimer == nil else { return }
-        endpointTimer?.cancel()
-        let generation = UUID()
-        endpointGeneration = generation
-        let silence = endpointSilence
-        endpointTimer = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: silence)
-            guard !Task.isCancelled, let self else { return }
-            self.endpointReached(generation)
+            guard hooks.isRecording() else { return }
+            sessionLog.info("Pause detected; dispatching the utterance")
+            dispatchedCommands += 1
+            (hooks.stopForNextTake ?? hooks.stopRecording)()
         }
     }
 
-    private func endpointReached(_ generation: UUID) {
-        guard isActive, endpointGeneration == generation,
-              ListeningSessionPolicy.shouldDispatch(transcript: currentTranscript, isRecording: hooks.isRecording(), sessionActive: isActive) else { return }
+    private func forgetTake() {
+        endpointTimer?.cancel()
         endpointTimer = nil
-        sessionLog.info("Pause detected; dispatching the utterance")
-        dispatchedCommands += 1
-        (hooks.stopForNextTake ?? hooks.stopRecording)()
+        take = nil
     }
 
     private func daemonStateChanged(_ state: ParakeetService.DaemonState) {
