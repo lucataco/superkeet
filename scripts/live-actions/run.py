@@ -33,6 +33,9 @@ LEAD_BASE_MS = 1500
 JITTER_MS = 500
 TAIL_MS = 6000
 SETTLE_SECONDS = 25
+OSA_TIMEOUT_SECONDS = 20
+# The app's own defaults in Sources/Superkeet/Models/AppSettings.swift: Space with Option and Shift.
+DEFAULT_COMMAND_HOTKEY = {"code": "49", "flags": "655360"}
 children = []
 
 
@@ -41,7 +44,12 @@ def sh(cmd, timeout=30, check=False):
 
 
 def osa(script, language="AppleScript"):
-    return sh(["osascript", "-l", language, "-e", script], timeout=20).stdout.strip()
+    for attempt in (1, 2):
+        try:
+            return sh(["osascript", "-l", language, "-e", script], timeout=OSA_TIMEOUT_SECONDS).stdout.strip()
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                raise SystemExit(f"osascript timed out twice after {OSA_TIMEOUT_SECONDS} s: {script[:200]}")
 
 
 def say(message):
@@ -365,7 +373,7 @@ def preflight(scenario):
 def read_hotkey():
     code, flags = defaults_read("commandHotkeyKeyCode"), defaults_read("commandHotkeyModifierFlags")
     if code is None or flags is None:
-        raise SystemExit("commandHotkeyKeyCode or commandHotkeyModifierFlags is not set; open Superkeet settings once")
+        return dict(DEFAULT_COMMAND_HOTKEY)
     return {"code": code, "flags": flags}
 
 
