@@ -221,7 +221,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
                     guard self.session === session else { break }
                     self.listening?.transcript = partial.text
                     guard self.isEnabled, self.mayRunEarly(session) else { continue }
-                    if let commit = session.detector.observe(partial),
+                    if let commit = session.detector.observe(partial), session.stepDetector.handled == 0,
                        SpeculativeStepDetector.allows(.openApp(name: commit.action.app.name), policy: session.policy) {
                         self.launch(commit, in: session)
                     }
@@ -277,7 +277,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
             resolveApp: environment.resolveApp, isRunning: environment.isRunning,
             allows: { SpeculativeStepDetector.allows($0, policy: policy) },
             installedNames: environment.installedNames
-        ), currentApp: carriedApp())
+        ), currentApp: carriedApp(), stabilityThreshold: stabilityThreshold)
         let detector = SpeculativeIntentDetector(environment: environment, stabilityThreshold: stabilityThreshold)
         return Session(id: id, detector: detector, stepDetector: stepDetector, policy: policy)
     }

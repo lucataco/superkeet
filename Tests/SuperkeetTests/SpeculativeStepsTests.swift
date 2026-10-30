@@ -139,7 +139,7 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertEqual(detector.steps.count, 1)
     }
 
-    private func notesDetector(installed: [String] = []) -> SpeculativeStepDetector {
+    private func notesDetector(installed: [String] = [], stabilityThreshold: Int = 1) -> SpeculativeStepDetector {
         SpeculativeStepDetector(environment: .init(
             resolveApp: { [notes, safari] name in
                 let normalized = AppResolver.normalizedName(name)
@@ -150,7 +150,7 @@ final class SpeculativeStepDetectorTests: XCTestCase {
             isRunning: { _ in true },
             allows: { SpeculativeStepDetector.allows($0, policy: .readOnlyAuto) },
             installedNames: { installed }
-        ))
+        ), stabilityThreshold: stabilityThreshold)
     }
 
     func testLastClauseRunsWhenASecondPartialConfirmsIt() throws {
@@ -225,6 +225,19 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertEqual(ambiguous.commitStableTrailing(at: start.addingTimeInterval(10)), [])
         let moved = ambiguous.observe(PartialTranscript(text: "Open Notes and open Safari and", isFinal: false, sequence: 2), launchedApp: notesApp, at: start)
         XCTAssertEqual(moved.map(\.action), [.openApp(name: "Safari")], "Once the speaker moves on the name is whole.")
+    }
+
+    func testALaterOpenWaitsForAsManySightingsAsTheLeadingLaunch() throws {
+        var detector = notesDetector(installed: ["Notes", "Safari"], stabilityThreshold: 2)
+        let opened = feed(&detector, ["Open Notes and open Safari", "Open Notes and open Safari"], launched: notesApp)
+        XCTAssertEqual(opened[0], [], "The launch needs two sightings, so a later open does too.")
+        XCTAssertEqual(opened[1].map(\.action), [.openApp(name: "Safari")])
+
+        var site = notesDetector(stabilityThreshold: 2)
+        let xcom = try XCTUnwrap(URL(string: "https://x.com"))
+        let page = feed(&site, ["Open Notes and go to x.com", "Open Notes and go to x.com"], launched: notesApp)
+        XCTAssertEqual(page[0], [])
+        XCTAssertEqual(page[1].map(\.action), [.openURL(url: xcom, browser: nil)])
     }
 
     func testALaterClauseWebsiteOpensOnFirstSightingButSearchesAndGrowingAddressesDoNot() throws {
@@ -550,7 +563,7 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         source: SpeculativeLaunchCoordinatorTests.FakeSource, launcher: SpeculativeLaunchCoordinatorTests.FakeLauncher,
         executor: FakeExecutor, audit: ActionAuditStore,
         runIsActive: @escaping @MainActor () -> Bool, carriedApp: @escaping @MainActor () -> String? = { nil },
-        ticks: AnyPublisher<EngineTick, Never> = Empty().eraseToAnyPublisher()
+        stabilityThreshold: Int = 1, ticks: AnyPublisher<EngineTick, Never> = Empty().eraseToAnyPublisher()
     ) async -> SpeculativeLaunchCoordinator {
         let directory = URL(fileURLWithPath: "/fixture/Applications")
         let apps = ["Notes", "Safari"].map { directory.appendingPathComponent("\($0).app") }
@@ -561,13 +574,36 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         _ = await inventory.waitUntilReady(timeout: .seconds(5))
         return SpeculativeLaunchCoordinator(
             settings: .shared, source: source, inventory: inventory, launcher: launcher, executor: executor,
-            awaitWindow: { _ in true }, carriedApp: carriedApp, runIsActive: runIsActive, audit: audit, ticks: ticks
+            awaitWindow: { _ in true }, carriedApp: carriedApp, runIsActive: runIsActive, audit: audit,
+            stabilityThreshold: stabilityThreshold, ticks: ticks
         )
     }
 
     private func settle(_ coordinator: SpeculativeLaunchCoordinator, heard text: String) async {
         await waitUntil { coordinator.listening?.transcript == text }
         try? await Task.sleep(for: .milliseconds(100))
+    }
+
+    func testAnAppTheStepDetectorOpenedIsNotLaunchedAgainByTheLaunchDetector() async throws {
+        let auditFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: auditFile) }
+        let source = SpeculativeLaunchCoordinatorTests.FakeSource()
+        let launcher = SpeculativeLaunchCoordinatorTests.FakeLauncher()
+        let executor = FakeExecutor()
+        let coordinator = await notesCoordinator(source: source, launcher: launcher, executor: executor,
+                                                 audit: ActionAuditStore(fileURL: auditFile),
+                                                 runIsActive: { false }, stabilityThreshold: 2)
+        defer { coordinator.end(sessionID: "s1") }
+
+        coordinator.begin(sessionID: "s1")
+        await waitUntil { source.isListening }
+        source.emit("Open Notes", sequence: 1)
+        await waitUntil { executor.executed.count == 1 }
+        source.emit("Open Notes please", sequence: 2)
+        await settle(coordinator, heard: "Open Notes please")
+
+        XCTAssertEqual(executor.executed, [.openApp(name: "Notes")])
+        XCTAssertEqual(launcher.launched, [], "The step detector already opened Notes; the launch detector's second sighting must not open it again.")
     }
 
     func testEarlyStepsWaitForTheActiveRunThenStartFromTheAppItLeft() async throws {

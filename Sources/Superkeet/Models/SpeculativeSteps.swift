@@ -83,17 +83,20 @@ enum TrailingPolicy: Equatable, Sendable {
     /// Silence, measured by the engine, that must follow a punctuated sentence end.
     static let minimumSilence: Duration = .milliseconds(300)
 
-    static func of(_ action: NativeOpenAction, appNameIsAmbiguous: Bool) -> TrailingPolicy {
+    /// `opensOnSight` is false when the leading launch asks for more than one sighting, so a later
+    /// open is held to the same bar.
+    static func of(_ action: NativeOpenAction, appNameIsAmbiguous: Bool, opensOnSight: Bool = true) -> TrailingPolicy {
+        let onSight: TrailingPolicy = opensOnSight ? .firstSighting : .confirmed
         switch action {
         case .typeText:
             return .silentSentenceEnd
         case .pressShortcut:
             return .confirmed
         case .openApp:
-            return appNameIsAmbiguous ? .afterTheSpeakerMoves : .firstSighting
+            return appNameIsAmbiguous ? .afterTheSpeakerMoves : onSight
         case .openURL(let url, _):
             if SpeculativeStepDetector.isOpenEndedSearch(url) { return .confirmedAtSentenceEnd }
-            return SpokenURL.topLevelDomainMayGrow(in: url) ? .confirmed : .firstSighting
+            return SpokenURL.topLevelDomainMayGrow(in: url) ? .confirmed : onSight
         }
     }
 
@@ -198,6 +201,7 @@ struct SpeculativeStepDetector {
 
     private let environment: Environment
     private let carriedApp: String?
+    private let opensOnSight: Bool
     private(set) var steps: [SpeculativeStep] = []
     private var accounted: [Handled] = []
     var handled: Int { accounted.count }
@@ -209,9 +213,12 @@ struct SpeculativeStepDetector {
     private var silence: Duration?
     private var cachedNames: [String]?
 
-    init(environment: Environment, currentApp: String? = nil) {
+    /// `stabilityThreshold` is the leading launch's: a later open runs on its first sighting only
+    /// when the launch does too.
+    init(environment: Environment, currentApp: String? = nil, stabilityThreshold: Int = 1) {
         self.environment = environment
         self.carriedApp = currentApp
+        self.opensOnSight = stabilityThreshold <= 1
     }
 
     var trailingDeadline: Date? {
@@ -335,7 +342,7 @@ struct SpeculativeStepDetector {
     private mutating func trailingPolicy(for action: NativeOpenAction) -> TrailingPolicy {
         var ambiguous = false
         if case .openApp(let name) = action { ambiguous = isAmbiguousAppName(name) }
-        return TrailingPolicy.of(action, appNameIsAmbiguous: ambiguous)
+        return TrailingPolicy.of(action, appNameIsAmbiguous: ambiguous, opensOnSight: opensOnSight)
     }
 
     static func isOpenEndedSearch(_ url: URL) -> Bool {
