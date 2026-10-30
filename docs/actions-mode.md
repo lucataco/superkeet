@@ -151,6 +151,12 @@ approval under the default policy, with an intent such as `Press ⌘S in Notes`.
 “Just Do It (YOLO)” runs all of them automatically because they are classified
 as mutating, not destructive.
 
+⌘N then waits until the app shows a window it did not have before the key, up to
+one second, because the next step (typing the title, say) would otherwise land
+before the document exists. A window that never appears does not fail the step.
+Some apps make the new item inside the window they already have, so the press
+still succeeds and the wait is logged.
+
 Common verbs never reach the model. `NativeAppRecipe` maps them straight to
 the standard shortcut for the app the step refers to:
 
