@@ -17,8 +17,6 @@ enum SpokenURL {
         pattern: #"\b([a-z0-9-]+\.[a-z]{2,6}(?:/[a-z0-9._~-]*)?)\s+slash\s+([a-z0-9._~-]+)"#, options: .caseInsensitive
     )
 
-    /// Whether the address ends in something a longer ending could still extend, as a partial
-    /// transcript does for `x.co` while the speaker is saying `x.com`.
     static func topLevelDomainMayGrow(in url: URL) -> Bool {
         guard let ending = url.host?.split(separator: ".").last.map({ String($0).lowercased() }) else { return false }
         return topLevelDomains.contains { $0 != ending && $0.hasPrefix(ending) }

@@ -40,8 +40,6 @@ DEFAULT_MODEL = os.path.expanduser("~/Library/Application Support/parakeet/model
 
 
 def parse_events(output):
-    """Splits the engine's JSON lines into its partials, its ticks (both in engine order) and the
-    final text."""
     partials, ticks, final = [], [], ""
     for line in output.splitlines():
         line = line.strip()
@@ -68,8 +66,6 @@ def replay(engine, model_dir, wav):
 
 
 def timeline(start_ms, partials, ticks):
-    """Fixture lines for one take in the order the engine sent them: a tick, then the partial
-    decoded from the same audio."""
     events = [(tick["audio_ms"], 0, {"type": "tick", "at_ms": start_ms + tick["audio_ms"],
                                      "trailing_silence_ms": tick["trailing_silence_ms"]}) for tick in ticks]
     events += [(partial["audio_ms"], 1, {"type": "partial", "at_ms": start_ms + partial["audio_ms"],

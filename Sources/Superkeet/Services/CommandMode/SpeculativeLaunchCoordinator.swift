@@ -282,8 +282,6 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         return Session(id: id, detector: detector, stepDetector: stepDetector, policy: policy)
     }
 
-    /// Ticks of another take, such as the one the engine is finishing while the next begins,
-    /// say nothing about this one.
     private func hear(_ tick: EngineTick) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let session, session.id == tick.sessionID, isEnabled, mayRunEarly(session) else { return }

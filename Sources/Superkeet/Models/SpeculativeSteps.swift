@@ -62,32 +62,16 @@ struct SpeculativeHandoff: Sendable {
     }
 }
 
-/// When the last clause of a take, still being spoken, may run before the speaker stops.
-///
-/// The commit decision lives here, as one function of the clause's policy and the evidence the
-/// engine has given so far, so the detector holds no per-kind flags.
 enum TrailingPolicy: Equatable, Sendable {
-    /// An app that resolves exactly or by a unique near match, with no longer installed name it
-    /// could still become. The first partial that says so is enough, the rule
-    /// `SpeculativeIntentDetector` applies to the leading clause.
     case firstSighting
-    /// A site that is not a search. Once its sentence ends it opens on sight. Before that, “in Safari”
-    /// could still follow and open the page a second time, so it waits for the speaker to hold still.
     case sentenceEndOrHeldStill
-    /// A shortcut, or a site whose ending could still grow (`x.co` on its way to `x.com`).
     case confirmed
-    /// A web search, which is open-ended until the sentence is punctuated.
     case confirmedAtSentenceEnd
-    /// Typing. Half-heard words are never typed, so it waits for the sentence to end in measured silence.
     case silentSentenceEnd
-    /// An app name a longer installed name could still complete. Waits for the speaker to move on.
     case afterTheSpeakerMoves
 
-    /// Silence, measured by the engine, that must follow a punctuated sentence end.
     static let minimumSilence: Duration = .milliseconds(300)
 
-    /// `opensOnSight` is false when the leading launch asks for more than one sighting, so a later
-    /// open is held to the same bar.
     static func of(_ action: NativeOpenAction, appNameIsAmbiguous: Bool, opensOnSight: Bool = true) -> TrailingPolicy {
         switch action {
         case .typeText:
@@ -131,13 +115,9 @@ enum TrailingPolicy: Equatable, Sendable {
 }
 
 struct TrailingEvidence: Equatable, Sendable {
-    /// The latest partial's text ends in `.`, `?` or `!`.
     var endsSentence: Bool
-    /// Trailing silence of the engine's latest tick for this take. Nil for an engine that sends none.
     var silence: Duration?
-    /// The same action was already read from an earlier partial.
     var confirmed = false
-    /// The same action has stood for `trailingHold` with no newer partial.
     var heldStill = false
 
     var endedInSilence: Bool {
@@ -154,32 +134,10 @@ enum TrailingTrigger: Equatable, Sendable {
 
 enum TrailingDecision: Equatable, Sendable {
     case commit(TrailingTrigger)
-    /// Not yet. A newer partial, a tick or the hold timer may still commit it.
     case watch
-    /// Not before the speaker moves on.
     case drop
 }
 
-/// Reads the running interim text and decides which clauses can already run.
-///
-/// - A clause is **complete** once the next clause has begun (a separator and a new instruction
-///   follow it), so its words are no longer being spoken. Complete native clauses run in order.
-/// - The **last** clause is still being spoken, so `TrailingPolicy` decides when it may commit
-///   before the speaker stops. An app open commits on its first unambiguous sighting, and a page
-///   once its sentence ends or it holds still, so “in Safari” can't open it twice. A
-///   shortcut (⌘N, ⌘T, Photo Booth's shutter), a web search once the recogniser has punctuated
-///   the end of the sentence, typing, and a URL whose ending could still grow commit when the
-///   latest partial ends the sentence and the engine's latest tick reports 300 ms of silence.
-///   Shortcuts and searches also commit when *stable*, with the same action on two partials in
-///   a row or unchanged for `trailingHold` with no newer partial (the engine only emits a partial
-///   when the text changes), which is how an engine without ticks is served. Typing needs the
-///   silence, so half-heard words are never typed.
-/// - A clause only the planner can do stops early execution at that point: every later step would
-///   change the frontmost app or its contents under it. The stop is re-evaluated on every partial,
-///   so a recogniser correction ("umce" becoming a real request) lets execution continue.
-/// - Handled clauses are re-checked against each new partial. If an earlier clause now means
-///   something else, the positions can no longer be trusted and early execution stops for the
-///   rest of the utterance; the final command sorts out what still needs doing.
 struct SpeculativeStepDetector {
     struct Environment {
         var resolveApp: (String) -> URL?
@@ -221,8 +179,6 @@ struct SpeculativeStepDetector {
     private var silence: Duration?
     private var cachedNames: [String]?
 
-    /// `stabilityThreshold` is the leading launch's: a later open runs on its first sighting only
-    /// when the launch does too.
     init(environment: Environment, currentApp: String? = nil, stabilityThreshold: Int = 1) {
         self.environment = environment
         self.carriedApp = currentApp

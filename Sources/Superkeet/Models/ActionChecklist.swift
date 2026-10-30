@@ -24,7 +24,6 @@ struct ActionChecklist: Equatable, Sendable {
         case cancelled
     }
 
-    /// Returns the new line's position, for `retitle(line:to:)`.
     @discardableResult
     mutating func addDone(_ title: String) -> Int {
         lines.append(ActionLine(status: .done, title: title))

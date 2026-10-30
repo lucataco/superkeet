@@ -389,8 +389,6 @@ final class AgentSessionController: ObservableObject {
         return .planned
     }
 
-    /// An early step that carried out this clause. Typing may have run before the speaker finished
-    /// the sentence, so the final words can say more, or something else.
     private func earlyRoute(for clause: CommandClause, context: ActionPlanContext, run: RunContext) -> StepRoute? {
         guard let done = earlyStep(matching: clause, context: context, run: run) else { return nil }
         guard case .typeText(let app, let typed) = done.step.action,

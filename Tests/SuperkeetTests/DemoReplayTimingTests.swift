@@ -1,14 +1,6 @@
 import XCTest
 @testable import Superkeet
 
-/// Replays the demo video's audio, as the engine heard it take by take, through the same live
-/// detectors the app runs, on a simulated clock, and checks every action is dispatched no later
-/// than the video shows it happening.
-///
-/// The partials and ticks come from `Tests/Fixtures/demo-actions/replay-partials.ndjson`,
-/// produced by `scripts/demo_replay_partials.py` from `demo-audio.wav` with the pinned engine.
-/// The video's visible onsets are in `video-clock.tsv`. No microphone, speakers, model or
-/// engine is needed here, so it runs in CI.
 final class DemoReplayTimingTests: XCTestCase {
     private static let partialLatencyMs = 150
     /// The engine sends a tick as the audio it covers arrives, before the decode that makes the
