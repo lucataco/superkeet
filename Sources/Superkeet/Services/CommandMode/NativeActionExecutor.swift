@@ -226,12 +226,17 @@ struct SystemNativeWorkspace: NativeWorkspaceOpening {
     }
 
     static func hasOrdinaryWindow(processIdentifier pid: Int32) -> Bool {
+        !ordinaryWindowIdentifiers(processIdentifier: pid).isEmpty
+    }
+
+    nonisolated static func ordinaryWindowIdentifiers(processIdentifier pid: Int32) -> Set<CGWindowID> {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return false }
-        return windows.contains { info in
-            (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid
-                && (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0
-        }
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return Set(windows.compactMap { info -> CGWindowID? in
+            guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                  (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { return nil }
+            return (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+        })
     }
 
     func openURL(_ url: URL, in application: URL?) async throws {
@@ -261,7 +266,10 @@ final class SystemShortcutPresser: NativeShortcutPressing {
         var runningApplication: (URL) -> NSRunningApplication? = { SystemNativeWorkspace.runningApplication(at: $0) }
         var frontmostProcessIdentifier: () -> pid_t? = { NSWorkspace.shared.frontmostApplication?.processIdentifier }
         var post: (KeyboardShortcut) -> Bool = { SystemShortcutPresser.post($0) }
+        var windowIdentifiers: (pid_t) -> Set<CGWindowID> = { SystemNativeWorkspace.ordinaryWindowIdentifiers(processIdentifier: $0) }
         var activationTimeout: Duration = .milliseconds(1_500)
+        var windowTimeout: Duration = .seconds(1)
+        var windowPollInterval: Duration = .milliseconds(20)
     }
 
     private let environment: Environment
