@@ -259,6 +259,18 @@ class FixtureRunTests(unittest.TestCase):
         verdict = report.summarize([clean, clean], scenario())
         self.assertTrue(verdict["pass"], verdict["reasons"])
 
+    def test_an_icloud_autosave_is_a_warning_not_a_failure(self):
+        clean = {"name": "run-01", "expect": {e["id"]: {"latency_ms": 100} for e in scenario()["expect"]},
+                 "errors": [], "icloud_files": ["Untitled.txt"],
+                 "forbidden": {k: 0 for k in common.FORBIDDEN_EVENTS}}
+        verdict = report.summarize([clean], scenario())
+        self.assertTrue(verdict["pass"], verdict["reasons"])
+        self.assertEqual(len(verdict["warnings"]), 1)
+        self.assertIn("Untitled.txt", verdict["warnings"][0])
+        self.assertIn("WARNING", report.render([{**clean, "jitter_ms": 0, "details": [], "settled": True, "documents": 1,
+                                                  "loadavg": 1, "max_poll_ms": {}, "hud": {"first_words_ms": None},
+                                                  "forbidden": clean["forbidden"]}], verdict, scenario(), 0))
+
     def test_write_produces_a_report_and_a_verdict(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

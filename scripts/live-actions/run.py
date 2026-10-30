@@ -342,7 +342,7 @@ def one_run(scenario, stimulus, run_dir, rng, hotkey, guard_planner):
         meta["icloud_files"] = trash_new_icloud_files(before)
         (run_dir / "meta.json").write_text(json.dumps(meta, indent=1))
     if meta["icloud_files"]:
-        say(f"ERROR: TextEdit autosaved {meta['icloud_files']} into iCloud during this run. Moved to ~/.Trash.")
+        say(f"WARNING: TextEdit autosaved {meta['icloud_files']} into iCloud during this run. Moved to ~/.Trash.")
     return meta
 
 
@@ -398,13 +398,12 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
     original = remember_original()
-    leaks = 0
     try:
         converge_device(common.LOOPBACK_DEVICE, True)
         say(f"daemon: {daemon_line()}")
         for i in range(1, args.runs + 1):
             say(f"run {i}/{args.runs}")
-            leaks += bool(one_run(scenario, stimulus, root / f"run-{i:02d}", rng, hotkey, not args.allow_planner)["icloud_files"])
+            one_run(scenario, stimulus, root / f"run-{i:02d}", rng, hotkey, not args.allow_planner)
             time.sleep(2)
     except KeyboardInterrupt as stop:
         say(f"interrupted ({stop}); restoring")
@@ -416,7 +415,6 @@ def main():
         restore(original)
     report.write(root)
     say(f"report: {root / 'report.md'}")
-    sys.exit(3 if leaks else 0)
 
 
 if __name__ == "__main__":

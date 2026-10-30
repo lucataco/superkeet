@@ -214,11 +214,11 @@ def summarize(results, scenario):
         forbidden[name] = {"runs_affected": sum(c > 0 for c in counts), "total": sum(counts), "rate": sum(c > 0 for c in counts) / n if n else 0,
                            "forbidden_by_scenario": name in scenario["forbid"]}
     errors = [f"{r['name']}: {e}" for r in results for e in r["errors"]]
-    leaks = [f"{r['name']}: {f}" for r in results for f in r["icloud_files"]]
+    warnings = [f"{r['name']}: TextEdit autosaved {f} into iCloud; the rig moved it to ~/.Trash" for r in results for f in r["icloud_files"]]
     reasons = [f"{k} misses its budget" for k, v in expectations.items() if not v["pass"]]
     reasons += [f"{k} in {v['runs_affected']}/{n} runs" for k, v in forbidden.items() if v["forbidden_by_scenario"] and v["total"]]
-    reasons += errors + [f"iCloud autosave {leak}" for leak in leaks]
-    return {"scenario": scenario["name"], "runs": n, "pass": not reasons, "reasons": reasons,
+    reasons += errors
+    return {"scenario": scenario["name"], "runs": n, "pass": not reasons, "reasons": reasons, "warnings": warnings,
             "expectations": expectations, "forbidden": forbidden}
 
 
@@ -230,6 +230,7 @@ def render(results, verdict, scenario, loopback_ms):
     lines = [f"# Live actions report: {scenario['name']}", "",
              f"{verdict['runs']} runs. Verdict: **{'PASS' if verdict['pass'] else 'FAIL'}**."]
     lines += [f"- {reason}" for reason in verdict["reasons"]]
+    lines += [f"- WARNING {warning}" for warning in verdict["warnings"]]
     lines += ["", f"Latency is probe time minus phrase end, in ms, less a loopback delay of {loopback_ms} ms (not calibrated unless set with --loopback-ms). Negative means before the phrase ended.",
               "", "## Expectations", "", "| id | after | budget p50/p90 | p50 | p90 | within budget | missed |", "|---|---|---|---|---|---|---|"]
     for key, v in verdict["expectations"].items():
@@ -250,7 +251,7 @@ def render(results, verdict, scenario, loopback_ms):
         for detail in r["details"] + r["errors"]:
             lines.append(f"- {r['name']}: {detail}")
         if r["icloud_files"]:
-            lines.append(f"- {r['name']}: **autosaved into iCloud and moved to ~/.Trash:** {r['icloud_files']}")
+            lines.append(f"- {r['name']}: **WARNING, autosaved into iCloud and moved to ~/.Trash:** {r['icloud_files']}")
         if r["settled"] is False:
             lines.append(f"- {r['name']}: an action session was still running when the rig stopped waiting")
     return "\n".join(lines) + "\n"

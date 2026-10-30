@@ -59,7 +59,7 @@ Only `com.apple.TextEdit` may be a target. TextEdit documents are never saved by
 - It writes `audioInputDevice` in the `com.superkeet.app` defaults and relaunches Superkeet so the engine reads BlackHole. The original value is saved in `.build/live-actions/restore.json` first.
 - It quits and reopens Superkeet, and it quits TextEdit before and after every run. It closes TextEdit documents with "saving no" and refuses to start if TextEdit holds a document with text.
 - It presses the command hotkey and, when the planner starts, Escape. The hotkey comes from the `commandHotkeyKeyCode` and `commandHotkeyModifierFlags` defaults. When they are absent, which is true until the shortcut is changed, the rig uses the app's built-in Option+Shift+Space (key code 49, flags 655360).
-- It moves any new file that TextEdit autosaves into `~/Library/Mobile Documents/com~apple~TextEdit/Documents/` to `~/.Trash`, and prints an error. The run then exits with status 3. Nothing is deleted outright.
+- It moves any new file that TextEdit autosaves into `~/Library/Mobile Documents/com~apple~TextEdit/Documents/` to `~/.Trash`, prints a warning, and lists it in the report. The run still passes or fails on its measurements. Nothing is deleted outright.
 
 It restores `audioInputDevice` in a `finally` block and on SIGINT and SIGTERM. If the process is killed harder, `restore.json` stays behind and the next run restores from it. When no record exists and the key already says BlackHole 2ch, the rig assumes a crashed earlier run and treats the original as unset. To check by hand, run `defaults read com.superkeet.app audioInputDevice` and `pgrep -fl "parakeet serve"`. If the user never chose a device, the first reports the key as missing and the second shows no `--device`.
 
