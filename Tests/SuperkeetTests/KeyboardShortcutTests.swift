@@ -38,6 +38,14 @@ final class KeyboardShortcutTests: XCTestCase {
         XCTAssertNil(KeyboardShortcut(keys: ["hyper", "n"]))
     }
 
+    func testOnlyCommandNMakesAWindow() throws {
+        XCTAssertEqual(KeyboardShortcut(keys: ["cmd", "n"])?.createsWindow, true)
+        XCTAssertEqual(KeyboardShortcut(keys: ["command", "N"])?.createsWindow, true)
+        for keys in [["cmd", "t"], ["cmd", "s"], ["shift", "cmd", "n"], ["option", "cmd", "n"], ["ctrl", "n"], ["return"]] {
+            XCTAssertEqual(KeyboardShortcut(keys: keys)?.createsWindow, false, keys.joined(separator: "+"))
+        }
+    }
+
     func testRoundTripsThroughWireForm() throws {
         for keys in [["cmd", "n"], ["shift", "cmd", "z"], ["ctrl", "option", "shift", "cmd", "space"], ["return"], ["cmd", "t"]] {
             let chord = try XCTUnwrap(KeyboardShortcut(keys: keys), keys.joined())

@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import os.log
+
+private let nativeActionLog = Logger(subsystem: "com.superkeet.app", category: "NativeActions")
 
 @MainActor
 protocol NativeActionExecuting: AnyObject, Sendable {
@@ -226,12 +229,17 @@ struct SystemNativeWorkspace: NativeWorkspaceOpening {
     }
 
     static func hasOrdinaryWindow(processIdentifier pid: Int32) -> Bool {
+        !ordinaryWindowIdentifiers(processIdentifier: pid).isEmpty
+    }
+
+    nonisolated static func ordinaryWindowIdentifiers(processIdentifier pid: Int32) -> Set<CGWindowID> {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return false }
-        return windows.contains { info in
-            (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid
-                && (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0
-        }
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return Set(windows.compactMap { info -> CGWindowID? in
+            guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                  (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { return nil }
+            return (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+        })
     }
 
     func openURL(_ url: URL, in application: URL?) async throws {
@@ -261,7 +269,10 @@ final class SystemShortcutPresser: NativeShortcutPressing {
         var runningApplication: (URL) -> NSRunningApplication? = { SystemNativeWorkspace.runningApplication(at: $0) }
         var frontmostProcessIdentifier: () -> pid_t? = { NSWorkspace.shared.frontmostApplication?.processIdentifier }
         var post: (KeyboardShortcut) -> Bool = { SystemShortcutPresser.post($0) }
+        var windowIdentifiers: (pid_t) -> Set<CGWindowID> = { SystemNativeWorkspace.ordinaryWindowIdentifiers(processIdentifier: $0) }
         var activationTimeout: Duration = .milliseconds(1_500)
+        var windowTimeout: Duration = .seconds(1)
+        var windowPollInterval: Duration = .milliseconds(20)
     }
 
     private let environment: Environment
@@ -285,10 +296,28 @@ final class SystemShortcutPresser: NativeShortcutPressing {
             }
         }
         try Task.checkCancellation()
+        let makesWindow = shortcut.createsWindow
+        let windowsBefore = makesWindow ? environment.windowIdentifiers(pid) : []
         guard environment.post(shortcut) else {
             throw NativeOpenActionError.openFailed("The keyboard event for \(shortcut.displayName) could not be created.")
         }
+        if makesWindow {
+            try await waitForNewWindow(in: name, pid: pid, shortcut: shortcut, excluding: windowsBefore)
+        }
         return pid
+    }
+
+    /// The app draws the window some time after it receives the key, so the next step would act
+    /// before it exists. A window that never appears is not an error, since some apps make the new
+    /// document inside the window they already have, so the wait ends and the steps carry on.
+    private func waitForNewWindow(in name: String, pid: pid_t, shortcut: KeyboardShortcut, excluding known: Set<CGWindowID>) async throws {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let waiter = NativeLaunchWaiter(timeout: environment.windowTimeout, pollInterval: environment.windowPollInterval)
+        let appeared = try await waiter.wait { !environment.windowIdentifiers(pid).subtracting(known).isEmpty }
+        let milliseconds = Int(started.duration(to: clock.now) / .milliseconds(1))
+        let outcome = appeared ? "showed a new window" : "showed no new window, continuing"
+        nativeActionLog.info("\(shortcut.displayName, privacy: .public) in \(name, privacy: .public) \(outcome, privacy: .public) after \(milliseconds, privacy: .public) ms")
     }
 
     nonisolated static func post(_ shortcut: KeyboardShortcut) -> Bool {
