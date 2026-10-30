@@ -1,15 +1,11 @@
 import XCTest
 @testable import Superkeet
 
-/// Replays the demo video's audio, as the engine heard it take by take, through the same live
-/// detectors the app runs, on a simulated clock, and checks every action is dispatched no later
-/// than the video shows it happening.
-///
-/// The partials come from `Tests/Fixtures/demo-actions/replay-partials.ndjson`, produced by
-/// `scripts/demo_replay_partials.py` from `demo-audio.wav` with the pinned engine. No
-/// microphone, speakers, model or engine is needed here, so it runs in CI.
 final class DemoReplayTimingTests: XCTestCase {
     private static let partialLatencyMs = 150
+    /// The engine sends a tick as the audio it covers arrives, before the decode that makes the
+    /// partial, so it lags the audio only by capture buffering, about one 32 ms VAD chunk.
+    private static let tickLatencyMs = 30
     private static let finalLatencyMs = 450
 
     private let directory = URL(fileURLWithPath: "/fixture/Applications")
@@ -27,7 +23,13 @@ final class DemoReplayTimingTests: XCTestCase {
         var startMs = 0
         var endMs = 0
         var partials: [(atMs: Int, sequence: Int, text: String)] = []
+        var ticks: [(atMs: Int, silenceMs: Int)] = []
         var final = ""
+    }
+
+    private enum Heard {
+        case partial(PartialTranscript)
+        case tick(EngineTick)
     }
 
     private struct Dispatch {
@@ -55,6 +57,8 @@ final class DemoReplayTimingTests: XCTestCase {
                 take.endMs = try XCTUnwrap(object["end_ms"] as? Int)
             case "partial":
                 take.partials.append((try XCTUnwrap(object["at_ms"] as? Int), try XCTUnwrap(object["sequence"] as? Int), try XCTUnwrap(object["text"] as? String)))
+            case "tick":
+                take.ticks.append((try XCTUnwrap(object["at_ms"] as? Int), try XCTUnwrap(object["trailing_silence_ms"] as? Int)))
             case "final":
                 take.final = try XCTUnwrap(object["text"] as? String)
             default:
@@ -63,6 +67,17 @@ final class DemoReplayTimingTests: XCTestCase {
             takes[index] = take
         }
         return takes.keys.sorted().compactMap { takes[$0] }
+    }
+
+    private func loadVideoClock() throws -> [String: Int] {
+        let raw = try String(contentsOf: fixtures.appendingPathComponent("video-clock.tsv"), encoding: .utf8)
+        var clock: [String: Int] = [:]
+        for line in raw.split(separator: "\n").dropFirst() {
+            let columns = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard columns.count >= 2, let ms = Int(columns[0]) else { continue }
+            clock[String(columns[1])] = ms
+        }
+        return clock
     }
 
     private func date(_ ms: Int) -> Date { Date(timeIntervalSince1970: Double(ms) / 1_000) }
@@ -98,16 +113,27 @@ final class DemoReplayTimingTests: XCTestCase {
                 }
             }
 
-            for partial in take.partials {
-                let arrival = partial.atMs + Self.partialLatencyMs
+            let heard: [(arrival: Int, order: Int, event: Heard)] =
+                take.ticks.map { tick in
+                    (tick.atMs + Self.tickLatencyMs, 0, .tick(EngineTick(
+                        sessionID: "take", audio: .milliseconds(tick.atMs - take.startMs), trailingSilence: .milliseconds(tick.silenceMs)
+                    )))
+                } + take.partials.map { partial in
+                    (partial.atMs + Self.partialLatencyMs, 1, .partial(PartialTranscript(text: partial.text, isFinal: false, sequence: partial.sequence)))
+                }
+            for (arrival, _, event) in heard.sorted(by: { ($0.arrival, $0.order) < ($1.arrival, $1.order) }) {
                 guard arrival < take.endMs else { break }
                 fireTrailing(before: arrival)
-                let transcript = PartialTranscript(text: partial.text, isFinal: false, sequence: partial.sequence)
-                if let commit = launch.observe(transcript) {
-                    dispatches.append(Dispatch(atMs: arrival, action: .openApp(name: commit.action.app.name), how: "instant launch"))
-                    ran.append(.openApp(name: commit.action.app.name))
+                switch event {
+                case .tick(let tick):
+                    record(steps.observe(tick), at: arrival, how: "sentence ended in silence")
+                case .partial(let transcript):
+                    if let commit = launch.observe(transcript) {
+                        dispatches.append(Dispatch(atMs: arrival, action: .openApp(name: commit.action.app.name), how: "instant launch"))
+                        ran.append(.openApp(name: commit.action.app.name))
+                    }
+                    record(steps.observe(transcript, launchedApp: launch.commit?.action.app, at: date(arrival)), at: arrival, how: "while speaking")
                 }
-                record(steps.observe(transcript, launchedApp: launch.commit?.action.app, at: date(arrival)), at: arrival, how: "while speaking")
             }
             fireTrailing(before: take.endMs)
 
@@ -148,25 +174,30 @@ final class DemoReplayTimingTests: XCTestCase {
             if case .openApp(let name) = action { return resolve(name)?.deletingPathExtension().lastPathComponent }
             return nil
         }
-        let expectations: [(event: String, videoMs: Int, matches: (NativeOpenAction) -> Bool)] = [
-            ("notes_open", 4_500, { appName($0) == "Notes" }),
-            ("new_note", 8_500, { if case .pressShortcut("Notes", let key) = $0 { return key.displayName == "⌘N" }; return false }),
-            ("title_hello", 11_500, { if case .typeText("Notes", let text) = $0 { return text.lowercased().contains("hello") }; return false }),
-            ("arc", 17_500, { appName($0) == "Arc" }),
-            ("search", 21_000, { if case .openURL(let url, _) = $0 { return url.absoluteString.contains("Norbert") }; return false }),
-            ("xcom", 25_500, { if case .openURL(let url, _) = $0 { return url.host == "x.com" }; return false }),
-            ("photobooth", 31_500, { appName($0) == "Photo Booth" }),
-            ("countdown", 37_000, { if case .pressShortcut(_, let key) = $0 { return key.displayName == "↩" || key.keyCode == 36 }; return false })
+        let videoClock = try loadVideoClock()
+        let expectations: [(event: String, matches: (NativeOpenAction) -> Bool)] = [
+            ("notes_open", { appName($0) == "Notes" }),
+            ("new_note", { if case .pressShortcut("Notes", let key) = $0 { return key.displayName == "⌘N" }; return false }),
+            ("title_hello", { if case .typeText("Notes", let text) = $0 { return text.lowercased().contains("hello") }; return false }),
+            ("arc", { appName($0) == "Arc" }),
+            ("search", { if case .openURL(let url, _) = $0 { return url.absoluteString.contains("Norbert") }; return false }),
+            ("xcom", { if case .openURL(let url, _) = $0 { return url.host == "x.com" }; return false }),
+            ("photobooth", { appName($0) == "Photo Booth" }),
+            ("countdown", { if case .pressShortcut(_, let key) = $0 { return key.displayName == "↩" || key.keyCode == 36 }; return false })
         ]
         var summary: [String] = []
         for expectation in expectations {
+            guard let videoMs = videoClock[expectation.event] else {
+                XCTFail("video-clock.tsv has no \(expectation.event) row.")
+                continue
+            }
             guard let dispatch = first(dispatches, expectation.matches) else {
                 XCTFail("\(expectation.event) was never dispatched.\n\(report)")
                 continue
             }
-            let margin = expectation.videoMs - dispatch.atMs
-            summary.append("\(expectation.event): \(dispatch.atMs) ms (\(dispatch.how)), video \(expectation.videoMs) ms, \(margin) ms early")
-            XCTAssertLessThanOrEqual(dispatch.atMs, expectation.videoMs, "\(expectation.event) is later than the video.\n\(report)")
+            let margin = videoMs - dispatch.atMs
+            summary.append("\(expectation.event): \(dispatch.atMs) ms (\(dispatch.how)), video \(videoMs) ms, \(margin) ms early")
+            XCTAssertLessThanOrEqual(dispatch.atMs, videoMs, "\(expectation.event) is later than the video.\n\(report)")
         }
         print("Demo replay timing:\n" + summary.joined(separator: "\n"))
     }

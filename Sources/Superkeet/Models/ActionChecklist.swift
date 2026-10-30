@@ -24,8 +24,15 @@ struct ActionChecklist: Equatable, Sendable {
         case cancelled
     }
 
-    mutating func addDone(_ title: String) {
+    @discardableResult
+    mutating func addDone(_ title: String) -> Int {
         lines.append(ActionLine(status: .done, title: title))
+        return lines.count - 1
+    }
+
+    mutating func retitle(line index: Int, to title: String) {
+        guard lines.indices.contains(index) else { return }
+        lines[index].title = title
     }
 
     mutating func setOpenLine(_ title: String) {

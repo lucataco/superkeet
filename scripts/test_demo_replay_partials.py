@@ -39,5 +39,36 @@ class FirstEndpointTests(unittest.TestCase):
         self.assertEqual(replay.first_endpoint(partials, 1000, 4000), 3500)
 
 
+class ParseEventsTests(unittest.TestCase):
+    OUTPUT = "\n".join([
+        "Model loaded in 0.4s",
+        '{"audio_ms":510,"session_id":"replay","trailing_silence_ms":0,"type":"tick"}',
+        '{"audio_ms":510,"sequence":1,"session_id":"replay","text":"Hello.","type":"partial"}',
+        '{"audio_ms":1020,"session_id":"replay","trailing_silence_ms":352,"type":"tick"}',
+        '{"session_id":"replay","status":"ok","text":"Hello.","type":"complete"}',
+    ])
+
+    def test_splits_partials_ticks_and_final(self):
+        partials, ticks, final = replay.parse_events(self.OUTPUT)
+        self.assertEqual([p["text"] for p in partials], ["Hello."])
+        self.assertEqual([t["trailing_silence_ms"] for t in ticks], [0, 352])
+        self.assertEqual(final, "Hello.")
+
+    def test_an_engine_without_ticks_yields_none(self):
+        _, ticks, _ = replay.parse_events('{"audio_ms":510,"sequence":1,"text":"Hi","type":"partial"}')
+        self.assertEqual(ticks, [])
+
+
+class TimelineTests(unittest.TestCase):
+    def test_a_tick_precedes_the_partial_of_the_same_audio_and_times_are_recording_time(self):
+        partials = [{"audio_ms": 510, "sequence": 1, "text": "Hello."}]
+        ticks = [{"audio_ms": 510, "trailing_silence_ms": 0}, {"audio_ms": 1020, "trailing_silence_ms": 352}]
+        self.assertEqual(replay.timeline(8_000, partials, ticks), [
+            {"type": "tick", "at_ms": 8_510, "trailing_silence_ms": 0},
+            {"type": "partial", "at_ms": 8_510, "sequence": 1, "text": "Hello."},
+            {"type": "tick", "at_ms": 9_020, "trailing_silence_ms": 352},
+        ])
+
+
 if __name__ == "__main__":
     unittest.main()

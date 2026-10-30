@@ -93,6 +93,16 @@ final class ActionChecklistTests: XCTestCase {
         XCTAssertEqual(Set(checklist.lines.map(\.status)), [.done])
     }
 
+    func testALineCanBeRetitledWhereItStands() {
+        var checklist = ActionChecklist()
+        let typed = checklist.addDone("Typed “hello”")
+        checklist.addDone("Opened Notes")
+        checklist.retitle(line: typed, to: "Typed “hello” early, not “help”")
+        XCTAssertEqual(checklist.lines.map(\.title), ["Typed “hello” early, not “help”", "Opened Notes"])
+        checklist.retitle(line: 9, to: "nowhere")
+        XCTAssertEqual(checklist.lines.count, 2)
+    }
+
     func testFinishSettlesWhatIsStillRunning() {
         var failed = ActionChecklist()
         failed.setOpenLine("Look around")

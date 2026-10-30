@@ -595,7 +595,9 @@ Command Mode recording starts:
 Measured with the recorded recogniser output for “open the notes app and create
 a new note” (2.23 s of speech), Notes launches about 1.14 s in with the default
 of trusting the first unambiguous partial, or about 2.07 s in when two
-consecutive partials are required (`SpeculativeLaunchCoordinator(stabilityThreshold:)`).
+consecutive partials are required (`SpeculativeLaunchCoordinator(stabilityThreshold:)`). A later
+clause's open is held to the same count, and once the step detector has run the leading clause
+the launch detector does not launch it again.
 The early launch does not wait for the app's window, so the command starts the
 moment the transcript lands.
 
@@ -613,16 +615,28 @@ separator and a new instruction follow it, or the text ends in “and” / “th
 Steps run strictly in order after the launch; a step inside a freshly launched
 app waits for its window first.
 
-**The last clause** is still being spoken, so it runs early only when that is
-safe and it has settled: an app open (unless a longer installed name could still
-be coming, as with “Safari” / “Safari Technology Preview”), a URL, a shortcut
-recipe (⌘N, ⌘T, Photo Booth's shutter), or a web search once the recogniser has
-punctuated the end of the sentence. It must map to the same action on two
-partials in a row, or stay unchanged for `SpeculativeStepDetector.trailingHold`
-(0.7 s, longer than the engine's 0.5 s partial cadence) with no newer partial.
-Typing never runs before the speaker moves on, so half-heard words are never
-typed. So “open the Notes app and create a new note” presses ⌘N while the
-speaker is still finishing the sentence, with no pause and no final transcript.
+**The last clause** is still being spoken. `TrailingPolicy` decides when it may
+run, as one function of the clause's kind and what the engine has reported so far:
+
+| Last clause | Runs early when |
+|---|---|
+| An app open | The first partial that names it. The app resolves exactly or by the unique near match, and no longer installed name could still be coming (“Safari” waits while “Safari Technology Preview” is installed) |
+| A URL that is not a search | The latest partial ends the sentence. Before that, “in Safari” could still follow and open the page a second time, so it waits for `SpeculativeStepDetector.trailingHold` with no newer partial. A growing ending (`x.co` may become `x.com`) settles like a shortcut |
+| A shortcut recipe (⌘N, ⌘T, Photo Booth's shutter), a growing URL | The latest partial ends the sentence (`.`, `?` or `!`) and the engine's latest tick for this take reports at least 300 ms of trailing silence. Failing that, the same action on two partials in a row, or unchanged for `SpeculativeStepDetector.trailingHold` (0.7 s) with no newer partial |
+| A web search | The same, once the recogniser has punctuated the end of the sentence |
+| Typing | The latest partial ends the sentence and the latest tick reports at least 300 ms of silence. Nothing else releases it, so half-heard words are never typed |
+
+The engine sends a partial only when the text changes, so after a sentence ends
+no partial may arrive for a while. The tick (about every 0.5 s, with
+`trailing_silence_ms` from the engine's voice-activity detector) is what says the
+speaker has stopped. `SpeculativeLaunchCoordinator` hears ticks for the active
+session only, and the detector checks the waiting clause on every tick. An
+engine that sends no ticks gets the confirmation and hold rules for shortcuts
+and searches and never types early. So “open the Notes app and create a new
+note?” presses ⌘N the moment the punctuated partial arrives after a tick with
+300 ms of silence, and “let's make the title say hello.” types “hello” on the
+first tick with 300 ms of silence, with no final transcript. In the recorded demo
+that tick lands 0.5 s after “hello.” ends, where the old rule waited for the end of the take.
 
 A clause that needs the planner stops early execution at that point, since every
 later step would change the frontmost app or its contents under it. The stop is
@@ -647,14 +661,25 @@ clause number.
 
 For “open the Notes app and create a new note and make the title say hello and
 open Safari”, Notes launches at “and”, ⌘N is pressed when “and make” arrives,
-“hello” is typed when “and open” arrives, and only “open Safari” waits for the
-pause, or, being an open, until it has held still. When the final transcript lands, `SpeculativeHandoff` carries the launch
+“hello” is typed when “and open” arrives, and Safari opens as soon as the partial
+names it. When the final transcript lands, `SpeculativeHandoff` carries the launch
 and the steps to `AgentSessionController`, which waits for them, logs what ran
 (“Pressed ⌘N in Notes while you were speaking”), shows one line for each, and
 marks the matching clauses as already done instead of repeating them: matched by the action the final
 clause maps to, then by its words, then, for steps inside an app, by position
 and tool, because repeating a shortcut or typed text would do it twice. A step
 that failed early is simply done again by the command.
+
+Typing is the one step whose words can still change after it ran, since the
+speaker may add to the sentence. `EarlyTypingReconciliation` compares what was
+typed with what the final transcript's clause types, and text that was typed is
+never deleted or typed twice:
+
+| The final clause types | The command does |
+|---|---|
+| The same text, ignoring case | Nothing. It is already done |
+| The early text followed by more (“hello”, then “hello world”) | Types only the extension, “ world” |
+| Anything else, including a shorter text or another app | Types nothing more and retitles the early line, “Typed “hello” early, not “help”” |
 
 ## Configuring MCP servers
 
@@ -896,7 +921,7 @@ Notes:
 | Instant app launch | On. Opening or activating an installed app named while speaking runs without approval; the later `open_app` call reuses it. Turn off under Settings ▸ Actions ▸ Instant App Launch |
 | Keyboard shortcuts | `press_shortcut` is “changes state”; ⌘N / ⌘T run without asking by default, every other chord asks (`Press ⌘S in Notes`). Only a fixed key table is allowed; nothing is sent unless the target app is frontmost |
 | Typing | `type_text` is “changes state” and exempt like `open_app`: the user dictated the words and named the app. Up to 4,000 characters; nothing is typed unless the target app is frontmost |
-| Native clauses while speaking | Opens, URLs and searches run early under Instant App Launch; shortcuts and typing run early only when the policy would not ask about them. The command recognises them as done rather than repeating them |
+| Native clauses while speaking | Apps open early on their first unambiguous sighting under Instant App Launch, and pages once their sentence ends; shortcuts, searches and typing run early once the sentence ends in 300 ms of measured silence, and only when the policy would not ask about them. The command recognises them as done rather than repeating them, and types only what the final transcript adds to early typing |
 | Listening session | Only while the pill is up. One press opens it, the shortcut or Escape closes it, two failed takes or a stopped engine close it, and the microphone is never open outside it |
 | Interaction tools | `click`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `set_value` and similar are “changes state” even when a server annotates them destructive |
 | Latency | Every action-log entry carries `sinceCommandMs` (from the recording start when live text was flowing, else the run start) and `durationMs` for the call itself |

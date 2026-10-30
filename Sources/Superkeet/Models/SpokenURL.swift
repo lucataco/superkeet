@@ -17,6 +17,11 @@ enum SpokenURL {
         pattern: #"\b([a-z0-9-]+\.[a-z]{2,6}(?:/[a-z0-9._~-]*)?)\s+slash\s+([a-z0-9._~-]+)"#, options: .caseInsensitive
     )
 
+    static func topLevelDomainMayGrow(in url: URL) -> Bool {
+        guard let ending = url.host?.split(separator: ".").last.map({ String($0).lowercased() }) else { return false }
+        return topLevelDomains.contains { $0 != ending && $0.hasPrefix(ending) }
+    }
+
     static func normalize(_ text: String) -> String {
         guard let domain, let subdomain, let slash else { return text }
         var result = replacing(domain, in: text, with: "$1.$2")
