@@ -15,10 +15,14 @@ the way a Superkeet listening session hears it:
 
 Output lines, in time order:
   {"type":"take","take":n,"start_ms":…,"end_ms":…}
+  {"type":"tick","take":n,"at_ms":<recording time>,"trailing_silence_ms":…}
   {"type":"partial","take":n,"at_ms":<recording time>,"sequence":…,"text":…}
   {"type":"final","take":n,"at_ms":<endpoint time>,"text":…}
 
-Needs the parakeet binary (0.1.9+, for `audio_ms`), the model, and ffmpeg.
+A tick comes before the partial for the same audio, as the engine sends them. Takes are
+still cut with the wall-clock rule above, so a take's ticks stop where its clip ends.
+
+Needs the parakeet binary (0.1.12+, for `tick` events), the model, and ffmpeg.
 The Swift replay test only reads the committed output, so CI needs none of them.
 """
 
@@ -35,12 +39,10 @@ FIXTURES = os.path.join(ROOT, "Tests", "Fixtures", "demo-actions")
 DEFAULT_MODEL = os.path.expanduser("~/Library/Application Support/parakeet/models/parakeet-tdt-0.6b-v3")
 
 
-def replay(engine, model_dir, wav):
-    output = subprocess.run(
-        [engine, "transcribe", wav, "--session", "--partials", "--format", "json", "--model-dir", model_dir],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    partials, final = [], ""
+def parse_events(output):
+    """Splits the engine's JSON lines into its partials, its ticks (both in engine order) and the
+    final text."""
+    partials, ticks, final = [], [], ""
     for line in output.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -50,9 +52,30 @@ def replay(engine, model_dir, wav):
             if "audio_ms" not in event:
                 sys.exit("This engine does not report audio_ms; use parakeet-cli 0.1.9 or newer.")
             partials.append(event)
+        elif event.get("type") == "tick":
+            ticks.append(event)
         elif "text" in event:
             final = event["text"]
-    return partials, final
+    return partials, ticks, final
+
+
+def replay(engine, model_dir, wav):
+    output = subprocess.run(
+        [engine, "transcribe", wav, "--session", "--partials", "--format", "json", "--model-dir", model_dir],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    return parse_events(output)
+
+
+def timeline(start_ms, partials, ticks):
+    """Fixture lines for one take in the order the engine sent them: a tick, then the partial
+    decoded from the same audio."""
+    events = [(tick["audio_ms"], 0, {"type": "tick", "at_ms": start_ms + tick["audio_ms"],
+                                     "trailing_silence_ms": tick["trailing_silence_ms"]}) for tick in ticks]
+    events += [(partial["audio_ms"], 1, {"type": "partial", "at_ms": start_ms + partial["audio_ms"],
+                                         "sequence": partial["sequence"], "text": partial["text"]})
+               for partial in partials]
+    return [line for _, _, line in sorted(events, key=lambda event: event[:2])]
 
 
 PROGRESS_WORDS = 4
@@ -100,7 +123,7 @@ def find_takes(engine, model_dir, wav, endpoint_ms, gap_ms, duration_ms, scratch
             end = min(duration_ms, start + window)
             probe = os.path.join(scratch, "probe.wav")
             cut(wav, start, end, probe)
-            partials, _ = replay(engine, model_dir, probe)
+            partials, _, _ = replay(engine, model_dir, probe)
             if not partials:
                 return takes
             relative = first_endpoint(partials, endpoint_ms, end - start)
@@ -141,11 +164,12 @@ def main():
         for index, (start, end) in enumerate(takes):
             clip = os.path.join(scratch, f"take-{index}.wav")
             cut(args.wav, start, end, clip)
-            partials, final = replay(args.engine, args.model_dir, clip)
+            partials, ticks, final = replay(args.engine, args.model_dir, clip)
+            if not ticks:
+                sys.exit("This engine sends no tick events; use parakeet-cli 0.1.12 or newer.")
             lines.append({"type": "take", "take": index, "start_ms": start, "end_ms": end})
-            for event in partials:
-                lines.append({"type": "partial", "take": index, "at_ms": start + event["audio_ms"],
-                              "sequence": event["sequence"], "text": event["text"]})
+            for event in timeline(start, partials, ticks):
+                lines.append({**event, "take": index})
             lines.append({"type": "final", "take": index, "at_ms": end, "text": final})
             print(f"take {index}: {start / 1000:.2f}-{end / 1000:.2f}s  {final!r}", file=sys.stderr)
 

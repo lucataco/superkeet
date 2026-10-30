@@ -27,6 +27,7 @@ final class DemoReplayTimingTests: XCTestCase {
         var startMs = 0
         var endMs = 0
         var partials: [(atMs: Int, sequence: Int, text: String)] = []
+        var ticks: [(atMs: Int, silenceMs: Int)] = []
         var final = ""
     }
 
@@ -55,6 +56,8 @@ final class DemoReplayTimingTests: XCTestCase {
                 take.endMs = try XCTUnwrap(object["end_ms"] as? Int)
             case "partial":
                 take.partials.append((try XCTUnwrap(object["at_ms"] as? Int), try XCTUnwrap(object["sequence"] as? Int), try XCTUnwrap(object["text"] as? String)))
+            case "tick":
+                take.ticks.append((try XCTUnwrap(object["at_ms"] as? Int), try XCTUnwrap(object["trailing_silence_ms"] as? Int)))
             case "final":
                 take.final = try XCTUnwrap(object["text"] as? String)
             default:
