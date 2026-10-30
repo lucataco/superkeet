@@ -2,13 +2,13 @@
 
 The rig plays speech into the installed Superkeet app and measures when each action becomes visible. It answers one question. Does an action land about 0.6 s after the sentence that asked for it, without splitting the command or reporting a success that did nothing?
 
-It needs no change to the app. Speech goes through the BlackHole 2ch loopback device, so the room stays quiet. The rig reads what happened from three places that the app already exposes. These are the Accessibility tree of the target app and of the Superkeet HUD, the unified log of the app process, and the app's audit log.
+It needs no change to the app. Speech goes through the BlackHole 2ch loopback device, so the room stays quiet. The rig reads what happened from three places that the app already exposes. These are the Accessibility tree of the target app and of the Superkeet HUD (its text, recorded as events), the unified log of the app process, and the app's audit log.
 
 ## Prerequisites
 
 - Superkeet is installed at `/Applications/Superkeet.app`, onboarding is done, and Actions Mode is on. To test another build, set `SUPERKEET_APP` to its bundle path. Sign that build with the same Developer ID team as the installed app, so macOS keeps its Accessibility and Microphone grants. The rig quits the installed app and launches that build, and relaunches that build when it restores.
 - BlackHole 2ch is installed (`brew install --cask blackhole-2ch`, which asks for an administrator password once).
-- The terminal that runs the rig has Accessibility permission. It does not need Screen Recording. The HUD screenshot comes from `cua-driver`, which has its own grant.
+- The terminal that runs the rig has Accessibility permission. It does not need Screen Recording.
 - `REPLICATE_API_TOKEN` is set. It is only used when a stimulus is built for the first time.
 - `ffmpeg`, `swiftc`, and `python3` are on the path.
 - The machine is idle. The rig opens apps, presses keys, and types, so do not use the keyboard or run `swift test` during a run. Load from other work changes the latencies. Each run records the load average.

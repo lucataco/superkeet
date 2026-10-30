@@ -300,6 +300,11 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("com.apple.TextEdit", str(caught.exception))
         self.assertIn("timed out", str(caught.exception))
 
+    def test_the_rig_takes_no_end_of_run_screenshot(self):
+        source = Path(run.__file__).read_text()
+        self.assertNotIn("max_image_dimension", source)
+        self.assertNotIn("hud-end", source)
+
 
 if __name__ == "__main__":
     unittest.main()

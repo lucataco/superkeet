@@ -319,7 +319,6 @@ def one_run(scenario, stimulus, run_dir, rng, hotkey, guard_planner):
                 out.write(line)
                 out.flush()
                 if '"event":"tail_done"' in line:
-                    sh(["cua-driver", "call", "get_desktop_state", json.dumps({"screenshot_out_file": str(run_dir / "hud-end.png"), "max_image_dimension": 1800})], timeout=20)
                     documents["tail"] = textedit_documents()
                     proc.stdin.write("stop\n")
                     proc.stdin.flush()
@@ -365,8 +364,6 @@ def preflight(scenario):
     check = sh([OBSERVER, "check", "--out-device", common.LOOPBACK_DEVICE])
     if check.returncode != 0:
         raise SystemExit(f"observer check failed. Needs Accessibility for this terminal and the BlackHole 2ch device.\n{check.stdout}")
-    if not shutil.which("cua-driver"):
-        say("WARNING: cua-driver not found; the end-of-run HUD screenshot will be missing")
     refuse_if_user_work(scenario)
 
 
