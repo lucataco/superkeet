@@ -213,6 +213,13 @@ final class ListeningSessionControllerTests: XCTestCase {
         return Fixture(controller: controller, recorder: recorder, listening: listening, ticks: ticks, daemonState: daemonState, outcome: outcome)
     }
 
+    private func waitForStops(_ count: Int, fixture: Fixture, within limit: Duration = .seconds(3)) async {
+        let deadline = ContinuousClock.now + limit
+        while fixture.recorder.stops < count, ContinuousClock.now < deadline {
+            await settle(.milliseconds(20))
+        }
+    }
+
     private func settle(_ duration: Duration = .milliseconds(20)) async {
         try? await Task.sleep(for: duration)
     }
@@ -295,13 +302,13 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testATakeWhoseTicksStopEndsOnTheWallClockRule() async {
-        let fixture = makeFixture(fallbackTimeout: .milliseconds(80), stallTimeout: .milliseconds(100))
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(80), stallTimeout: .milliseconds(400))
         fixture.controller.begin()
         fixture.hear("open Notes")
         fixture.tick(silence: 0)
         await settle(.milliseconds(60))
         XCTAssertEqual(fixture.recorder.stops, 0, "Ticks arrived recently.")
-        await settle(.milliseconds(400))
+        await waitForStops(1, fixture: fixture)
         XCTAssertEqual(fixture.recorder.stops, 1, "No tick for the stall timeout hands the take to the progress timer, which ends it.")
         XCTAssertEqual(fixture.recorder.warmStops, 1)
         XCTAssertEqual(fixture.controller.dispatchedCommands, 1)
@@ -309,27 +316,29 @@ final class ListeningSessionControllerTests: XCTestCase {
     }
 
     func testTicksThatKeepComingNeverTriggerTheFallback() async {
-        let fixture = makeFixture(fallbackTimeout: .milliseconds(50), stallTimeout: .milliseconds(150))
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(50), stallTimeout: .milliseconds(300))
         fixture.controller.begin()
         fixture.hear("open Notes")
-        for _ in 0..<8 {
+        for _ in 0..<20 {
             fixture.tick(silence: 300)
             await settle(.milliseconds(60))
         }
-        XCTAssertEqual(fixture.recorder.stops, 0, "Ticks every 60 ms never let the 150 ms stall timer fire.")
+        XCTAssertEqual(fixture.recorder.stops, 0, "Ticks every 60 ms never let the stall timer fire.")
         fixture.controller.end(dispatchPending: false)
     }
 
     func testAStalledTakeThatHearsNewWordsKeepsWaiting() async {
-        let fixture = makeFixture(fallbackTimeout: .milliseconds(250), stallTimeout: .milliseconds(50))
+        // The stall hands the take to a 1.5 s progress timer at about 50 ms. Without a restart it would
+        // end near 1550 ms; the new words at about 700 ms move that to about 2200 ms.
+        let fixture = makeFixture(fallbackTimeout: .milliseconds(1_500), stallTimeout: .milliseconds(50))
         fixture.controller.begin()
         fixture.hear("open Notes")
         fixture.tick(silence: 0)
-        await settle(.milliseconds(100))
+        await settle(.milliseconds(700))
         fixture.hear("open Notes and make a new note")
-        await settle(.milliseconds(150))
+        await settle(.milliseconds(1_200))
         XCTAssertEqual(fixture.recorder.stops, 0, "New words restarted the progress timer.")
-        await settle(.milliseconds(300))
+        await waitForStops(1, fixture: fixture)
         XCTAssertEqual(fixture.recorder.stops, 1)
         fixture.controller.end(dispatchPending: false)
     }
