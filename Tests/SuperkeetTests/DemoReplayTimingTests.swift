@@ -65,6 +65,17 @@ final class DemoReplayTimingTests: XCTestCase {
         return takes.keys.sorted().compactMap { takes[$0] }
     }
 
+    private func loadVideoClock() throws -> [String: Int] {
+        let raw = try String(contentsOf: fixtures.appendingPathComponent("video-clock.tsv"), encoding: .utf8)
+        var clock: [String: Int] = [:]
+        for line in raw.split(separator: "\n").dropFirst() {
+            let columns = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard columns.count >= 2, let ms = Int(columns[0]) else { continue }
+            clock[String(columns[1])] = ms
+        }
+        return clock
+    }
+
     private func date(_ ms: Int) -> Date { Date(timeIntervalSince1970: Double(ms) / 1_000) }
     private func ms(_ date: Date) -> Int { Int((date.timeIntervalSince1970 * 1_000).rounded()) }
 
@@ -148,25 +159,30 @@ final class DemoReplayTimingTests: XCTestCase {
             if case .openApp(let name) = action { return resolve(name)?.deletingPathExtension().lastPathComponent }
             return nil
         }
-        let expectations: [(event: String, videoMs: Int, matches: (NativeOpenAction) -> Bool)] = [
-            ("notes_open", 4_500, { appName($0) == "Notes" }),
-            ("new_note", 8_500, { if case .pressShortcut("Notes", let key) = $0 { return key.displayName == "⌘N" }; return false }),
-            ("title_hello", 11_500, { if case .typeText("Notes", let text) = $0 { return text.lowercased().contains("hello") }; return false }),
-            ("arc", 17_500, { appName($0) == "Arc" }),
-            ("search", 21_000, { if case .openURL(let url, _) = $0 { return url.absoluteString.contains("Norbert") }; return false }),
-            ("xcom", 25_500, { if case .openURL(let url, _) = $0 { return url.host == "x.com" }; return false }),
-            ("photobooth", 31_500, { appName($0) == "Photo Booth" }),
-            ("countdown", 37_000, { if case .pressShortcut(_, let key) = $0 { return key.displayName == "↩" || key.keyCode == 36 }; return false })
+        let videoClock = try loadVideoClock()
+        let expectations: [(event: String, matches: (NativeOpenAction) -> Bool)] = [
+            ("notes_open", { appName($0) == "Notes" }),
+            ("new_note", { if case .pressShortcut("Notes", let key) = $0 { return key.displayName == "⌘N" }; return false }),
+            ("title_hello", { if case .typeText("Notes", let text) = $0 { return text.lowercased().contains("hello") }; return false }),
+            ("arc", { appName($0) == "Arc" }),
+            ("search", { if case .openURL(let url, _) = $0 { return url.absoluteString.contains("Norbert") }; return false }),
+            ("xcom", { if case .openURL(let url, _) = $0 { return url.host == "x.com" }; return false }),
+            ("photobooth", { appName($0) == "Photo Booth" }),
+            ("countdown", { if case .pressShortcut(_, let key) = $0 { return key.displayName == "↩" || key.keyCode == 36 }; return false })
         ]
         var summary: [String] = []
         for expectation in expectations {
+            guard let videoMs = videoClock[expectation.event] else {
+                XCTFail("video-clock.tsv has no \(expectation.event) row.")
+                continue
+            }
             guard let dispatch = first(dispatches, expectation.matches) else {
                 XCTFail("\(expectation.event) was never dispatched.\n\(report)")
                 continue
             }
-            let margin = expectation.videoMs - dispatch.atMs
-            summary.append("\(expectation.event): \(dispatch.atMs) ms (\(dispatch.how)), video \(expectation.videoMs) ms, \(margin) ms early")
-            XCTAssertLessThanOrEqual(dispatch.atMs, expectation.videoMs, "\(expectation.event) is later than the video.\n\(report)")
+            let margin = videoMs - dispatch.atMs
+            summary.append("\(expectation.event): \(dispatch.atMs) ms (\(dispatch.how)), video \(videoMs) ms, \(margin) ms early")
+            XCTAssertLessThanOrEqual(dispatch.atMs, videoMs, "\(expectation.event) is later than the video.\n\(report)")
         }
         print("Demo replay timing:\n" + summary.joined(separator: "\n"))
     }
