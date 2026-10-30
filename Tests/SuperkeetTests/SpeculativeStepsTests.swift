@@ -240,10 +240,24 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertEqual(page[1].map(\.action), [.openURL(url: xcom, browser: nil)])
     }
 
-    func testALaterClauseWebsiteOpensOnFirstSightingButSearchesAndGrowingAddressesDoNot() throws {
+    func testAPageNamedBeforeItsBrowserOpensOnce() throws {
+        var detector = notesDetector(installed: ["Notes", "Safari"])
+        let xcom = try XCTUnwrap(URL(string: "https://x.com"))
+        let opened = feed(&detector, ["Open Notes and go to x.com", "Open Notes and go to x.com in Safari."], launched: notesApp)
+        XCTAssertEqual(opened[0], [], "\"in Safari\" could still follow; opening now would open the page twice.")
+        XCTAssertEqual(opened[1].map(\.action), [.openURL(url: xcom, browser: "Safari")])
+
+        var held = notesDetector(installed: ["Notes", "Safari"])
+        let start = Date(timeIntervalSince1970: 100)
+        _ = held.observe(PartialTranscript(text: "Open Notes and go to x.com", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(held.commitStableTrailing(at: start.addingTimeInterval(0.8)).map(\.action), [.openURL(url: xcom, browser: nil)],
+                       "A page nobody qualifies still opens once the speaker holds still.")
+    }
+
+    func testALaterClauseWebsiteOpensOnSightOnceItsSentenceEndsButSearchesAndGrowingAddressesDoNot() throws {
         let start = Date(timeIntervalSince1970: 100)
         var site = notesDetector()
-        let opened = site.observe(PartialTranscript(text: "Open Notes and go to x.com", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        let opened = site.observe(PartialTranscript(text: "Open Notes and go to x.com.", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
         XCTAssertEqual(opened.map(\.action), [.openURL(url: try XCTUnwrap(URL(string: "https://x.com")), browser: nil)])
 
         var growing = notesDetector()

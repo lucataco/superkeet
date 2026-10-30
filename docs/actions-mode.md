@@ -595,7 +595,9 @@ Command Mode recording starts:
 Measured with the recorded recogniser output for “open the notes app and create
 a new note” (2.23 s of speech), Notes launches about 1.14 s in with the default
 of trusting the first unambiguous partial, or about 2.07 s in when two
-consecutive partials are required (`SpeculativeLaunchCoordinator(stabilityThreshold:)`).
+consecutive partials are required (`SpeculativeLaunchCoordinator(stabilityThreshold:)`). A later
+clause's open is held to the same count, and once the step detector has run the leading clause
+the launch detector does not launch it again.
 The early launch does not wait for the app's window, so the command starts the
 moment the transcript lands.
 
@@ -618,7 +620,8 @@ run, as one function of the clause's kind and what the engine has reported so fa
 
 | Last clause | Runs early when |
 |---|---|
-| An app open, or a URL | The first partial that names it. The app resolves exactly or by the unique near match, and no longer installed name could still be coming (“Safari” waits while “Safari Technology Preview” is installed). A URL is not an open-ended search, and its ending cannot still grow (`x.co` may become `x.com`, so that one settles like a shortcut) |
+| An app open | The first partial that names it. The app resolves exactly or by the unique near match, and no longer installed name could still be coming (“Safari” waits while “Safari Technology Preview” is installed) |
+| A URL that is not a search | The latest partial ends the sentence. Before that, “in Safari” could still follow and open the page a second time, so it waits for `SpeculativeStepDetector.trailingHold` with no newer partial. A growing ending (`x.co` may become `x.com`) settles like a shortcut |
 | A shortcut recipe (⌘N, ⌘T, Photo Booth's shutter), a growing URL | The latest partial ends the sentence (`.`, `?` or `!`) and the engine's latest tick for this take reports at least 300 ms of trailing silence. Failing that, the same action on two partials in a row, or unchanged for `SpeculativeStepDetector.trailingHold` (0.7 s) with no newer partial |
 | A web search | The same, once the recogniser has punctuated the end of the sentence |
 | Typing | The latest partial ends the sentence and the latest tick reports at least 300 ms of silence. Nothing else releases it, so half-heard words are never typed |
@@ -676,7 +679,7 @@ never deleted or typed twice:
 |---|---|
 | The same text, ignoring case | Nothing. It is already done |
 | The early text followed by more (“hello”, then “hello world”) | Types only the extension, “ world” |
-| Anything else, including a shorter text or another app | Types nothing more and adds one HUD line, “Typed “hello” early. The final words differed, so nothing more was typed.” |
+| Anything else, including a shorter text or another app | Types nothing more and retitles the early line, “Typed “hello” early, not “help”” |
 
 ## Configuring MCP servers
 
@@ -918,7 +921,7 @@ Notes:
 | Instant app launch | On. Opening or activating an installed app named while speaking runs without approval; the later `open_app` call reuses it. Turn off under Settings ▸ Actions ▸ Instant App Launch |
 | Keyboard shortcuts | `press_shortcut` is “changes state”; ⌘N / ⌘T run without asking by default, every other chord asks (`Press ⌘S in Notes`). Only a fixed key table is allowed; nothing is sent unless the target app is frontmost |
 | Typing | `type_text` is “changes state” and exempt like `open_app`: the user dictated the words and named the app. Up to 4,000 characters; nothing is typed unless the target app is frontmost |
-| Native clauses while speaking | Opens and URLs run early on their first unambiguous sighting under Instant App Launch; shortcuts, searches and typing run early once the sentence ends in 300 ms of measured silence, and only when the policy would not ask about them. The command recognises them as done rather than repeating them, and types only what the final transcript adds to early typing |
+| Native clauses while speaking | Apps open early on their first unambiguous sighting under Instant App Launch, and pages once their sentence ends; shortcuts, searches and typing run early once the sentence ends in 300 ms of measured silence, and only when the policy would not ask about them. The command recognises them as done rather than repeating them, and types only what the final transcript adds to early typing |
 | Listening session | Only while the pill is up. One press opens it, the shortcut or Escape closes it, two failed takes or a stopped engine close it, and the microphone is never open outside it |
 | Interaction tools | `click`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `set_value` and similar are “changes state” even when a server annotates them destructive |
 | Latency | Every action-log entry carries `sinceCommandMs` (from the recording start when live text was flowing, else the run start) and `durationMs` for the call itself |

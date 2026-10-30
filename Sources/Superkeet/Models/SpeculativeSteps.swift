@@ -67,10 +67,13 @@ struct SpeculativeHandoff: Sendable {
 /// The commit decision lives here, as one function of the clause's policy and the evidence the
 /// engine has given so far, so the detector holds no per-kind flags.
 enum TrailingPolicy: Equatable, Sendable {
-    /// An app or website that resolves exactly or by a unique near match, with no longer installed
-    /// name it could still become. The first partial that says so is enough, the rule
+    /// An app that resolves exactly or by a unique near match, with no longer installed name it
+    /// could still become. The first partial that says so is enough, the rule
     /// `SpeculativeIntentDetector` applies to the leading clause.
     case firstSighting
+    /// A site that is not a search. Once its sentence ends it opens on sight. Before that, “in Safari”
+    /// could still follow and open the page a second time, so it waits for the speaker to hold still.
+    case sentenceEndOrHeldStill
     /// A shortcut, or a site whose ending could still grow (`x.co` on its way to `x.com`).
     case confirmed
     /// A web search, which is open-ended until the sentence is punctuated.
@@ -86,17 +89,18 @@ enum TrailingPolicy: Equatable, Sendable {
     /// `opensOnSight` is false when the leading launch asks for more than one sighting, so a later
     /// open is held to the same bar.
     static func of(_ action: NativeOpenAction, appNameIsAmbiguous: Bool, opensOnSight: Bool = true) -> TrailingPolicy {
-        let onSight: TrailingPolicy = opensOnSight ? .firstSighting : .confirmed
         switch action {
         case .typeText:
             return .silentSentenceEnd
         case .pressShortcut:
             return .confirmed
         case .openApp:
-            return appNameIsAmbiguous ? .afterTheSpeakerMoves : onSight
+            if appNameIsAmbiguous { return .afterTheSpeakerMoves }
+            return opensOnSight ? .firstSighting : .confirmed
         case .openURL(let url, _):
             if SpeculativeStepDetector.isOpenEndedSearch(url) { return .confirmedAtSentenceEnd }
-            return SpokenURL.topLevelDomainMayGrow(in: url) ? .confirmed : onSight
+            if SpokenURL.topLevelDomainMayGrow(in: url) { return .confirmed }
+            return opensOnSight ? .sentenceEndOrHeldStill : .confirmed
         }
     }
 
@@ -104,6 +108,9 @@ enum TrailingPolicy: Equatable, Sendable {
         switch self {
         case .firstSighting:
             return .commit(.firstSighting)
+        case .sentenceEndOrHeldStill:
+            if evidence.endsSentence { return .commit(.firstSighting) }
+            return evidence.heldStill ? .commit(.heldStill) : .watch
         case .afterTheSpeakerMoves:
             return .drop
         case .silentSentenceEnd:
