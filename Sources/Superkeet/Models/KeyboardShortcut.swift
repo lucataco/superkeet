@@ -50,6 +50,10 @@ struct KeyboardShortcut: Equatable, Hashable, Sendable {
         return mods + Self.displayNames[key, default: key.uppercased()]
     }
 
+    /// ⌘N is the shortcut a dictated command uses to make a window of its own, so its effect has
+    /// to be on screen before the next step acts in the app.
+    var createsWindow: Bool { modifiers == [.command] && key == "n" }
+
     var keys: [String] {
         Modifier.displayOrder.filter(modifiers.contains).map { $0 == .command ? "cmd" : $0.rawValue } + [key]
     }

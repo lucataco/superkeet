@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import os.log
+
+private let nativeActionLog = Logger(subsystem: "com.superkeet.app", category: "NativeActions")
 
 @MainActor
 protocol NativeActionExecuting: AnyObject, Sendable {
@@ -293,10 +296,28 @@ final class SystemShortcutPresser: NativeShortcutPressing {
             }
         }
         try Task.checkCancellation()
+        let makesWindow = shortcut.createsWindow
+        let windowsBefore = makesWindow ? environment.windowIdentifiers(pid) : []
         guard environment.post(shortcut) else {
             throw NativeOpenActionError.openFailed("The keyboard event for \(shortcut.displayName) could not be created.")
         }
+        if makesWindow {
+            try await waitForNewWindow(in: name, pid: pid, shortcut: shortcut, excluding: windowsBefore)
+        }
         return pid
+    }
+
+    /// The app draws the window some time after it receives the key, so the next step would act
+    /// before it exists. A window that never appears is not an error, since some apps make the new
+    /// document inside the window they already have, so the wait ends and the steps carry on.
+    private func waitForNewWindow(in name: String, pid: pid_t, shortcut: KeyboardShortcut, excluding known: Set<CGWindowID>) async throws {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let waiter = NativeLaunchWaiter(timeout: environment.windowTimeout, pollInterval: environment.windowPollInterval)
+        let appeared = try await waiter.wait { !environment.windowIdentifiers(pid).subtracting(known).isEmpty }
+        let milliseconds = Int(started.duration(to: clock.now) / .milliseconds(1))
+        let outcome = appeared ? "showed a new window" : "showed no new window, continuing"
+        nativeActionLog.info("\(shortcut.displayName, privacy: .public) in \(name, privacy: .public) \(outcome, privacy: .public) after \(milliseconds, privacy: .public) ms")
     }
 
     nonisolated static func post(_ shortcut: KeyboardShortcut) -> Bool {
