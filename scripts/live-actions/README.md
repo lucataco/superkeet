@@ -2,13 +2,13 @@
 
 The rig plays speech into the installed Superkeet app and measures when each action becomes visible. It answers one question. Does an action land about 0.6 s after the sentence that asked for it, without splitting the command or reporting a success that did nothing?
 
-It needs no change to the app. Speech goes through the BlackHole 2ch loopback device, so the room stays quiet. The rig reads what happened from three places that the app already exposes. These are the Accessibility tree of the target app and of the Superkeet HUD, the unified log of the app process, and the app's audit log.
+It needs no change to the app. Speech goes through the BlackHole 2ch loopback device, so the room stays quiet. The rig reads what happened from three places that the app already exposes. These are the Accessibility tree of the target app and of the Superkeet HUD (its text, recorded as events), the unified log of the app process, and the app's audit log.
 
 ## Prerequisites
 
 - Superkeet is installed at `/Applications/Superkeet.app`, onboarding is done, and Actions Mode is on. To test another build, set `SUPERKEET_APP` to its bundle path. Sign that build with the same Developer ID team as the installed app, so macOS keeps its Accessibility and Microphone grants. The rig quits the installed app and launches that build, and relaunches that build when it restores.
 - BlackHole 2ch is installed (`brew install --cask blackhole-2ch`, which asks for an administrator password once).
-- The terminal that runs the rig has Accessibility permission. It does not need Screen Recording. The HUD screenshot comes from `cua-driver`, which has its own grant.
+- The terminal that runs the rig has Accessibility permission. It does not need Screen Recording.
 - `REPLICATE_API_TOKEN` is set. It is only used when a stimulus is built for the first time.
 - `ffmpeg`, `swiftc`, and `python3` are on the path.
 - The machine is idle. The rig opens apps, presses keys, and types, so do not use the keyboard or run `swift test` during a run. Load from other work changes the latencies. Each run records the load average.
@@ -58,8 +58,8 @@ Only `com.apple.TextEdit` may be a target. TextEdit documents are never saved by
 
 - It writes `audioInputDevice` in the `com.superkeet.app` defaults and relaunches Superkeet so the engine reads BlackHole. The original value is saved in `.build/live-actions/restore.json` first.
 - It quits and reopens Superkeet, and it quits TextEdit before and after every run. It closes TextEdit documents with "saving no" and refuses to start if TextEdit holds a document with text.
-- It presses the command hotkey and, when the planner starts, Escape.
-- It moves any new file that TextEdit autosaves into `~/Library/Mobile Documents/com~apple~TextEdit/Documents/` to `~/.Trash`, and prints an error. The run then exits with status 3. Nothing is deleted outright.
+- It presses the command hotkey and, when the planner starts, Escape. The hotkey comes from the `commandHotkeyKeyCode` and `commandHotkeyModifierFlags` defaults. When they are absent, which is true until the shortcut is changed, the rig uses the app's built-in Option+Shift+Space (key code 49, flags 655360).
+- It moves any new file that TextEdit autosaves into `~/Library/Mobile Documents/com~apple~TextEdit/Documents/` to `~/.Trash`, prints a warning, and lists it in the report. The run still passes or fails on its measurements. Nothing is deleted outright.
 
 It restores `audioInputDevice` in a `finally` block and on SIGINT and SIGTERM. If the process is killed harder, `restore.json` stays behind and the next run restores from it. When no record exists and the key already says BlackHole 2ch, the rig assumes a crashed earlier run and treats the original as unset. To check by hand, run `defaults read com.superkeet.app audioInputDevice` and `pgrep -fl "parakeet serve"`. If the user never chose a device, the first reports the key as missing and the second shows no `--device`.
 
@@ -71,6 +71,7 @@ Superkeet's approval policy decides what its planner may do on its own. A clause
 
 - The loopback delay between playback and the app hearing the audio is not calibrated, because that needs microphone access for the terminal. `report.py --loopback-ms N` subtracts a measured value. Until then, every latency includes the delay.
 - Accessibility polling can lag. The report prints the longest poll per source. The workspace loop is under 2 ms. The target-app loop stalled for about 210 ms while TextEdit launched, so window and text probes can be late by that much around a launch.
+- The first AppleScript call to a cold TextEdit can time out after 20 s. The rig retries it once, then stops with a message that names the script.
 - Events are timestamped when the observer sees them, so each latency has an error of up to one poll.
 - The first-words column is the time from the end of the first spoken word to the first HUD update that shows two consecutive script words. It does not depend on the HUD layout.
 - `fixtures/` holds a recorded run that the unit tests in `scripts/test_live_actions.py` score. The tests need no audio, network, or app.

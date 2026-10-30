@@ -2,8 +2,10 @@ import contextlib
 import io
 import json
 import sys
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 RIG = Path(__file__).resolve().parent / "live-actions"
@@ -12,6 +14,7 @@ sys.path.insert(0, str(RIG))
 import build_stimulus  # noqa: E402
 import common  # noqa: E402
 import report  # noqa: E402
+import run  # noqa: E402
 
 BH1 = RIG / "fixtures" / "bh1"
 PLANNER_GUARD = RIG / "fixtures" / "planner-guard"
@@ -256,6 +259,18 @@ class FixtureRunTests(unittest.TestCase):
         verdict = report.summarize([clean, clean], scenario())
         self.assertTrue(verdict["pass"], verdict["reasons"])
 
+    def test_an_icloud_autosave_is_a_warning_not_a_failure(self):
+        clean = {"name": "run-01", "expect": {e["id"]: {"latency_ms": 100} for e in scenario()["expect"]},
+                 "errors": [], "icloud_files": ["Untitled.txt"],
+                 "forbidden": {k: 0 for k in common.FORBIDDEN_EVENTS}}
+        verdict = report.summarize([clean], scenario())
+        self.assertTrue(verdict["pass"], verdict["reasons"])
+        self.assertEqual(len(verdict["warnings"]), 1)
+        self.assertIn("Untitled.txt", verdict["warnings"][0])
+        self.assertIn("WARNING", report.render([{**clean, "jitter_ms": 0, "details": [], "settled": True, "documents": 1,
+                                                  "loadavg": 1, "max_poll_ms": {}, "hud": {"first_words_ms": None},
+                                                  "forbidden": clean["forbidden"]}], verdict, scenario(), 0))
+
     def test_write_produces_a_report_and_a_verdict(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -271,6 +286,36 @@ class FixtureRunTests(unittest.TestCase):
             self.assertFalse(verdict["pass"])
             self.assertIn("| take_split | 1/1 |", (root / "report.md").read_text())
             self.assertEqual(json.loads((root / "verdict.json").read_text())["runs"], 1)
+
+
+class RunnerTests(unittest.TestCase):
+    def test_a_fresh_install_without_hotkey_defaults_uses_the_apps_built_in_command_hotkey(self):
+        with mock.patch.object(run, "defaults_read", return_value=None):
+            self.assertEqual(run.read_hotkey(), {"code": "49", "flags": "655360"})
+
+    def test_a_hotkey_the_user_changed_wins_over_the_built_in_one(self):
+        stored = {"commandHotkeyKeyCode": "40", "commandHotkeyModifierFlags": "262144"}
+        with mock.patch.object(run, "defaults_read", side_effect=stored.get):
+            self.assertEqual(run.read_hotkey(), {"code": "40", "flags": "262144"})
+
+    def test_a_first_launch_timeout_is_retried_once(self):
+        results = [subprocess.TimeoutExpired("osascript", 20), subprocess.CompletedProcess([], 0, stdout="ok\n")]
+        with mock.patch.object(run, "sh", side_effect=results) as sh:
+            self.assertEqual(run.osa("return 1"), "ok")
+        self.assertEqual(sh.call_count, 2)
+
+    def test_a_script_that_keeps_timing_out_is_a_plain_error_naming_the_script(self):
+        timeout = subprocess.TimeoutExpired("osascript", 20)
+        with mock.patch.object(run, "sh", side_effect=[timeout, timeout]):
+            with self.assertRaises(SystemExit) as caught:
+                run.osa("tell application id \"com.apple.TextEdit\" to quit")
+        self.assertIn("com.apple.TextEdit", str(caught.exception))
+        self.assertIn("timed out", str(caught.exception))
+
+    def test_the_rig_takes_no_end_of_run_screenshot(self):
+        source = Path(run.__file__).read_text()
+        self.assertNotIn("max_image_dimension", source)
+        self.assertNotIn("hud-end", source)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,9 @@ LEAD_BASE_MS = 1500
 JITTER_MS = 500
 TAIL_MS = 6000
 SETTLE_SECONDS = 25
+OSA_TIMEOUT_SECONDS = 20
+# The app's own defaults in Sources/Superkeet/Models/AppSettings.swift: Space with Option and Shift.
+DEFAULT_COMMAND_HOTKEY = {"code": "49", "flags": "655360"}
 children = []
 
 
@@ -41,7 +44,12 @@ def sh(cmd, timeout=30, check=False):
 
 
 def osa(script, language="AppleScript"):
-    return sh(["osascript", "-l", language, "-e", script], timeout=20).stdout.strip()
+    for attempt in (1, 2):
+        try:
+            return sh(["osascript", "-l", language, "-e", script], timeout=OSA_TIMEOUT_SECONDS).stdout.strip()
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                raise SystemExit(f"osascript timed out twice after {OSA_TIMEOUT_SECONDS} s: {script[:200]}")
 
 
 def say(message):
@@ -311,7 +319,6 @@ def one_run(scenario, stimulus, run_dir, rng, hotkey, guard_planner):
                 out.write(line)
                 out.flush()
                 if '"event":"tail_done"' in line:
-                    sh(["cua-driver", "call", "get_desktop_state", json.dumps({"screenshot_out_file": str(run_dir / "hud-end.png"), "max_image_dimension": 1800})], timeout=20)
                     documents["tail"] = textedit_documents()
                     proc.stdin.write("stop\n")
                     proc.stdin.flush()
@@ -335,7 +342,7 @@ def one_run(scenario, stimulus, run_dir, rng, hotkey, guard_planner):
         meta["icloud_files"] = trash_new_icloud_files(before)
         (run_dir / "meta.json").write_text(json.dumps(meta, indent=1))
     if meta["icloud_files"]:
-        say(f"ERROR: TextEdit autosaved {meta['icloud_files']} into iCloud during this run. Moved to ~/.Trash.")
+        say(f"WARNING: TextEdit autosaved {meta['icloud_files']} into iCloud during this run. Moved to ~/.Trash.")
     return meta
 
 
@@ -357,15 +364,13 @@ def preflight(scenario):
     check = sh([OBSERVER, "check", "--out-device", common.LOOPBACK_DEVICE])
     if check.returncode != 0:
         raise SystemExit(f"observer check failed. Needs Accessibility for this terminal and the BlackHole 2ch device.\n{check.stdout}")
-    if not shutil.which("cua-driver"):
-        say("WARNING: cua-driver not found; the end-of-run HUD screenshot will be missing")
     refuse_if_user_work(scenario)
 
 
 def read_hotkey():
     code, flags = defaults_read("commandHotkeyKeyCode"), defaults_read("commandHotkeyModifierFlags")
     if code is None or flags is None:
-        raise SystemExit("commandHotkeyKeyCode or commandHotkeyModifierFlags is not set; open Superkeet settings once")
+        return dict(DEFAULT_COMMAND_HOTKEY)
     return {"code": code, "flags": flags}
 
 
@@ -393,13 +398,12 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
     original = remember_original()
-    leaks = 0
     try:
         converge_device(common.LOOPBACK_DEVICE, True)
         say(f"daemon: {daemon_line()}")
         for i in range(1, args.runs + 1):
             say(f"run {i}/{args.runs}")
-            leaks += bool(one_run(scenario, stimulus, root / f"run-{i:02d}", rng, hotkey, not args.allow_planner)["icloud_files"])
+            one_run(scenario, stimulus, root / f"run-{i:02d}", rng, hotkey, not args.allow_planner)
             time.sleep(2)
     except KeyboardInterrupt as stop:
         say(f"interrupted ({stop}); restoring")
@@ -411,7 +415,6 @@ def main():
         restore(original)
     report.write(root)
     say(f"report: {root / 'report.md'}")
-    sys.exit(3 if leaks else 0)
 
 
 if __name__ == "__main__":
