@@ -293,7 +293,7 @@ final class AgentSessionController: ObservableObject {
                 execution.context.recordOpened(launched)
             }
             if !run.earlySteps.isEmpty, !plan.isCompound,
-               let done = earlyStep(matching: CommandClause(index: 0, text: plan.command, intent: intent), context: execution.context, run: run) {
+               case .earlyStep(let done)? = earlyRoute(for: CommandClause(index: 0, text: plan.command, intent: intent), context: execution.context, run: run) {
                 run.consumedEarlySteps.insert(done.step.index)
                 activityLog.append("Already done: \(done.doneDescription)")
                 finish(.finished(done.output ?? "Done."), run: run)
@@ -358,6 +358,8 @@ final class AgentSessionController: ObservableObject {
     private enum StepRoute {
         case alreadyDone(appName: String)
         case earlyStep(SpeculativeStepResult)
+        case typeRemainder(SpeculativeStepResult, TypeTarget)
+        case keepEarlyTyping(SpeculativeStepResult, typed: String)
         case native(NativeOpenAction)
         case shortcut(NativeAppRecipe, target: String)
         case typeText(TypeTarget)
@@ -369,8 +371,8 @@ final class AgentSessionController: ObservableObject {
            CommandDecomposer.clause(clause, isSatisfiedBy: prior, resolveApp: resolveApp) {
             return .alreadyDone(appName: prior.appName)
         }
-        if let done = earlyStep(matching: clause, context: context, run: run) {
-            return .earlyStep(done)
+        if let early = earlyRoute(for: clause, context: context, run: run) {
+            return early
         }
         if let action = NativeClauseRouter.action(for: clause.text, context: clauseContext(context)) {
             return stepRoute(for: action, clause: clause)
@@ -382,6 +384,29 @@ final class AgentSessionController: ObservableObject {
             return .typeText(target)
         }
         return .planned
+    }
+
+    /// An early step that carried out this clause. Typing may have run before the speaker finished
+    /// the sentence, so the final words can say more, or something else.
+    private func earlyRoute(for clause: CommandClause, context: ActionPlanContext, run: RunContext) -> StepRoute? {
+        guard let done = earlyStep(matching: clause, context: context, run: run) else { return nil }
+        guard case .typeText(let app, let typed) = done.step.action,
+              let said = typeTarget(for: clause.text, context: context) else { return .earlyStep(done) }
+        let reconciliation = EarlyTypingReconciliation.reconcile(
+            early: .init(app: app, text: typed), final: .init(app: said.name, text: said.text)
+        )
+        switch reconciliation {
+        case .alreadyTyped: return .earlyStep(done)
+        case .typeRemainder(let rest): return .typeRemainder(done, TypeTarget(name: said.name, text: rest))
+        case .keepTyped: return .keepEarlyTyping(done, typed: typed)
+        }
+    }
+
+    private func typeTarget(for clause: String, context: ActionPlanContext) -> TypeTarget? {
+        if case .typeText(let app, let text)? = NativeClauseRouter.action(for: clause, context: clauseContext(context)) {
+            return TypeTarget(name: app, text: text)
+        }
+        return NativeTypeRecipe.recipe(for: clause).flatMap { typeTarget($0, context: context) }
     }
 
     private func stepRoute(for action: NativeOpenAction, clause: CommandClause) -> StepRoute {
@@ -420,6 +445,11 @@ final class AgentSessionController: ObservableObject {
             case .earlyStep(let result):
                 if let launched = result.launchedApp { context.recordOpened(launched) }
                 steps.append(.init(number: number, text: clause.text, summary: "Already done: \(result.doneDescription) (while you were speaking)", route: .alreadyDone))
+            case .typeRemainder(_, let rest):
+                let action = NativeOpenAction.typeText(app: rest.name, text: rest.text)
+                steps.append(nativeStep(number: number, clause: clause, action: action))
+            case .keepEarlyTyping(let result, _):
+                steps.append(.init(number: number, text: clause.text, summary: "Already typed: \(result.doneDescription) (while you were speaking)", route: .alreadyDone))
             case .native(let action):
                 if case .openApp(let name) = action {
                     let opened = resolveApp(name)?.deletingPathExtension().lastPathComponent ?? name
@@ -464,6 +494,18 @@ final class AgentSessionController: ObservableObject {
             run.consumedEarlySteps.insert(result.step.index)
             activityLog.append("Already done: \(result.doneDescription)")
             if let launched = result.launchedApp { execution.context.recordOpened(launched) }
+            return nil
+
+        case .typeRemainder(let result, let rest):
+            run.consumedEarlySteps.insert(result.step.index)
+            activityLog.append("Already typed: \(result.doneDescription)")
+            return try await performTypeText(rest, clause: clause.text, run: run)
+
+        case .keepEarlyTyping(let result, let typed):
+            run.consumedEarlySteps.insert(result.step.index)
+            let line = EarlyTypingReconciliation.keptLine(typed: typed)
+            activityLog.append(line)
+            checklist.addDone(line)
             return nil
 
         case .native(let action):
