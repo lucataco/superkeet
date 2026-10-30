@@ -1,0 +1,13 @@
+{"timestamp": "2026-10-29 13:43:34.489203-0400", "category": "HotkeyManager", "eventMessage": "Command hotkey pressed"}
+{"timestamp": "2026-10-29 13:43:34.489745-0400", "category": "AppDelegate", "eventMessage": "Command hotkey callback fired"}
+{"timestamp": "2026-10-29 13:43:34.490004-0400", "category": "ListeningSession", "eventMessage": "Listening session started"}
+{"timestamp": "2026-10-29 13:43:38.915342-0400", "category": "SpeculativeLaunch", "eventMessage": "Speculative clauseBoundary launch of TextEdit"}
+{"timestamp": "2026-10-29 13:43:42.179923-0400", "category": "SpeculativeLaunch", "eventMessage": "Last clause held still; running it before the speaker stops"}
+{"timestamp": "2026-10-29 13:43:42.180307-0400", "category": "SpeculativeLaunch", "eventMessage": "Speculative press_shortcut for clause #2 (partial #9)"}
+{"timestamp": "2026-10-29 13:43:42.481330-0400", "category": "ListeningSession", "eventMessage": "Pause detected; dispatching the utterance"}
+{"timestamp": "2026-10-29 13:43:42.686026-0400", "category": "AgentSession", "eventMessage": "Action session finished: <private>"}
+{"timestamp": "2026-10-29 13:43:45.599659-0400", "category": "ListeningSession", "eventMessage": "Pause detected; dispatching the utterance"}
+{"timestamp": "2026-10-29 13:43:45.704808-0400", "category": "AgentSession", "eventMessage": "Action session finished: <private>"}
+{"timestamp": "2026-10-29 13:43:54.881615-0400", "category": "HotkeyManager", "eventMessage": "Command hotkey pressed"}
+{"timestamp": "2026-10-29 13:43:54.881683-0400", "category": "AppDelegate", "eventMessage": "Command hotkey callback fired"}
+{"timestamp": "2026-10-29 13:43:54.942031-0400", "category": "ListeningSession", "eventMessage": "Listening session ended (cancel)"}

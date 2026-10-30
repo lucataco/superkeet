@@ -1,0 +1,14 @@
+{
+ "started": "2026-10-29T14:26:25.712",
+ "jitter_ms": 443,
+ "loadavg_before": 2.29,
+ "lead_ms": 1943,
+ "observer_exit": 0,
+ "loadavg_after": 1.92,
+ "errors": [],
+ "settled": true,
+ "planner_guard_fired_at": [
+  1793298393726
+ ],
+ "icloud_files": []
+}

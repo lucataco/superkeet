@@ -1,0 +1,16 @@
+{"timestamp": "2026-10-29 14:26:25.867134-0400", "category": "HotkeyManager", "eventMessage": "Command hotkey pressed"}
+{"timestamp": "2026-10-29 14:26:25.867184-0400", "category": "AppDelegate", "eventMessage": "Command hotkey callback fired"}
+{"timestamp": "2026-10-29 14:26:25.867350-0400", "category": "ListeningSession", "eventMessage": "Listening session started"}
+{"timestamp": "2026-10-29 14:26:29.678979-0400", "category": "SpeculativeLaunch", "eventMessage": "Speculative clauseBoundary launch of TextEdit"}
+{"timestamp": "2026-10-29 14:26:32.230424-0400", "category": "ListeningSession", "eventMessage": "Pause detected; dispatching the utterance"}
+{"timestamp": "2026-10-29 14:26:33.579998-0400", "category": "ActionPlanner", "eventMessage": "Planning with 26/35 tools (budget 5792 tokens)"}
+{"timestamp": "2026-10-29 14:26:33.660773-0400", "category": "HotkeyManager", "eventMessage": "Escape pressed while active — cancelling"}
+{"timestamp": "2026-10-29 14:26:33.660792-0400", "category": "AppDelegate", "eventMessage": "Escape callback fired — cancelling active work"}
+{"timestamp": "2026-10-29 14:26:33.694582-0400", "category": "ListeningSession", "eventMessage": "Listening session ended (cancel)"}
+{"timestamp": "2026-10-29 14:26:33.715737-0400", "category": "AgentSession", "eventMessage": "Action session finished: <private>"}
+{"timestamp": "2026-10-29 14:26:44.559816-0400", "category": "HotkeyManager", "eventMessage": "Command hotkey pressed"}
+{"timestamp": "2026-10-29 14:26:44.559873-0400", "category": "AppDelegate", "eventMessage": "Command hotkey callback fired"}
+{"timestamp": "2026-10-29 14:26:44.560132-0400", "category": "ListeningSession", "eventMessage": "Listening session started"}
+{"timestamp": "2026-10-29 14:26:45.710569-0400", "category": "HotkeyManager", "eventMessage": "Command hotkey pressed"}
+{"timestamp": "2026-10-29 14:26:45.710657-0400", "category": "AppDelegate", "eventMessage": "Command hotkey callback fired"}
+{"timestamp": "2026-10-29 14:26:45.729774-0400", "category": "ListeningSession", "eventMessage": "Listening session ended (cancel)"}

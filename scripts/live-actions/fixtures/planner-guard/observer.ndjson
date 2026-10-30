@@ -1,0 +1,30 @@
+{"audio_s":10.078958333333333,"event":"harness_start","lead_ms":1943,"out_device":"BlackHole 2ch","output_latency_ms":0,"t":1793298385834,"tail_ms":6000,"targets":["com.apple.TextEdit"]}
+{"bundle":"com.apple.finder","event":"frontmost","t":1793298385835}
+{"bundle":"com.apple.TextEdit","event":"target_running","running":false,"t":1793298385835}
+{"event":"hotkey_start","t":1793298385933}
+{"event":"hud","t":1793298385971,"text":"Listening | Press ⌥ Space to stop | Go ahead, I’m listening."}
+{"event":"hud","t":1793298386086,"text":"Listening… | Press ⌥ Space to stop | Go ahead, I’m listening."}
+{"event":"audio_play","ms":0,"t":1793298387880}
+{"event":"hud","ms":822,"t":1793298388703,"text":"Listening… | Press ⌥ Space to stop | Can you open"}
+{"event":"hud","ms":1324,"t":1793298389204,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text and"}
+{"event":"hud","ms":1823,"t":1793298389703,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? | Opening TextEdit…"}
+{"bundle":"com.apple.TextEdit","event":"target_running","ms":1837,"running":true,"t":1793298389718}
+{"bundle":"com.apple.TextEdit","count":0,"event":"target_windows","focused":"","ms":1851,"subroles":[],"t":1793298389732,"titles":[]}
+{"bundle":"com.apple.TextEdit","event":"target_text","ms":1852,"t":1793298389732,"texts":[]}
+{"bundle":"com.apple.TextEdit","event":"frontmost","ms":1892,"t":1793298389773}
+{"event":"hud","ms":1940,"t":1793298389821,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? | Opened TextEdit"}
+{"bundle":"com.apple.TextEdit","count":0,"event":"target_windows","focused":"Open","ms":2322,"subroles":[],"t":1793298390202,"titles":[]}
+{"bundle":"com.apple.TextEdit","count":1,"event":"target_windows","focused":"Open","ms":2346,"subroles":["AXStandardWindow"],"t":1793298390226,"titles":["Open"]}
+{"event":"hud","ms":2347,"t":1793298390228,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? Uh | Opened TextEdit"}
+{"event":"hud","ms":2856,"t":1793298390736,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? And one | Opened TextEdit"}
+{"event":"hud","ms":3357,"t":1793298391237,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? And once you're there. | Opened TextEdit"}
+{"event":"hud","ms":3864,"t":1793298391744,"text":"Listening… | Press ⌥ Space to stop | Can you open up Text Edit for me? And once you're there? | Opened TextEdit"}
+{"event":"hud","ms":4372,"t":1793298392252,"text":"Transcribing… | Press ⌥ Space to stop · 1 command so far | Can you open up Text Edit for me? And once you're there? | Opened TextEdit"}
+{"event":"hud","ms":4562,"t":1793298392442,"text":"Working… | Step 2 of 2 · “Can you open up Text Edit for me? And once you're there, can you create” | Opened TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create | Just Do It · destructive tools still ask | Listening: Go ahead, I’m listening."}
+{"event":"hud","ms":4906,"t":1793298392786,"text":"Working… | Step 2 of 2 · “Can you open up Text Edit for me? And once you're there, can you create” | Opened TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create | Just Do It · destructive tools still ask | Listening: And you're done."}
+{"event":"hud","ms":5419,"t":1793298393299,"text":"Working… | Step 2 of 2 · “Can you open up Text Edit for me? And once you're there, can you create” | Opened TextEdit while you were speaking | Step 1 of 2: Can you open up Text Edit for me | Open App | Already done; result reused | Step 2 of 2: can you create | Just Do It · destructive tools still ask | Listening: A new document."}
+{"bundle":"com.apple.TextEdit","count":0,"event":"target_windows","focused":"","ms":5799,"subroles":[],"t":1793298393679,"titles":[]}
+{"event":"hud","ms":5850,"t":1793298393730,"text":""}
+{"event":"tail_done","ms":16106,"t":1793298403986}
+{"event":"hotkey_stop","ms":16738,"t":1793298404618}
+{"event":"poll_stats","hud":{"max_poll_ms":41,"polls":326,"slow_polls":0},"ms":16738,"t":1793298404618,"targets":{"max_poll_ms":204,"polls":686,"slow_polls":2},"workspace":{"max_poll_ms":1,"polls":1662,"slow_polls":0}}

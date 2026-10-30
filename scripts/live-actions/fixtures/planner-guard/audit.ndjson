@@ -1,0 +1,1 @@
+{"timestamp":"2026-10-29T18:26:29Z","detail":"Speculatively launched while speaking (clause boundary, partial #3). Opened TextEdit (pid 41203, com.apple.TextEdit). No window has appeared yet.","arguments":"{\"name\":\"TextEdit\"}","toolName":"open_app","serverName":"superkeet","risk":"mutating","outcome":"speculative","sinceCommandMs":3728}

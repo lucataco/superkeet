@@ -1,0 +1,16 @@
+{
+	"name": "textedit-three-steps",
+	"voice": "Puck",
+	"start_state": {"com.apple.TextEdit": "quit"},
+	"utterances": [
+		{"text": "Can you open up TextEdit for me,", "pause_ms": 200},
+		{"text": "and once you're there, can you create a new document?", "pause_ms": 550},
+		{"text": "And let's make the title say hello.", "pause_ms": 2000}
+	],
+	"expect": [
+		{"id": "open", "after": "TextEdit", "probe": {"frontmost": "com.apple.TextEdit"}, "budget_ms": 700},
+		{"id": "new_doc", "after": "document?", "probe": {"new_window": "com.apple.TextEdit"}, "budget_ms": 700},
+		{"id": "hello", "after": "hello.", "probe": {"focused_text_contains": "hello"}, "budget_ms": 700}
+	],
+	"forbid": ["take_split", "planner_call", "duplicate_dispatch", "success_without_effect"]
+}
