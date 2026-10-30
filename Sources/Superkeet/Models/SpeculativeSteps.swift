@@ -165,7 +165,8 @@ enum TrailingDecision: Equatable, Sendable {
 /// - A clause is **complete** once the next clause has begun (a separator and a new instruction
 ///   follow it), so its words are no longer being spoken. Complete native clauses run in order.
 /// - The **last** clause is still being spoken, so `TrailingPolicy` decides when it may commit
-///   before the speaker stops. An open or a URL commits on its first unambiguous sighting. A
+///   before the speaker stops. An app open commits on its first unambiguous sighting, and a page
+///   once its sentence ends or it holds still, so “in Safari” can't open it twice. A
 ///   shortcut (⌘N, ⌘T, Photo Booth's shutter), a web search once the recogniser has punctuated
 ///   the end of the sentence, typing, and a URL whose ending could still grow commit when the
 ///   latest partial ends the sentence and the engine's latest tick reports 300 ms of silence.
