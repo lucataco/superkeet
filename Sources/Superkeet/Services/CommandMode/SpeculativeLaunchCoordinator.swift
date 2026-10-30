@@ -282,9 +282,13 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         return Session(id: id, detector: detector, stepDetector: stepDetector, policy: policy)
     }
 
+    private func isCurrentTake(_ tick: EngineTick, of session: Session) -> Bool {
+        tick.sessionID == session.id
+    }
+
     private func hear(_ tick: EngineTick) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let session, session.id == tick.sessionID, isEnabled, mayRunEarly(session) else { return }
+        guard let session, isCurrentTake(tick, of: session), isEnabled, mayRunEarly(session) else { return }
         for step in session.stepDetector.observe(tick) {
             speculativeLog.info("The sentence ended in \(String(describing: tick.trailingSilence), privacy: .public) of silence; running its last clause before the speaker stops")
             run(step, in: session)

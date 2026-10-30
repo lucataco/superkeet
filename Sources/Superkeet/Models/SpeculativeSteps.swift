@@ -64,7 +64,7 @@ struct SpeculativeHandoff: Sendable {
 
 enum TrailingPolicy: Equatable, Sendable {
     case firstSighting
-    case sentenceEndOrHeldStill
+    case waitForBrowserName
     case confirmed
     case confirmedAtSentenceEnd
     case silentSentenceEnd
@@ -84,7 +84,7 @@ enum TrailingPolicy: Equatable, Sendable {
         case .openURL(let url, _):
             if SpeculativeStepDetector.isOpenEndedSearch(url) { return .confirmedAtSentenceEnd }
             if SpokenURL.topLevelDomainMayGrow(in: url) { return .confirmed }
-            return opensOnSight ? .sentenceEndOrHeldStill : .confirmed
+            return opensOnSight ? .waitForBrowserName : .confirmed
         }
     }
 
@@ -92,7 +92,7 @@ enum TrailingPolicy: Equatable, Sendable {
         switch self {
         case .firstSighting:
             return .commit(.firstSighting)
-        case .sentenceEndOrHeldStill:
+        case .waitForBrowserName:
             if evidence.endsSentence { return .commit(.firstSighting) }
             return evidence.heldStill ? .commit(.heldStill) : .watch
         case .afterTheSpeakerMoves:
