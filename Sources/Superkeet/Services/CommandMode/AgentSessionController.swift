@@ -81,6 +81,7 @@ final class AgentSessionController: ObservableObject {
         var speculative: SpeculativeLaunchResult?
         var earlySteps: [SpeculativeStepResult] = []
         var consumedEarlySteps: Set<Int> = []
+        var earlyStepLines: [Int: Int] = [:]
         var openedApps: [NativeLaunchedApp] = []
         var focusTerms: Set<String> = []
         var windowReadyProcesses: Set<Int32> = []
@@ -232,7 +233,9 @@ final class AgentSessionController: ObservableObject {
             run.earlySteps.append(result)
             if result.succeeded {
                 activityLog.append("\(result.doneDescription) while you were speaking")
-                checklist.addDone(result.step.action.lineDoneTitle(clause: result.step.clause, output: result.output))
+                run.earlyStepLines[result.step.index] = checklist.addDone(
+                    result.step.action.lineDoneTitle(clause: result.step.clause, output: result.output)
+                )
                 if let launched = result.launchedApp {
                     run.openedApps.removeAll { $0.processIdentifier == launched.processIdentifier }
                     run.openedApps.append(launched)
@@ -359,7 +362,7 @@ final class AgentSessionController: ObservableObject {
         case alreadyDone(appName: String)
         case earlyStep(SpeculativeStepResult)
         case typeRemainder(SpeculativeStepResult, TypeTarget)
-        case keepEarlyTyping(SpeculativeStepResult, typed: String)
+        case keepEarlyTyping(SpeculativeStepResult, typed: String, final: String)
         case native(NativeOpenAction)
         case shortcut(NativeAppRecipe, target: String)
         case typeText(TypeTarget)
@@ -398,7 +401,7 @@ final class AgentSessionController: ObservableObject {
         switch reconciliation {
         case .alreadyTyped: return .earlyStep(done)
         case .typeRemainder(let rest): return .typeRemainder(done, TypeTarget(name: said.name, text: rest))
-        case .keepTyped: return .keepEarlyTyping(done, typed: typed)
+        case .keepTyped: return .keepEarlyTyping(done, typed: typed, final: said.text)
         }
     }
 
@@ -448,7 +451,7 @@ final class AgentSessionController: ObservableObject {
             case .typeRemainder(_, let rest):
                 let action = NativeOpenAction.typeText(app: rest.name, text: rest.text)
                 steps.append(nativeStep(number: number, clause: clause, action: action))
-            case .keepEarlyTyping(let result, _):
+            case .keepEarlyTyping(let result, _, _):
                 steps.append(.init(number: number, text: clause.text, summary: "Already typed: \(result.doneDescription) (while you were speaking)", route: .alreadyDone))
             case .native(let action):
                 if case .openApp(let name) = action {
@@ -501,11 +504,15 @@ final class AgentSessionController: ObservableObject {
             activityLog.append("Already typed: \(result.doneDescription)")
             return try await performTypeText(rest, clause: clause.text, run: run)
 
-        case .keepEarlyTyping(let result, let typed):
+        case .keepEarlyTyping(let result, let typed, let final):
             run.consumedEarlySteps.insert(result.step.index)
-            let line = EarlyTypingReconciliation.keptLine(typed: typed)
+            let line = EarlyTypingReconciliation.keptLine(typed: typed, final: final)
             activityLog.append(line)
-            checklist.addDone(line)
+            if let earlyLine = run.earlyStepLines[result.step.index] {
+                checklist.retitle(line: earlyLine, to: line)
+            } else {
+                checklist.addDone(line)
+            }
             return nil
 
         case .native(let action):

@@ -25,9 +25,9 @@ final class EarlyTypingReconciliationTests: XCTestCase {
     }
 
     func testTheHUDLineSaysWhatWasTypedEarly() {
-        XCTAssertEqual(EarlyTypingReconciliation.keptLine(typed: "hello"), "Typed “hello” early. The final words differed, so nothing more was typed.")
+        XCTAssertEqual(EarlyTypingReconciliation.keptLine(typed: "hello", final: "help"), "Typed “hello” early, not “help”")
         let long = String(repeating: "word ", count: 30)
-        XCTAssertTrue(EarlyTypingReconciliation.keptLine(typed: long).contains("…"), "A long text is clipped like every other line.")
+        XCTAssertTrue(EarlyTypingReconciliation.keptLine(typed: long, final: "help").contains("…"), "A long text is clipped like every other line.")
     }
 }
 
@@ -77,9 +77,8 @@ final class EarlyTypingHandoffTests: XCTestCase {
     func testADifferentTextTypesNothingAndSaysWhatWasTypedEarly() async throws {
         let outcome = try await finalCommand("type goodbye in Notes.", typedEarly: "hello")
         XCTAssertEqual(outcome.executedTexts, [])
-        let line = "Typed “hello” early. The final words differed, so nothing more was typed."
-        XCTAssertEqual(outcome.controller.checklist.lines.filter { $0.title == line }.count, 1, "One plain line.")
-        XCTAssertTrue(outcome.controller.activityLog.contains(line), "\(outcome.controller.activityLog)")
+        XCTAssertEqual(outcome.controller.checklist.lines.map(\.title), ["Typed “hello” early, not “goodbye”"], "The early line is retitled, not joined by a second.")
+        XCTAssertEqual(outcome.controller.checklist.lines.map(\.status), [.done])
     }
 
     func testAnExtensionInTheLastClauseOfACompoundCommandTypesOnlyTheSuffix() async throws {

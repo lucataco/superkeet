@@ -26,8 +26,8 @@ enum EarlyTypingReconciliation: Equatable, Sendable {
         return .typeRemainder(String(final.text[prefix.upperBound...]))
     }
 
-    /// The one line the HUD shows when nothing more is typed.
-    static func keptLine(typed: String) -> String {
-        "Typed “\(NativeActionExecutor.clip(typed, limit: 40))” early. The final words differed, so nothing more was typed."
+    /// The line that replaces the early line in the HUD when nothing more is typed.
+    static func keptLine(typed: String, final: String) -> String {
+        "Typed “\(NativeActionExecutor.clip(typed, limit: 40))” early, not “\(NativeActionExecutor.clip(final, limit: 40))”"
     }
 }
