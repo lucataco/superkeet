@@ -30,10 +30,9 @@ struct SpeculativeStepResult: Equatable, Sendable {
 
     var doneDescription: String {
         guard let output else { return summary }
-        var text = output.replacingOccurrences(of: #"\s*\(pid \d+(?:, [^)]*)?\)"#, with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"\.\s*(?:Its window is on screen\.|No window has appeared yet\.)\z"#, with: "", options: .regularExpression)
+        var text = ActionLineText.plain(output)
         if text.hasSuffix(".") { text.removeLast() }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text
     }
 }
 

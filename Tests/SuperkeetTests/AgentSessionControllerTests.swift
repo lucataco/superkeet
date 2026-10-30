@@ -7,6 +7,7 @@ final class AgentSessionControllerTests: XCTestCase {
     final class FakeRouter: ActionRouting {
         var specs: [ActionToolSpec]
         var failure: Error?
+        var firstCallFailure: Error?
         var preparationFailure: Error?
         var outputs: [String: String] = [:]
         var planDecision: ActionPlanApprovalDecision?
@@ -43,6 +44,10 @@ final class AgentSessionControllerTests: XCTestCase {
             arguments.append(argumentsJSON)
             self.dictated.append(dictated)
             if let failure { throw failure }
+            if let firstCallFailure {
+                self.firstCallFailure = nil
+                throw firstCallFailure
+            }
             if executed.count <= executionGates.count { return try await executionGates[executed.count - 1].wait() }
             return outputs[spec.toolName] ?? "tool-output"
         }
@@ -86,6 +91,24 @@ final class AgentSessionControllerTests: XCTestCase {
             }
             onEvent(.message(result))
             return result
+        }
+    }
+
+    final class RecoveringPlanner: ActionPlanning {
+        func run(
+            task: String,
+            tools: [ActionToolSpec],
+            maxSteps: Int,
+            execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String,
+            onEvent: @escaping @Sendable (ActionPlanEvent) -> Void
+        ) async throws -> String {
+            let spec = tools.first { $0.serverID != NativeOpenAction.serverID } ?? tools[0]
+            do {
+                _ = try await execute(spec, "{\"n\":0}")
+            } catch {
+                _ = try await execute(spec, "{\"n\":1}")
+            }
+            return "The page is about cats."
         }
     }
 
@@ -949,7 +972,7 @@ final class AgentSessionControllerTests: XCTestCase {
         }
     }
 
-    func testChecklistTracksStepsToolsAndTheEarlyLaunch() async throws {
+    func testChecklistListsTheEarlyLaunchAndTheShortcutAsOneLineEach() async {
         await withPolicy(.readOnlyAuto) {
             let router = FakeRouter(specs: [])
             router.preparationFailure = ActionExecutionError.noMCPServersEnabled
@@ -959,34 +982,180 @@ final class AgentSessionControllerTests: XCTestCase {
             controller.handleCommand("open the notes app and create a new note", speculative: speculativeLaunch())
             await waitUntilFinished(controller)
 
-            let items = controller.checklist.items
-            XCTAssertEqual(items.map(\.kind), [
-                .speculative, .step(number: 1, total: 2), .step(number: 2, total: 2), .note, .tool
-            ])
-            XCTAssertEqual(items.map(\.status), [.done, .skipped, .done, .info, .done])
-            XCTAssertEqual(items[0].title, "Opened Notes while you were speaking")
-            XCTAssertEqual(items[1].detail, "Already done while you were speaking")
-            XCTAssertEqual(items[3].title, "Using ⌘N to create a new note in Notes")
-            XCTAssertEqual(items[4].title, "Press Shortcut")
+            XCTAssertEqual(controller.checklist.lines, [
+                ActionLine(status: .done, title: "Opened Notes"),
+                ActionLine(status: .done, title: "New note")
+            ], "The open happened while speaking and the clause that named it adds no second line; the ⌘N is one line, not a note plus a tool row.")
+            XCTAssertNil(controller.checklist.outcomeText(message: "tool-output", succeeded: true))
         }
     }
 
-    func testChecklistMarksDeniedToolsAndUnfinishedStepsOnFailure() async {
-        let router = FakeRouter(specs: [makeSpec()], failure: ActionExecutionError.approvalDenied("echo"))
-        let planner = FakePlanner(calls: 1)
-        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
-        controller.handleCommand("do the thing")
+    func testEarlyLaunchAndEarlyShortcutShowOncePerSpokenActionAcrossTheTextEditSequence() async throws {
+        try await withPolicy(.readOnlyAuto) {
+            let router = FakeRouter(specs: [])
+            router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+            router.outputs["type_text"] = "Typed “hello” in TextEdit (pid 77)."
+            let newDocument = SpeculativeStep(index: 1, clause: "can you create a new document",
+                                              action: .pressShortcut(app: "TextEdit", shortcut: try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))),
+                                              sequence: 6)
+            let handoff = SpeculativeHandoff(
+                launch: speculativeLaunch(app: "TextEdit"),
+                steps: [SpeculativeStepRun(step: newDocument, outcome: Task { .success("Pressed ⌘N in TextEdit (pid 77).") })]
+            )
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                    resolveApp: { [self] in textEditResolver($0) }, isAppRunning: { _ in true })
+            controller.handleCommand(
+                "Can you open up TextEdit for me? And once you're there, can you create a new document? And let's make the title say hello.",
+                handoff: handoff
+            )
+            await waitUntilFinished(controller)
+
+            XCTAssertEqual(router.executed, ["type_text"], "Only the typing was left to do.")
+            XCTAssertEqual(controller.checklist.lines, [
+                ActionLine(status: .done, title: "Opened TextEdit"),
+                ActionLine(status: .done, title: "New document"),
+                ActionLine(status: .done, title: "Typed “hello”")
+            ])
+            XCTAssertNil(controller.checklist.outcomeText(message: "Typed “hello” in TextEdit (pid 77).", succeeded: true),
+                         "Three lines already say what happened, so the raw tool message stays off the card.")
+            assertPlain(controller.checklist.lines)
+        }
+    }
+
+    func testTheSameSequenceWithNothingEarlyStillListsThreeLines() async {
+        await withPolicy(.readOnlyAuto) {
+            let router = FakeRouter(specs: [])
+            router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+            router.outputs["open_app"] = NativeLaunchedApp(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit", processIdentifier: 4039, windowReady: true).summary
+            router.outputs["press_shortcut"] = "Pressed ⌘N in TextEdit (pid 4039)."
+            router.outputs["type_text"] = "Typed “hello” in TextEdit (pid 4039)."
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                    resolveApp: { [self] in textEditResolver($0) }, isAppRunning: { _ in true })
+            controller.handleCommand("Can you open up text edit for me? And can you create a new document? And let's make the title say hello.")
+            await waitUntilFinished(controller)
+
+            XCTAssertEqual(router.executed, ["open_app", "press_shortcut", "type_text"])
+            XCTAssertEqual(controller.checklist.lines.map(\.title), ["Opened TextEdit", "New document", "Typed “hello”"])
+            XCTAssertEqual(Set(controller.checklist.lines.map(\.status)), [.done])
+        }
+    }
+
+    func testAPlannerStepWhoseCommandFailsIsOneFailedLineWithAHumanReason() async {
+        let router = FakeRouter(specs: [makeSpec(name: "get_browser_state")], failure: ActionExecutionError.timedOut)
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { FakePlanner(calls: 1) })
+        controller.handleCommand("summarize the page")
         await waitUntilFinished(controller)
-        XCTAssertEqual(controller.checklist.items.map(\.status), [.denied])
-        XCTAssertEqual(controller.checklist.items.first?.detail, "Not approved")
+
+        XCTAssertEqual(controller.checklist.lines, [
+            ActionLine(status: .failed(reason: "The action took too long and was stopped."), title: "Summarize the page")
+        ], "One line for the step, the command's message as its reason, and no row for the tool call.")
+        XCTAssertNil(controller.checklist.outcomeText(message: ActionExecutionError.timedOut.localizedDescription, succeeded: false))
+        assertPlain(controller.checklist.lines)
 
         let second = FakeRouter(specs: [makeSpec()], failure: ActionExecutionError.timedOut)
         let compound = AgentSessionController(settings: .shared, router: second, plannerFactory: { FakePlanner(calls: 1) })
         compound.handleCommand("look around and then report back")
         await waitUntilFinished(compound)
-        XCTAssertEqual(compound.checklist.items.map(\.kind).first, .step(number: 1, total: 2))
-        XCTAssertEqual(compound.checklist.items.map(\.status), [.failed, .failed], "The step that was running when the tool failed is marked failed too.")
-        XCTAssertEqual(compound.checklist.items.count, 2, "Step 2 never started, so it has no row.")
+        XCTAssertEqual(compound.checklist.lines.map(\.title), ["Look around"], "The second step never started, so it has no line.")
+        XCTAssertEqual(compound.checklist.lines.map(\.status), [.failed(reason: "The action took too long and was stopped.")])
+    }
+
+    func testAToolThatFailsButThePlannerRecoversFromLeavesTheLineDone() async {
+        let router = FakeRouter(specs: [makeSpec(name: "get_browser_state")])
+        router.firstCallFailure = ActionExecutionError.timedOut
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { RecoveringPlanner() })
+        controller.handleCommand("summarize the page")
+        await waitUntilFinished(controller)
+
+        XCTAssertEqual(router.executed.count, 2, "The planner retried after the first call failed.")
+        XCTAssertEqual(controller.checklist.lines, [ActionLine(status: .done, title: "Summarize the page")])
+        XCTAssertNil(controller.checklist.lines.first?.reason)
+        XCTAssertEqual(controller.checklist.outcomeText(message: "unused", succeeded: true), "The page is about cats.")
+        assertPlain(controller.checklist.lines)
+    }
+
+    func testAnApprovalDeniedForAToolIsADeniedLine() async {
+        let router = FakeRouter(specs: [makeSpec()], failure: ActionExecutionError.approvalDenied("echo"))
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { FakePlanner(calls: 1) })
+        controller.handleCommand("do the thing")
+        await waitUntilFinished(controller)
+
+        XCTAssertEqual(controller.checklist.lines, [ActionLine(status: .denied, title: "Do the thing")])
+        XCTAssertEqual(controller.checklist.lines.first?.reason, "Not approved")
+        assertPlain(controller.checklist.lines)
+    }
+
+    func testACommandThatCannotStartFailsItsLineWithTheCommandsMessage() async {
+        let router = FakeRouter(specs: [makeSpec()])
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil })
+        controller.handleCommand("do the thing")
+        await waitUntilFinished(controller)
+
+        let message = ActionExecutionError.unavailable.localizedDescription
+        XCTAssertEqual(controller.phase, .failed(message))
+        XCTAssertEqual(controller.checklist.lines, [ActionLine(status: .failed(reason: message), title: "Do the thing")])
+        XCTAssertNil(controller.checklist.outcomeText(message: message, succeeded: false), "The line already says it.")
+    }
+
+    func testAPlannersOwnAnswerSurvivesAndSingleOpensAreOneLine() async {
+        let router = FakeRouter(specs: [makeSpec()])
+        let planner = ContextualPlanner()
+        planner.results = ["I couldn't find any active title that says hello."]
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+        controller.handleCommand("check that the title says hello")
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.checklist.lines, [ActionLine(status: .done, title: "Check that the title says hello")])
+        XCTAssertEqual(controller.checklist.outcomeText(message: "unused", succeeded: true), "I couldn't find any active title that says hello.")
+
+        let opener = FakeRouter(specs: [])
+        opener.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        opener.outputs["open_app"] = NativeLaunchedApp(name: "Notes", bundleIdentifier: "com.apple.Notes", processIdentifier: 91, windowReady: true).summary
+        let single = AgentSessionController(settings: .shared, router: opener, plannerFactory: { nil }, resolveApp: { [self] in fixtureResolver($0) })
+        single.handleCommand("open the notes app")
+        await waitUntilFinished(single)
+        XCTAssertEqual(single.checklist.lines, [ActionLine(status: .done, title: "Opened Notes")])
+    }
+
+    func testAnEarlyLaunchThatSatisfiesASingleOpenAddsNoSecondLine() async {
+        let router = FakeRouter(specs: [])
+        router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                resolveApp: { [self] in fixtureResolver($0) })
+        controller.handleCommand("open the notes app", speculative: speculativeLaunch(delay: .milliseconds(20)))
+        await waitUntilFinished(controller)
+        XCTAssertEqual(controller.checklist.lines, [ActionLine(status: .done, title: "Opened Notes")])
+        XCTAssertTrue(router.executed.isEmpty)
+    }
+
+    func testNoLineEverShowsProcessDetailsTheStepWordingOrTheEarlyWording() async {
+        await withPolicy(.readOnlyAuto) {
+            let router = FakeRouter(specs: [])
+            router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+            router.outputs["press_shortcut"] = "Pressed ⌘N in Notes (pid 91, com.apple.Notes)."
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { nil },
+                                                    resolveApp: { [self] in fixtureResolver($0) })
+            controller.handleCommand("open the notes app and create a new note", speculative: speculativeLaunch())
+            await waitUntilFinished(controller)
+            XCTAssertFalse(controller.checklist.isEmpty)
+            assertPlain(controller.checklist.lines)
+        }
+    }
+
+    private func assertPlain(_ lines: [ActionLine], file: StaticString = #filePath, line: UInt = #line) {
+        let banned = ["pid", "com.", "Step ", "while you were speaking", "Open App", "Press Shortcut", "Type Text", "List Windows", "Already done"]
+        for entry in lines {
+            for text in [entry.title, entry.reason ?? ""] {
+                for word in banned {
+                    XCTAssertFalse(text.contains(word), "“\(text)” contains “\(word)”", file: file, line: line)
+                }
+            }
+        }
+    }
+
+    private func textEditResolver(_ name: String) -> URL? {
+        let apps = ["TextEdit", "Notes"].map { URL(fileURLWithPath: "/fixture/Applications/\($0).app") }
+        return AppResolver(directories: [URL(fileURLWithPath: "/fixture/Applications")], applicationsInDirectory: { _ in apps })
+            .resolve(name)
     }
 
     func testResetClearsTheChecklist() async {

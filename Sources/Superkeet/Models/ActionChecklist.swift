@@ -1,126 +1,92 @@
 import Foundation
 
-struct ActionChecklistItem: Identifiable, Equatable, Sendable {
-    enum Kind: Equatable, Sendable {
-        case speculative
-        case step(number: Int, total: Int)
-        case tool
-        case note
-    }
-
-    enum Status: Equatable, Sendable {
-        case pending
-        case running
-        case done
-        case reused
-        case skipped
-        case failed
-        case denied
-        case info
-    }
-
-    let id: UUID
-    let kind: Kind
-    var status: Status
-    var title: String
-    var detail: String?
-
-    init(id: UUID = UUID(), kind: Kind, status: Status, title: String, detail: String? = nil) {
-        self.id = id
-        self.kind = kind
-        self.status = status
-        self.title = title
-        self.detail = detail
-    }
-}
-
 struct ActionChecklist: Equatable, Sendable {
-    private(set) var items: [ActionChecklistItem] = []
-    private var runningToolID: UUID?
+    private(set) var lines: [ActionLine] = []
+    private(set) var replies: [String] = []
+    private var open: Int?
 
-    var isEmpty: Bool { items.isEmpty }
+    var isEmpty: Bool { lines.isEmpty }
 
-    func visibleItems(limit: Int) -> (hidden: Int, items: [ActionChecklistItem]) {
-        guard items.count > limit, limit > 0 else { return (0, items) }
-        var tail = Array(items.suffix(limit))
-        if let step = items.last(where: { if case .step = $0.kind { return true }; return false }), !tail.contains(step) {
-            tail[0] = step
-        }
-        return (items.count - tail.count, tail)
-    }
-
-    mutating func addSpeculative(_ result: SpeculativeLaunchResult) {
-        let name = result.appName
-        if result.launched != nil {
-            let verb = result.action.isActivation ? "Switched to" : "Opened"
-            items.append(.init(kind: .speculative, status: .done, title: "\(verb) \(name) while you were speaking"))
-        } else if let failure = result.failure, failure != "cancelled" {
-            items.append(.init(kind: .speculative, status: .failed, title: "Couldn't open \(name) early", detail: failure))
-        }
-        if result.disagreement {
-            items.append(.init(kind: .note, status: .info, title: "Later speech named a different app; the final command decides"))
+    var hasFailedLine: Bool {
+        lines.contains { line in
+            if case .failed = line.status { return true }
+            return false
         }
     }
 
-    mutating func addEarlyStep(_ result: SpeculativeStepResult) {
-        if result.succeeded {
-            items.append(.init(kind: .speculative, status: .done, title: "\(result.doneDescription) while you were speaking"))
-        } else if let failure = result.failure, failure != "cancelled" {
-            items.append(.init(kind: .speculative, status: .failed, title: "Couldn't \(result.lowercasedSummary) early", detail: failure))
+    var failureTitle: String {
+        hasFailedLine ? "One step didn’t work" : "Couldn’t finish"
+    }
+
+    enum Outcome: Equatable, Sendable {
+        case succeeded
+        case failed(message: String)
+        case cancelled
+    }
+
+    mutating func addDone(_ title: String) {
+        lines.append(ActionLine(status: .done, title: title))
+    }
+
+    mutating func setOpenLine(_ title: String) {
+        let line = ActionLine(status: .running, title: title)
+        if let open {
+            lines[open] = line
+        } else {
+            lines.append(line)
+            open = lines.count - 1
         }
     }
 
-    mutating func addStep(number: Int, total: Int, text: String) {
-        items.append(.init(kind: .step(number: number, total: total), status: .running, title: text))
-    }
-
-    mutating func completeStep(skippedBecause reason: String? = nil) {
-        guard let index = items.lastIndex(where: { if case .step = $0.kind { return true }; return false }) else { return }
-        if let reason {
-            items[index].status = .skipped
-            items[index].detail = reason
-        } else if items[index].status == .running {
-            items[index].status = .done
+    mutating func settleOpenLine(title: String? = nil) {
+        if let open {
+            if let title { lines[open].title = title }
+            if lines[open].status == .running { lines[open].status = .done }
         }
+        open = nil
     }
 
-    mutating func addNote(_ text: String) {
-        items.append(.init(kind: .note, status: .info, title: text))
+    mutating func addReply(_ reply: String) {
+        let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { replies.append(trimmed) }
     }
 
     mutating func apply(_ event: ActionPlanEvent) {
+        guard let open else { return }
         switch event {
-        case .planning, .message:
+        case .planning, .message, .toolFinished, .toolFailed, .toolReused:
             break
-        case .toolStarted(let spec):
-            let item = ActionChecklistItem(kind: .tool, status: .running, title: spec.displayName)
-            items.append(item)
-            runningToolID = item.id
-        case .toolFinished(let spec, _):
-            settleRunningTool(spec, status: .done)
-        case .toolFailed(let spec, let message):
-            settleRunningTool(spec, status: .failed, detail: message)
-        case .toolDenied(let spec):
-            settleRunningTool(spec, status: .denied, detail: "Not approved")
-        case .toolReused(let spec):
-            items.append(.init(kind: .tool, status: .reused, title: spec.displayName, detail: "Already done; result reused"))
+        case .toolStarted:
+            lines[open].status = .running
+        case .toolDenied:
+            lines[open].status = .denied
         }
     }
 
-    mutating func finish(succeeded: Bool) {
-        for index in items.indices where items[index].status == .running {
-            items[index].status = succeeded ? .done : .failed
+    mutating func finish(_ outcome: Outcome) {
+        let status: ActionLine.Status
+        switch outcome {
+        case .succeeded:
+            status = .done
+        case .failed(let message):
+            status = .failed(reason: ActionLineText.reason(from: message))
+        case .cancelled:
+            status = .failed(reason: ActionLineText.reason(from: ActionExecutionError.cancelled.localizedDescription))
         }
-        runningToolID = nil
+        for index in lines.indices where lines[index].status == .running {
+            lines[index].status = status
+        }
+        open = nil
     }
 
-    private mutating func settleRunningTool(_ spec: ActionToolSpec, status: ActionChecklistItem.Status, detail: String? = nil) {
-        if let id = runningToolID, let index = items.firstIndex(where: { $0.id == id }), items[index].title == spec.displayName {
-            items[index].status = status
-            items[index].detail = detail
-        } else {
-            items.append(.init(kind: .tool, status: status, title: spec.displayName, detail: detail))
+    func outcomeText(message: String, succeeded: Bool) -> String? {
+        if succeeded, !replies.isEmpty { return replies.joined(separator: " ") }
+        let plain = ActionLineText.plain(message)
+        if succeeded {
+            guard lines.isEmpty else { return nil }
+            return plain.isEmpty ? "All done." : plain
         }
-        runningToolID = nil
+        guard !lines.contains(where: { $0.reason != nil }), !plain.isEmpty else { return nil }
+        return plain
     }
 }

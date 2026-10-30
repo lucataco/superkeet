@@ -232,6 +232,7 @@ final class AgentSessionController: ObservableObject {
             run.earlySteps.append(result)
             if result.succeeded {
                 activityLog.append("\(result.doneDescription) while you were speaking")
+                checklist.addDone(result.step.action.lineDoneTitle(clause: result.step.clause, output: result.output))
                 if let launched = result.launchedApp {
                     run.openedApps.removeAll { $0.processIdentifier == launched.processIdentifier }
                     run.openedApps.append(launched)
@@ -239,7 +240,6 @@ final class AgentSessionController: ObservableObject {
             } else if let failure = result.failure, failure != "cancelled" {
                 activityLog.append("Couldn't \(result.lowercasedSummary) early: \(failure)")
             }
-            checklist.addEarlyStep(result)
         }
         settings.actionStatusText = "Thinking…"
     }
@@ -254,13 +254,13 @@ final class AgentSessionController: ObservableObject {
         if result.launched != nil {
             let verb = result.action.isActivation ? "Switched to" : "Opened"
             activityLog.append("\(verb) \(name) while you were speaking")
+            checklist.addDone(result.doneLineTitle)
         } else if let failure = result.failure, failure != "cancelled" {
             activityLog.append("Couldn't open \(name) early: \(failure)")
         }
         if result.disagreement {
             activityLog.append("Later speech named a different app; the final command decides")
         }
-        checklist.addSpeculative(result)
         settings.actionStatusText = "Thinking…"
     }
 
@@ -303,7 +303,7 @@ final class AgentSessionController: ObservableObject {
             if let action = nativeOpen(for: intent, context: execution.context) {
                 apply(.planning, run: run)
                 do {
-                    let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
+                    let output = try await performNative(action, clause: task, run: run)
                     run.lastApp = NativeLaunchedApp(summary: output) ?? execution.context.currentApp
                     finish(.finished(output.isEmpty ? "Done." : output), run: run)
                     return
@@ -334,13 +334,9 @@ final class AgentSessionController: ObservableObject {
                 run.focusTerms = clause.focusTerms
                 if plan.isCompound {
                     activityLog.append("Step \(execution.context.stepNumber) of \(execution.context.stepCount): \(clause.text)")
-                    checklist.addStep(number: execution.context.stepNumber, total: execution.context.stepCount, text: clause.text)
                 }
                 let output = try await perform(clause, execution: execution, run: run)
                 run.lastApp = execution.context.currentApp
-                if plan.isCompound {
-                    checklist.completeStep(skippedBecause: output == nil ? "Already done while you were speaking" : nil)
-                }
                 if let output, !output.isEmpty { execution.outputs.append(output) }
                 if let output { execution.context.completed.append(.init(clause: clause.text, summary: output)) }
             }
@@ -473,29 +469,30 @@ final class AgentSessionController: ObservableObject {
         case .native(let action):
             apply(.planning, run: run)
             do {
-                let output = try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
+                let output = try await performNative(action, clause: clause.text, run: run)
                 if let launched = NativeLaunchedApp(summary: output) { execution.context.recordOpened(launched) }
                 return output
             } catch let error as NativeOpenActionError {
                 guard case .appNotFound = error else { throw error }
                 execution.resolutionFailure = error
                 if let recipe = NativeAppRecipe.recipe(for: clause.text), let target = recipeTarget(recipe, context: execution.context) {
-                    return try await performShortcut(recipe, target: target, run: run)
+                    return try await performShortcut(recipe, target: target, clause: clause.text, run: run)
                 }
             }
 
         case .shortcut(let recipe, let target):
             try await settleWindows(execution, run: run)
-            return try await performShortcut(recipe, target: target, run: run)
+            return try await performShortcut(recipe, target: target, clause: clause.text, run: run)
 
         case .typeText(let target):
             try await settleWindows(execution, run: run)
-            return try await performTypeText(target, run: run)
+            return try await performTypeText(target, clause: clause.text, run: run)
 
         case .planned:
             break
         }
 
+        checklist.setOpenLine(ActionLineText.clause(clause.text))
         try await settleWindows(execution, run: run)
         let planner = try await preparePlanner(execution, run: run)
         let execute: @Sendable (ActionToolSpec, String) async throws -> String = { [weak self] spec, arguments in
@@ -511,6 +508,19 @@ final class AgentSessionController: ObservableObject {
             Task { @MainActor in self?.apply(event, run: run) }
         }
         for app in run.openedApps where !openedBefore.contains(app) { execution.context.recordOpened(app) }
+        checklist.settleOpenLine()
+        checklist.addReply(output)
+        return output
+    }
+
+    private func performNative(_ action: NativeOpenAction, clause: String, run: RunContext) async throws -> String {
+        let arguments = try action.argumentsJSON()
+        let launchedEarly = speculativeLaunch(satisfying: action.spec, argumentsJSON: arguments, run: run) != nil
+        if !launchedEarly {
+            checklist.setOpenLine(action.lineTitle(clause: clause))
+        }
+        let output = try await performStep(spec: action.spec, argumentsJSON: arguments, dictated: true, run: run)
+        checklist.settleOpenLine(title: action.lineDoneTitle(clause: clause, output: output))
         return output
     }
 
@@ -525,13 +535,10 @@ final class AgentSessionController: ObservableObject {
         }
     }
 
-    private func performShortcut(_ recipe: NativeAppRecipe, target: String, run: RunContext) async throws -> String {
-        let note = "Using \(recipe.shortcut.displayName) to \(recipe.description) in \(target)"
-        activityLog.append(note)
-        checklist.addNote(note)
+    private func performShortcut(_ recipe: NativeAppRecipe, target: String, clause: String, run: RunContext) async throws -> String {
+        activityLog.append("Using \(recipe.shortcut.displayName) to \(recipe.description) in \(target)")
         apply(.planning, run: run)
-        let action = NativeOpenAction.pressShortcut(app: target, shortcut: recipe.shortcut)
-        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
+        return try await performNative(.pressShortcut(app: target, shortcut: recipe.shortcut), clause: clause, run: run)
     }
 
     private func preparePlanner(_ execution: CommandExecution, run: RunContext) async throws -> any ActionPlanning {
@@ -597,13 +604,10 @@ final class AgentSessionController: ObservableObject {
         CommandLeadIn.trim(text).lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
 
-    private func performTypeText(_ target: TypeTarget, run: RunContext) async throws -> String {
-        let note = "Typing “\(NativeActionExecutor.clip(target.text, limit: 40))” in \(target.name)"
-        activityLog.append(note)
-        checklist.addNote(note)
+    private func performTypeText(_ target: TypeTarget, clause: String, run: RunContext) async throws -> String {
+        activityLog.append("Typing “\(NativeActionExecutor.clip(target.text, limit: 40))” in \(target.name)")
         apply(.planning, run: run)
-        let action = NativeOpenAction.typeText(app: target.name, text: target.text)
-        return try await performStep(spec: action.spec, argumentsJSON: action.argumentsJSON(), dictated: true, run: run)
+        return try await performNative(.typeText(app: target.name, text: target.text), clause: clause, run: run)
     }
 
     private struct TypeTarget: Equatable {
@@ -771,7 +775,11 @@ final class AgentSessionController: ObservableObject {
         audit.endTimeline()
         settings.isActionSessionActive = false
         settings.actionStatusText = ""
-        if case .finished = phase { checklist.finish(succeeded: true) } else { checklist.finish(succeeded: false) }
+        switch phase {
+        case .finished: checklist.finish(.succeeded)
+        case .failed(let message): checklist.finish(.failed(message: message))
+        default: checklist.finish(.cancelled)
+        }
         if isListeningSessionActive(), let last = run.lastApp ?? run.openedApps.last ?? run.speculative?.launched {
             carriedApp = last.withWindowReady(true)
         }
