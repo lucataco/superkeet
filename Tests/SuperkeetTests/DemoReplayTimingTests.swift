@@ -5,11 +5,15 @@ import XCTest
 /// detectors the app runs, on a simulated clock, and checks every action is dispatched no later
 /// than the video shows it happening.
 ///
-/// The partials come from `Tests/Fixtures/demo-actions/replay-partials.ndjson`, produced by
-/// `scripts/demo_replay_partials.py` from `demo-audio.wav` with the pinned engine. No
-/// microphone, speakers, model or engine is needed here, so it runs in CI.
+/// The partials and ticks come from `Tests/Fixtures/demo-actions/replay-partials.ndjson`,
+/// produced by `scripts/demo_replay_partials.py` from `demo-audio.wav` with the pinned engine.
+/// The video's visible onsets are in `video-clock.tsv`. No microphone, speakers, model or
+/// engine is needed here, so it runs in CI.
 final class DemoReplayTimingTests: XCTestCase {
     private static let partialLatencyMs = 150
+    /// The engine sends a tick as the audio it covers arrives, before the decode that makes the
+    /// partial, so it lags the audio only by capture buffering, about one 32 ms VAD chunk.
+    private static let tickLatencyMs = 30
     private static let finalLatencyMs = 450
 
     private let directory = URL(fileURLWithPath: "/fixture/Applications")
@@ -29,6 +33,11 @@ final class DemoReplayTimingTests: XCTestCase {
         var partials: [(atMs: Int, sequence: Int, text: String)] = []
         var ticks: [(atMs: Int, silenceMs: Int)] = []
         var final = ""
+    }
+
+    private enum Heard {
+        case partial(PartialTranscript)
+        case tick(EngineTick)
     }
 
     private struct Dispatch {
@@ -112,16 +121,27 @@ final class DemoReplayTimingTests: XCTestCase {
                 }
             }
 
-            for partial in take.partials {
-                let arrival = partial.atMs + Self.partialLatencyMs
+            let heard: [(arrival: Int, order: Int, event: Heard)] =
+                take.ticks.map { tick in
+                    (tick.atMs + Self.tickLatencyMs, 0, .tick(EngineTick(
+                        sessionID: "take", audio: .milliseconds(tick.atMs - take.startMs), trailingSilence: .milliseconds(tick.silenceMs)
+                    )))
+                } + take.partials.map { partial in
+                    (partial.atMs + Self.partialLatencyMs, 1, .partial(PartialTranscript(text: partial.text, isFinal: false, sequence: partial.sequence)))
+                }
+            for (arrival, _, event) in heard.sorted(by: { ($0.arrival, $0.order) < ($1.arrival, $1.order) }) {
                 guard arrival < take.endMs else { break }
                 fireTrailing(before: arrival)
-                let transcript = PartialTranscript(text: partial.text, isFinal: false, sequence: partial.sequence)
-                if let commit = launch.observe(transcript) {
-                    dispatches.append(Dispatch(atMs: arrival, action: .openApp(name: commit.action.app.name), how: "instant launch"))
-                    ran.append(.openApp(name: commit.action.app.name))
+                switch event {
+                case .tick(let tick):
+                    record(steps.observe(tick), at: arrival, how: "sentence ended in silence")
+                case .partial(let transcript):
+                    if let commit = launch.observe(transcript) {
+                        dispatches.append(Dispatch(atMs: arrival, action: .openApp(name: commit.action.app.name), how: "instant launch"))
+                        ran.append(.openApp(name: commit.action.app.name))
+                    }
+                    record(steps.observe(transcript, launchedApp: launch.commit?.action.app, at: date(arrival)), at: arrival, how: "while speaking")
                 }
-                record(steps.observe(transcript, launchedApp: launch.commit?.action.app, at: date(arrival)), at: arrival, how: "while speaking")
             }
             fireTrailing(before: take.endMs)
 

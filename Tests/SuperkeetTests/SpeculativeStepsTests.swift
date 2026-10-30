@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import Superkeet
 
@@ -89,10 +90,13 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertEqual(results[0], [])
         XCTAssertEqual(results[1], [], "The launch detector already opened Notes; the second clause is still being spoken.")
         XCTAssertEqual(results[2], [SpeculativeStep(index: 1, clause: "create a new note", action: .pressShortcut(app: "Notes", shortcut: commandN), sequence: 3)])
-        XCTAssertEqual(results[3], [SpeculativeStep(index: 2, clause: "make the title say hello", action: .typeText(app: "Notes", text: "hello"), sequence: 4)])
-        XCTAssertEqual(detector.steps.count, 2)
-        XCTAssertEqual(detector.handled, 3)
-        XCTAssertFalse(detector.blocked, "\"open Safari\" is the last clause and still open.")
+        XCTAssertEqual(results[3], [
+            SpeculativeStep(index: 2, clause: "make the title say hello", action: .typeText(app: "Notes", text: "hello"), sequence: 4),
+            SpeculativeStep(index: 3, clause: "open Safari", action: .openApp(name: "Safari"), sequence: 4)
+        ], "\"open Safari\" is still being spoken, but an open runs on its first unambiguous sighting.")
+        XCTAssertEqual(detector.steps.count, 3)
+        XCTAssertEqual(detector.handled, 4)
+        XCTAssertFalse(detector.blocked)
     }
 
     func testFinalTextCompletesTheLastClause() {
@@ -207,15 +211,109 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertTrue(SpeculativeStepDetector.isOpenEndedSearch(try XCTUnwrap(NativeOpenAction.webSearchURL(for: "Norbert"))))
     }
 
-    func testTrailingOpenWaitsWhileALongerAppNameIsPossible() {
-        var detector = notesDetector(installed: ["Notes", "Safari", "Safari Technology Preview"])
+    func testALaterClauseOpenRunsOnItsFirstSightingButAnAmbiguousNameWaits() {
         let start = Date(timeIntervalSince1970: 100)
-        _ = detector.observe(PartialTranscript(text: "Open Notes and open Safari", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
-        XCTAssertNil(detector.trailingDeadline, "\"Safari\" may still become \"Safari Technology Preview\".")
-
         var plain = notesDetector(installed: ["Notes", "Safari"])
-        _ = plain.observe(PartialTranscript(text: "Open Notes and open Safari", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
-        XCTAssertEqual(plain.commitStableTrailing(at: start.addingTimeInterval(1)).map(\.action), [.openApp(name: "Safari")])
+        let opened = plain.observe(PartialTranscript(text: "Open Notes and open Safari", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(opened.map(\.action), [.openApp(name: "Safari")], "No second partial and no hold.")
+
+        var ambiguous = notesDetector(installed: ["Notes", "Safari", "Safari Technology Preview"])
+        let waiting = ambiguous.observe(PartialTranscript(text: "Open Notes and open Safari", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(waiting, [], "\"Safari\" may still become \"Safari Technology Preview\".")
+        XCTAssertNil(ambiguous.trailingDeadline)
+        XCTAssertEqual(ambiguous.observe(EngineTick(sessionID: "s", audio: .seconds(3), trailingSilence: .seconds(2))), [], "Not even a long silence settles a name that could grow.")
+        XCTAssertEqual(ambiguous.commitStableTrailing(at: start.addingTimeInterval(10)), [])
+        let moved = ambiguous.observe(PartialTranscript(text: "Open Notes and open Safari and", isFinal: false, sequence: 2), launchedApp: notesApp, at: start)
+        XCTAssertEqual(moved.map(\.action), [.openApp(name: "Safari")], "Once the speaker moves on the name is whole.")
+    }
+
+    func testALaterClauseWebsiteOpensOnFirstSightingButSearchesAndGrowingAddressesDoNot() throws {
+        let start = Date(timeIntervalSince1970: 100)
+        var site = notesDetector()
+        let opened = site.observe(PartialTranscript(text: "Open Notes and go to x.com", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(opened.map(\.action), [.openURL(url: try XCTUnwrap(URL(string: "https://x.com")), browser: nil)])
+
+        var growing = notesDetector()
+        let early = growing.observe(PartialTranscript(text: "Open Notes and go to x dot co", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(early, [], "\"x.co\" may still become \"x.com\".")
+        XCTAssertNotNil(growing.trailingDeadline, "It settles like a shortcut: a confirming partial or the hold.")
+        let confirmed = growing.observe(PartialTranscript(text: "Open Notes and go to x dot co", isFinal: false, sequence: 2), launchedApp: notesApp, at: start.addingTimeInterval(0.5))
+        XCTAssertEqual(confirmed.map(\.action.toolName), ["open_url"])
+
+        var search = notesDetector()
+        XCTAssertEqual(search.observe(PartialTranscript(text: "Open Notes and google search Norbert Wiener", isFinal: false, sequence: 1), launchedApp: notesApp, at: start), [])
+    }
+
+    private func tick(silence: Int, session: String = "s") -> EngineTick {
+        EngineTick(sessionID: session, audio: .seconds(5), trailingSilence: .milliseconds(silence))
+    }
+
+    func testATrailingShortcutRunsOnTheFirstTickWithEnoughSilenceAfterTheSentenceEnds() throws {
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        var detector = notesDetector()
+        let start = Date(timeIntervalSince1970: 100)
+        XCTAssertEqual(detector.observe(PartialTranscript(text: "Open the Notes app and create a new note?", isFinal: false, sequence: 1), launchedApp: notesApp, at: start), [])
+        XCTAssertEqual(detector.observe(tick(silence: 0)), [])
+        XCTAssertEqual(detector.observe(tick(silence: 299)), [], "299 ms is not enough.")
+        let ran = detector.observe(tick(silence: 300))
+        XCTAssertEqual(ran, [SpeculativeStep(index: 1, clause: "create a new note", action: .pressShortcut(app: "Notes", shortcut: commandN), sequence: 1)])
+        XCTAssertEqual(detector.observe(tick(silence: 900)), [], "Runs once.")
+        XCTAssertNil(detector.trailingDeadline)
+    }
+
+    func testTheSilenceBeforeThePartialAlreadyCountsWhenThePartialEndsTheSentence() {
+        var detector = notesDetector()
+        XCTAssertEqual(detector.observe(tick(silence: 400)), [])
+        let ran = detector.observe(PartialTranscript(text: "Open the Notes app and create a new note?", isFinal: false, sequence: 1), launchedApp: notesApp)
+        XCTAssertEqual(ran.map(\.action.toolName), ["press_shortcut"], "The engine sends the tick of a take's audio before the partial decoded from it.")
+    }
+
+    func testSilenceAloneNeverRunsAClauseThatDoesNotEndTheSentence() {
+        for text in ["Open the Notes app and create a new note", "Open the Notes app and create a new note,", "Open the Notes app and type hello"] {
+            var detector = notesDetector()
+            _ = detector.observe(PartialTranscript(text: text, isFinal: false, sequence: 1), launchedApp: notesApp)
+            XCTAssertEqual(detector.observe(tick(silence: 2_000)), [], text)
+        }
+    }
+
+    func testATrailingSearchAndTypingRunOnTheTickLikeAShortcut() throws {
+        let search = try XCTUnwrap(NativeOpenAction.webSearchURL(for: "Norbert Wiener"))
+        var searching = notesDetector()
+        _ = searching.observe(PartialTranscript(text: "Open Notes and google search Norbert Wiener?", isFinal: false, sequence: 1), launchedApp: notesApp)
+        XCTAssertEqual(searching.observe(tick(silence: 299)), [])
+        XCTAssertEqual(searching.observe(tick(silence: 300)).map(\.action), [.openURL(url: search, browser: nil)])
+
+        var typing = notesDetector()
+        _ = typing.observe(PartialTranscript(text: "Open Notes and let's make the title say hello.", isFinal: false, sequence: 1), launchedApp: notesApp)
+        XCTAssertEqual(typing.observe(tick(silence: 100)), [])
+        XCTAssertNil(typing.trailingDeadline, "Typing never waits on the hold; only measured silence releases it.")
+        XCTAssertEqual(typing.observe(tick(silence: 352)).map(\.action), [.typeText(app: "Notes", text: "hello")])
+    }
+
+    func testAnEngineWithoutTicksKeepsTheConfirmationAndHoldRules() {
+        var detector = notesDetector()
+        let start = Date(timeIntervalSince1970: 100)
+        let first = detector.observe(PartialTranscript(text: "Open the Notes app and create a new note?", isFinal: false, sequence: 1), launchedApp: notesApp, at: start)
+        XCTAssertEqual(first, [])
+        XCTAssertEqual(detector.trailingDeadline, start.addingTimeInterval(SpeculativeStepDetector.trailingHold))
+        XCTAssertEqual(detector.commitStableTrailing(at: start.addingTimeInterval(SpeculativeStepDetector.trailingHold)).map(\.action.toolName), ["press_shortcut"])
+    }
+
+    func testAClauseThatCompletesWhileWaitingForSilenceRunsOnceNotTwice() {
+        var detector = notesDetector()
+        _ = detector.observe(PartialTranscript(text: "Open the Notes app and create a new tab?", isFinal: false, sequence: 1), launchedApp: notesApp)
+        let ran = detector.observe(PartialTranscript(text: "Open the Notes app and create a new tab and type", isFinal: false, sequence: 2), launchedApp: notesApp)
+        XCTAssertEqual(ran.map(\.action.toolName), ["press_shortcut"], "The speaker moved on before any silence, which completes the clause.")
+        XCTAssertEqual(detector.observe(tick(silence: 800)), [], "Nothing is left waiting.")
+    }
+
+    func testTheTickReleasesTheLatestReadingOfTheClauseNotAnEarlierOne() throws {
+        let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
+        var detector = notesDetector()
+        _ = detector.observe(PartialTranscript(text: "Open the Notes app and create a new tab?", isFinal: false, sequence: 1), launchedApp: notesApp)
+        _ = detector.observe(PartialTranscript(text: "Open the Notes app and create a new note?", isFinal: false, sequence: 2), launchedApp: notesApp)
+        let ran = detector.observe(tick(silence: 500))
+        XCTAssertEqual(ran.map(\.action), [.pressShortcut(app: "Notes", shortcut: commandN)], "The tick releases what the latest partial says, not an earlier reading.")
     }
 
     func testAPlannerClauseStopIsLiftedWhenTheRecogniserCorrectsIt() throws {
@@ -350,33 +448,33 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         await waitUntil { launcher.launched.count == 1 }
         source.emit("Open Notes and create a new note and make", sequence: 3)
         source.emit("Open Notes and create a new note and make the title say hello and open Safari", sequence: 4)
-        await waitUntil { executor.executed.count == 2 }
+        await waitUntil { executor.executed.count == 3 }
 
         let commandN = try XCTUnwrap(KeyboardShortcut(keys: ["cmd", "n"]))
-        XCTAssertEqual(executor.executed, [.pressShortcut(app: "Notes", shortcut: commandN), .typeText(app: "Notes", text: "hello")])
-        XCTAssertEqual(launcher.launched, [apps[0]], "Safari is the last clause; it waits until it has held still.")
+        XCTAssertEqual(executor.executed, [.pressShortcut(app: "Notes", shortcut: commandN), .typeText(app: "Notes", text: "hello"), .openApp(name: "Safari")])
+        XCTAssertEqual(launcher.launched, [apps[0]], "Only the leading open goes through the launcher; Safari is an early step.")
         XCTAssertEqual(awaited, [], "The fake launch reports its window ready, so nothing waits.")
         if case .done(let result)? = coordinator.stepActivity {
-            XCTAssertEqual(result.doneDescription, "Typed “hello” in Notes")
+            XCTAssertEqual(result.doneDescription, "Opened Safari")
         } else {
             XCTFail("Expected the last step to be reported done, got \(String(describing: coordinator.stepActivity))")
         }
 
-        XCTAssertEqual(coordinator.stepActivities.map(\.step.index), [1, 2], "Every early step stays listed, not just the last.")
+        XCTAssertEqual(coordinator.stepActivities.map(\.step.index), [1, 2, 3], "Every early step stays listed, not just the last.")
         XCTAssertTrue(coordinator.stepActivities.allSatisfy { if case .done = $0 { return true } else { return false } })
 
         let handoff = try XCTUnwrap(coordinator.takeHandoff(sessionID: "s1"))
         XCTAssertTrue(coordinator.stepActivities.isEmpty)
         XCTAssertNotNil(handoff.launch)
-        XCTAssertEqual(handoff.steps.map(\.step.index), [1, 2])
+        XCTAssertEqual(handoff.steps.map(\.step.index), [1, 2, 3])
         XCTAssertNil(coordinator.stepActivity)
         for run in handoff.steps {
             let result = await run.result()
             XCTAssertTrue(result.succeeded, result.step.clause)
         }
         let entries = audit.entries()
-        XCTAssertEqual(entries.map(\.toolName), ["open_app", "press_shortcut", "type_text"])
-        XCTAssertEqual(entries.map(\.outcome), ["speculative", "speculative", "speculative"])
+        XCTAssertEqual(entries.map(\.toolName), ["open_app", "press_shortcut", "type_text", "open_app"])
+        XCTAssertEqual(entries.map(\.outcome), ["speculative", "speculative", "speculative", "speculative"])
         XCTAssertTrue(entries[1].detail?.contains("clause #2") ?? false)
         XCTAssertNotNil(entries[1].sinceCommandMs, "Latency counts from the recording start.")
     }
@@ -451,7 +549,8 @@ final class SpeculativeStepExecutionTests: XCTestCase {
     private func notesCoordinator(
         source: SpeculativeLaunchCoordinatorTests.FakeSource, launcher: SpeculativeLaunchCoordinatorTests.FakeLauncher,
         executor: FakeExecutor, audit: ActionAuditStore,
-        runIsActive: @escaping @MainActor () -> Bool, carriedApp: @escaping @MainActor () -> String? = { nil }
+        runIsActive: @escaping @MainActor () -> Bool, carriedApp: @escaping @MainActor () -> String? = { nil },
+        ticks: AnyPublisher<EngineTick, Never> = Empty().eraseToAnyPublisher()
     ) async -> SpeculativeLaunchCoordinator {
         let directory = URL(fileURLWithPath: "/fixture/Applications")
         let apps = ["Notes", "Safari"].map { directory.appendingPathComponent("\($0).app") }
@@ -462,7 +561,7 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         _ = await inventory.waitUntilReady(timeout: .seconds(5))
         return SpeculativeLaunchCoordinator(
             settings: .shared, source: source, inventory: inventory, launcher: launcher, executor: executor,
-            awaitWindow: { _ in true }, carriedApp: carriedApp, runIsActive: runIsActive, audit: audit
+            awaitWindow: { _ in true }, carriedApp: carriedApp, runIsActive: runIsActive, audit: audit, ticks: ticks
         )
     }
 
@@ -531,6 +630,45 @@ final class SpeculativeStepExecutionTests: XCTestCase {
         var failures: [String?] = []
         for run in handoff.steps { failures.append(await run.result().failure) }
         XCTAssertEqual(failures, ["cancelled"], "The final command redoes what was stopped.")
+    }
+
+    func testTypingRunsOnTheFirstSufficientTickOfTheActiveSessionOnly() async throws {
+        let auditFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".log")
+        defer { try? FileManager.default.removeItem(at: auditFile) }
+        let source = SpeculativeLaunchCoordinatorTests.FakeSource()
+        let launcher = SpeculativeLaunchCoordinatorTests.FakeLauncher()
+        let executor = FakeExecutor()
+        let ticks = PassthroughSubject<EngineTick, Never>()
+        let coordinator = await notesCoordinator(source: source, launcher: launcher, executor: executor,
+                                                 audit: ActionAuditStore(fileURL: auditFile), runIsActive: { false },
+                                                 ticks: ticks.eraseToAnyPublisher())
+        defer { coordinator.end(sessionID: "s1") }
+        func tick(_ session: String, silence: Int) -> EngineTick {
+            EngineTick(sessionID: session, audio: .seconds(4), trailingSilence: .milliseconds(silence))
+        }
+
+        coordinator.begin(sessionID: "s1")
+        await waitUntil { source.isListening }
+        source.emit("Open the Notes app", sequence: 1)
+        source.emit("Open the Notes app and let's make the title say hello.", sequence: 2)
+        await settle(coordinator, heard: "Open the Notes app and let's make the title say hello.")
+        XCTAssertEqual(executor.executed, [], "Typing waits for measured silence, however the sentence ends.")
+
+        ticks.send(tick("another-take", silence: 2_000))
+        await settle(coordinator, heard: "Open the Notes app and let's make the title say hello.")
+        XCTAssertEqual(executor.executed, [], "Another take's silence says nothing about this one.")
+
+        ticks.send(tick("s1", silence: 299))
+        await settle(coordinator, heard: "Open the Notes app and let's make the title say hello.")
+        XCTAssertEqual(executor.executed, [], "299 ms is not enough.")
+
+        ticks.send(tick("s1", silence: 300))
+        await waitUntil { executor.executed.count == 1 }
+        XCTAssertEqual(executor.executed, [.typeText(app: "Notes", text: "hello")])
+        let handoff = try XCTUnwrap(coordinator.takeHandoff(sessionID: "s1"))
+        XCTAssertEqual(handoff.steps.map(\.step.index), [1])
+        let result = await try XCTUnwrap(handoff.steps.first).result()
+        XCTAssertTrue(result.succeeded)
     }
 
     func testAskBeforeEveryToolOpensNothingEarly() async {

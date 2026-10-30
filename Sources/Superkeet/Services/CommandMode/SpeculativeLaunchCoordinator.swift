@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import os.log
 
@@ -124,6 +125,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
     private let now: @MainActor () -> Date
     private var session: Session?
     private var prepared = false
+    private var tickSubscription: AnyCancellable?
 
     init(
         settings: AppSettings = .shared,
@@ -136,6 +138,7 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         runIsActive: (@MainActor () -> Bool)? = nil,
         audit: ActionAuditStore = .shared,
         stabilityThreshold: Int = 1,
+        ticks: AnyPublisher<EngineTick, Never>? = nil,
         now: (@MainActor () -> Date)? = nil
     ) {
         self.now = now ?? { Date() }
@@ -149,6 +152,9 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         self.runIsActive = runIsActive ?? { AgentSessionController.shared.isRunning }
         self.audit = audit
         self.stabilityThreshold = stabilityThreshold
+        tickSubscription = (ticks ?? ParakeetService.shared.ticks.eraseToAnyPublisher())
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] tick in self?.hear(tick) }
     }
 
     var isSupported: Bool { source != nil }
@@ -274,6 +280,18 @@ final class SpeculativeLaunchCoordinator: ObservableObject, SpeculativeLaunching
         ), currentApp: carriedApp())
         let detector = SpeculativeIntentDetector(environment: environment, stabilityThreshold: stabilityThreshold)
         return Session(id: id, detector: detector, stepDetector: stepDetector, policy: policy)
+    }
+
+    /// Ticks of another take, such as the one the engine is finishing while the next begins,
+    /// say nothing about this one.
+    private func hear(_ tick: EngineTick) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let session, session.id == tick.sessionID, isEnabled, mayRunEarly(session) else { return }
+        for step in session.stepDetector.observe(tick) {
+            speculativeLog.info("The sentence ended in \(String(describing: tick.trailingSilence), privacy: .public) of silence; running its last clause before the speaker stops")
+            run(step, in: session)
+        }
+        scheduleTrailingCommit(in: session)
     }
 
     /// Early steps must not type or switch apps under a run that is still going. While one is,
