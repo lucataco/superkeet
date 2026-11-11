@@ -1,0 +1,16 @@
+{
+	"name": "textedit-offscript-fresh-document",
+	"voice": "Puck",
+	"start_state": {"com.apple.TextEdit": "quit"},
+	"utterances": [
+		{"text": "Bring up TextEdit for me.", "pause_ms": 400},
+		{"text": "Start a fresh document.", "pause_ms": 600},
+		{"text": "Put hello there in it.", "pause_ms": 2000}
+	],
+	"expect": [
+		{"id": "open", "after": "TextEdit", "probe": {"frontmost": "com.apple.TextEdit"}, "budget_ms": 700},
+		{"id": "new_doc", "after": "document.", "probe": {"new_window": "com.apple.TextEdit"}, "budget_ms": 700},
+		{"id": "hello", "after": "in it.", "probe": {"focused_text_contains": "hello there"}, "budget_ms": 700}
+	],
+	"forbid": ["take_split", "planner_call", "duplicate_dispatch", "success_without_effect"]
+}

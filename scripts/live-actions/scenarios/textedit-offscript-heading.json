@@ -1,0 +1,16 @@
+{
+	"name": "textedit-offscript-heading",
+	"voice": "Puck",
+	"start_state": {"com.apple.TextEdit": "quit"},
+	"utterances": [
+		{"text": "Um, I need TextEdit.", "pause_ms": 400},
+		{"text": "Give me a blank window,", "pause_ms": 300},
+		{"text": "and the heading should be quarterly review.", "pause_ms": 2000}
+	],
+	"expect": [
+		{"id": "open", "after": "TextEdit", "probe": {"frontmost": "com.apple.TextEdit"}, "budget_ms": 700},
+		{"id": "new_doc", "after": "blank window", "probe": {"new_window": "com.apple.TextEdit"}, "budget_ms": 700},
+		{"id": "heading", "after": "quarterly review.", "probe": {"focused_text_contains": "quarterly review"}, "budget_ms": 700}
+	],
+	"forbid": ["take_split", "planner_call", "duplicate_dispatch", "success_without_effect"]
+}

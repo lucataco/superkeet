@@ -1,0 +1,15 @@
+{
+  "categories" : {
+    "filler" : 5,
+    "new_item" : 5,
+    "open_app" : 10,
+    "open_url" : 5,
+    "planner" : 7,
+    "shortcut" : 5,
+    "type_text" : 7,
+    "web_search" : 7
+  },
+  "passed" : 51,
+  "router" : "regex (NativeClauseRouter)",
+  "total" : 71
+}

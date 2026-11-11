@@ -288,6 +288,104 @@ class FixtureRunTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "verdict.json").read_text())["runs"], 1)
 
 
+class SayFallbackTests(unittest.TestCase):
+    def test_the_engine_falls_back_to_say_only_without_a_token(self):
+        self.assertEqual(build_stimulus.tts_engine({}), "say")
+        self.assertEqual(build_stimulus.tts_engine({"REPLICATE_API_TOKEN": ""}), "say")
+        self.assertEqual(build_stimulus.tts_engine({"REPLICATE_API_TOKEN": "r8_x"}), "replicate")
+
+    def test_say_clips_are_keyed_apart_from_replicate_and_ignore_takes(self):
+        utterance = scenario()["utterances"][0]
+        say = build_stimulus.clip_path(scenario(), utterance, 0, "say")
+        self.assertEqual(say, build_stimulus.clip_path(scenario(), utterance, 3, "say"))
+        self.assertNotEqual(say, build_stimulus.clip_path(scenario(), utterance, 0))
+        self.assertEqual(build_stimulus.clip_path(scenario(), utterance, 0), build_stimulus.clip_path(scenario(), utterance, 0, "replicate"))
+        self.assertTrue(build_stimulus.stimulus_dir(scenario(), "say").name.endswith("-say"))
+        self.assertFalse(build_stimulus.stimulus_dir(scenario(), "replicate").name.endswith("-say"))
+
+    def test_say_synthesizes_with_samantha_and_trims_both_ends(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(build_stimulus, "run", side_effect=lambda cmd, **_: calls.append(cmd)):
+            build_stimulus.synthesize_say("Type hello.", Path(tmp) / "clip.wav")
+        say, ffmpeg = calls
+        self.assertEqual(say[:4], ["say", "-v", "Samantha", "-o"])
+        self.assertEqual(Path(say[4]).suffix, ".aiff")
+        self.assertEqual(ffmpeg[0], "ffmpeg")
+        trim = ffmpeg[ffmpeg.index("-af") + 1]
+        self.assertEqual(trim.count("silenceremove"), 2)
+        self.assertIn("areverse", trim)
+
+    def test_a_coarse_clock_ends_each_phrase_with_its_utterance(self):
+        windows = [(0, 1440), (1640, 4935), (5485, 7888)]
+        clock = build_stimulus.coarse_clock(scenario()["utterances"], windows)
+        self.assertEqual(common.phrase_end_ms(clock, "TextEdit"), 1440)
+        self.assertEqual(common.phrase_end_ms(clock, "document?"), 4935)
+        self.assertEqual(common.phrase_end_ms(clock, "hello."), 7888)
+        self.assertEqual(build_stimulus.alignment_problems(clock, windows), [])
+
+    def test_build_without_a_token_uses_say_and_marks_the_clock_coarse(self):
+        windows = [(0, 48000), (57600, 105600), (132000, 180000)]
+
+        def fake_assemble(_scenario, clips, paths):
+            self.assertEqual(len(clips), 3)
+            return windows, 276000, -3.0, -13.0
+
+        transcript = "Can you open up TextEdit for me, and once you're there, can you create a new document? And let's make the title say hello."
+        partials = [(1500, "Can you open up TextEdit"), (3000, "Can you open up TextEdit for me, and can you create a new document?"),
+                    (4500, transcript)]
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(common, "BUILD", Path(tmp)), \
+                mock.patch.dict("os.environ", {"REPLICATE_API_TOKEN": ""}), \
+                mock.patch.object(build_stimulus, "synthesize_say") as say, \
+                mock.patch.object(build_stimulus, "synthesize", side_effect=AssertionError("replicate called")), \
+                mock.patch.object(build_stimulus, "align", side_effect=AssertionError("whisperx called")), \
+                mock.patch.object(build_stimulus, "assemble", side_effect=fake_assemble), \
+                mock.patch.object(build_stimulus, "replay", return_value=(transcript, partials)):
+            paths = build_stimulus.build(SCENARIO)
+            self.assertEqual(say.call_count, 3)
+            meta = json.loads(paths["meta"].read_text())
+            clock = common.read_clock(paths["clock"])
+        self.assertEqual(meta["clock"], "coarse")
+        self.assertEqual(meta["tts"], "say -v Samantha")
+        self.assertEqual(meta["windows_ms"], [[0, 1000], [1200, 2200], [2750, 3750]])
+        self.assertEqual(common.phrase_end_ms(clock, "document?"), 2200)
+
+    def test_a_say_stimulus_the_engine_mishears_fails_at_once(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(common, "BUILD", Path(tmp)), \
+                mock.patch.object(build_stimulus, "synthesize_say"), \
+                mock.patch.object(build_stimulus, "assemble", return_value=([(0, 48000)] * 3, 144000, 0.0, -16.0)), \
+                mock.patch.object(build_stimulus, "replay", return_value=("Can you open up text it", [])) as replay:
+            with self.assertRaises(build_stimulus.GateError):
+                build_stimulus.build(SCENARIO, engine="say")
+        self.assertEqual(replay.call_count, 1)
+
+    def test_the_report_says_when_the_clock_is_coarse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scenario.json").write_text(SCENARIO.read_text())
+            (root / "speech-clock.tsv").write_text((BH1 / "speech-clock.tsv").read_text())
+            run_dir = root / "run-01"
+            run_dir.mkdir()
+            for item in BH1.iterdir():
+                if item.name not in ("scenario.json", "speech-clock.tsv"):
+                    (run_dir / item.name).write_text(item.read_text())
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(report.write(root)["clock"], "aligned")
+            self.assertNotIn("coarse", (root / "report.md").read_text())
+            (root / "stimulus.json").write_text(json.dumps({"clock": "coarse"}))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(report.write(root)["clock"], "coarse")
+            self.assertIn("Speech clock: **coarse**", (root / "report.md").read_text())
+
+    def test_every_shipped_scenario_is_valid_and_drives_only_textedit(self):
+        shipped = sorted((RIG / "scenarios").glob("*.json"))
+        self.assertGreaterEqual(len(shipped), 3)
+        for path in shipped:
+            loaded = common.load_scenario(path)
+            self.assertEqual(common.scenario_targets(loaded), ["com.apple.TextEdit"], path.name)
+
+
 class RunnerTests(unittest.TestCase):
     def test_a_fresh_install_without_hotkey_defaults_uses_the_apps_built_in_command_hotkey(self):
         with mock.patch.object(run, "defaults_read", return_value=None):

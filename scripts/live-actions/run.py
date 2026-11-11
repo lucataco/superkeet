@@ -394,6 +394,7 @@ def main():
     root.mkdir(parents=True)
     shutil.copy(args.scenario, root / "scenario.json")
     shutil.copy(stimulus["clock"], root / "speech-clock.tsv")
+    shutil.copy(stimulus["meta"], root / "stimulus.json")
     rng = random.Random(args.seed)
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
