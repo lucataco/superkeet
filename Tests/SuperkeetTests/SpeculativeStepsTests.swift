@@ -3,6 +3,21 @@ import XCTest
 @testable import Superkeet
 
 final class NativeClauseRouterTests: XCTestCase {
+    func testAnAppNameThatIsAWebAddressOpensThatAddress() throws {
+        let nothingInstalled = NativeClauseContext(currentApp: nil, resolveApp: { _ in nil }, isRunning: { _ in false })
+        let github = try XCTUnwrap(URL(string: "https://github.com"))
+        XCTAssertEqual(NativeClauseRouter.resolvingOpen(.openApp(name: "github dot com"), context: nothingInstalled),
+                       .openURL(url: github, browser: nil), "It used to open a Google search for “github.com”.")
+        XCTAssertEqual(NativeClauseRouter.resolvingOpen(.openApp(name: "github.com?"), context: nothingInstalled),
+                       .openURL(url: github, browser: nil))
+        let inSafari = NativeClauseContext(currentApp: "Safari", resolveApp: { _ in nil }, isRunning: { _ in true })
+        XCTAssertEqual(NativeClauseRouter.resolvingOpen(.openApp(name: "github.com"), context: inSafari),
+                       .openURL(url: github, browser: "Safari"), "An address is clear even with an app in front.")
+        XCTAssertNil(NativeClauseRouter.webAddress("Saved Messages"))
+        XCTAssertNil(NativeClauseRouter.webAddress("Dr. Smith"))
+        XCTAssertNil(NativeClauseRouter.webAddress("version 3.5"))
+    }
+
     private let directory = URL(fileURLWithPath: "/fixture/Applications")
     private var notes: URL { directory.appendingPathComponent("Notes.app") }
     private var helium: URL { directory.appendingPathComponent("Helium.app") }

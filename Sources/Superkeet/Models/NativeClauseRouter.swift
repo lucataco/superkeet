@@ -11,15 +11,29 @@ enum NativeClauseRouter {
         var resolved = action
         if case .openApp(let name) = action, context.resolveApp(name) == nil {
             let target = name.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-            let isWebsite = target.range(of: #"\b(?:website|site|page)\z"#, options: [.regularExpression, .caseInsensitive]) != nil
-            guard isWebsite || context.currentApp == nil,
-                  let url = NativeOpenAction.luckySearchURL(for: target) else { return nil }
-            resolved = .openURL(url: url, browser: nil)
+            if let address = webAddress(target) {
+                // "pull up github dot com" names the page itself; a search for it is a detour.
+                resolved = .openURL(url: address, browser: nil)
+            } else {
+                let isWebsite = target.range(of: #"\b(?:website|site|page)\z"#, options: [.regularExpression, .caseInsensitive]) != nil
+                guard isWebsite || context.currentApp == nil,
+                      let url = NativeOpenAction.luckySearchURL(for: target) else { return nil }
+                resolved = .openURL(url: url, browser: nil)
+            }
         }
         if case .openURL(let url, nil) = resolved, let browser = context.currentApp, ActionIntentPolicy.isBrowserName(browser) {
             return .openURL(url: url, browser: browser)
         }
         return resolved
+    }
+
+    /// The address a spoken name is, when it is one: a single token ending in a known domain.
+    static func webAddress(_ spoken: String) -> URL? {
+        let token = NativeOpenAction.spokenURLToken(SpokenURL.normalize(spoken))
+        guard token.contains("."), let url = try? NativeOpenAction.webURL(token),
+              let ending = url.host?.split(separator: ".").last.map({ String($0).lowercased() }),
+              SpokenURL.topLevelDomains.contains(ending) else { return nil }
+        return url
     }
 
     static func action(for clause: String, context: NativeClauseContext) -> NativeOpenAction? {
