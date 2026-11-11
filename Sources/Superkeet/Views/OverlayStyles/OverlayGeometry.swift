@@ -127,4 +127,25 @@ enum OverlayGeometry {
         let x = clampedX(metrics.notchCenterX - width / 2, width: width, screenFrame: screenFrame)
         return (frame: NSRect(x: x, y: y, width: width, height: height), gapWidth: gapWidth)
     }
+
+    /// The Actions pill hangs just under the camera notch so it reads as part of it, or just under
+    /// the menu bar on displays without one. `clearance` moves it below a recording overlay that
+    /// sits under the menu bar; on a notched display those overlays live in the menu band instead.
+    static func notchPillOrigin(
+        size: NSSize,
+        screenFrame: NSRect,
+        visibleFrame: NSRect,
+        metrics: NotchMetrics,
+        clearance: CGFloat = 0
+    ) -> NSPoint {
+        if metrics.hasNotch {
+            let x = clampedX(metrics.notchCenterX - size.width / 2, width: size.width, screenFrame: screenFrame)
+            return NSPoint(x: x, y: screenFrame.maxY - metrics.bandHeight - notchPillGap - size.height)
+        }
+        let x = clampedX(screenFrame.midX - size.width / 2, width: size.width, screenFrame: screenFrame)
+        return NSPoint(x: x, y: visibleFrame.maxY - menuBarPillGap - size.height - clearance)
+    }
+
+    static let notchPillGap: CGFloat = 2
+    static let menuBarPillGap: CGFloat = 6
 }

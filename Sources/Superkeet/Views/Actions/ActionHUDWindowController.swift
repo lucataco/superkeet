@@ -18,19 +18,33 @@ final class ActionHUDWindowController {
         var hasSpeculativeActivity = false
         var isListening = false
         var hasQueuedCommands = false
+        /// The compact pill is on (Settings ▸ Actions). Failures during a listening session then
+        /// clear themselves instead of waiting for Dismiss.
+        var compact = false
+        /// The command ended in an answer from the planner rather than an action.
+        var hasReply = false
 
         var isShown: Bool { hasPendingApproval || hasPendingPlan || phase.showsHUD || hasSpeculativeActivity || isListening }
 
         var wantsKeyboard: Bool { hasPendingApproval || hasPendingPlan }
 
         var autoHideAction: AutoHideAction? {
-            guard case .finished = phase, !wantsKeyboard else { return nil }
-            return isListening ? .dismissOutcome : .hide
+            guard !wantsKeyboard else { return nil }
+            switch phase {
+            case .finished: return isListening ? .dismissOutcome : .hide
+            case .failed: return compact && isListening ? .dismissOutcome : nil
+            default: return nil
+            }
         }
 
         var autoHides: Bool { autoHideAction == .hide }
 
-        var autoHideDelay: TimeInterval { isListening || hasQueuedCommands ? 2 : 8 }
+        var autoHideDelay: TimeInterval {
+            if case .failed = phase { return ActionPillContent.failureDuration }
+            if compact, hasReply, case .finished = phase { return ActionPillContent.replyDuration }
+            if compact { return isListening ? ActionPillContent.confirmationDuration : 2.5 }
+            return isListening || hasQueuedCommands ? 2 : 8
+        }
     }
 
     private struct LiveInputs: Equatable {
@@ -77,7 +91,9 @@ final class ActionHUDWindowController {
                 phase: phase,
                 hasSpeculativeActivity: live.hasSpeculativeActivity,
                 isListening: live.isListening,
-                hasQueuedCommands: live.hasQueuedCommands
+                hasQueuedCommands: live.hasQueuedCommands,
+                compact: AppSettings.shared.actionHUDCompactPill,
+                hasReply: !AgentSessionController.shared.checklist.replies.isEmpty
             )
         }
         .removeDuplicates()
@@ -94,6 +110,30 @@ final class ActionHUDWindowController {
         .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in self?.resizeIfShown() }
         .store(in: &cancellables)
+
+        let pill = ActionPillModel.shared
+        pill.start()
+        pill.$presentation
+            .map(\.isPill)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.resizeIfShown() }
+            .store(in: &cancellables)
+
+        // New words replace a failure line at once, so the outcome they cover is put away too.
+        SpeculativeLaunchCoordinator.shared.$listening
+            .map { !($0?.transcript.isEmpty ?? true) }
+            .removeDuplicates()
+            .filter { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.dismissFailureForNewSpeech() }
+            .store(in: &cancellables)
+    }
+
+    private func dismissFailureForNewSpeech() {
+        guard visibility.compact, case .failed = AgentSessionController.shared.phase, !visibility.wantsKeyboard,
+              ActionPillModel.shared.presentation.isPill else { return }
+        AgentSessionController.shared.reset()
     }
 
     private func update(_ visibility: Visibility) {
@@ -164,6 +204,7 @@ final class ActionHUDWindowController {
 
     private func hide() {
         panel?.orderOut(nil)
+        ActionPillModel.shared.hudHidden()
     }
 
     private func makePanel() -> NSPanel {
@@ -195,6 +236,21 @@ final class ActionHUDWindowController {
         let clearance = Self.recordingOverlayClearance(
             isRecording: settings.isRecording, style: settings.overlayAnimationStyle
         )
+        let isPill = ActionPillModel.shared.presentation.isPill
+        panel.isMovableByWindowBackground = !isPill
+        if isPill {
+            let metrics = OverlayGeometry.notchMetrics(
+                screenFrame: screen.frame,
+                visibleFrame: visible,
+                topSafeInset: screen.safeAreaInsets.top,
+                auxiliaryTopLeft: screen.auxiliaryTopLeftArea,
+                auxiliaryTopRight: screen.auxiliaryTopRightArea
+            )
+            panel.setFrameOrigin(OverlayGeometry.notchPillOrigin(
+                size: size, screenFrame: screen.frame, visibleFrame: visible, metrics: metrics, clearance: clearance
+            ))
+            return
+        }
         let x = visible.midX - size.width / 2
         let y = visible.maxY - size.height - 12 - clearance
         panel.setFrameOrigin(NSPoint(x: x, y: y))
