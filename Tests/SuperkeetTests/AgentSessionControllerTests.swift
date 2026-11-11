@@ -488,22 +488,168 @@ final class AgentSessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.phase, .failed(ActionExecutionError.unavailable.localizedDescription))
     }
 
-    func testNoEnabledServersSurfacesSetupHintForPlannerRequests() async {
+    func testWithoutServersThePlannerStillGetsTheBuiltInActions() async {
+        // "I need the calculator" matches no native route, and used to stop at a setup error
+        // although open_app was all it needed.
         let router = FakeRouter(specs: [])
         router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        router.outputs["open_app"] = "Opened Calculator (pid 7, com.apple.calculator). Its window is on screen."
+        let planner = SequencePlanner([("open_app", #"{"name":"Calculator"}"#)])
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+
+        controller.handleCommand("I need the calculator")
+        await waitUntilFinished(controller)
+
+        XCTAssertEqual(planner.offeredTools, NativeOpenAction.tools)
+        XCTAssertEqual(router.executed, ["open_app"])
+        XCTAssertEqual(controller.phase, .finished("done"))
+    }
+
+    func testAPlannerThatAnswersWithoutActingShowsItsWordsAndWhatWouldDoMore() async {
+        for missing in [ActionExecutionError.noMCPServersEnabled, .noTools] {
+            let router = FakeRouter(specs: [])
+            router.preparationFailure = missing
+            let planner = FakePlanner(calls: 0, result: "I can’t click buttons.")
+            let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+
+            controller.handleCommand("click Save in Notes")
+            await waitUntilFinished(controller)
+
+            XCTAssertTrue(planner.invoked, "\(missing)")
+            XCTAssertTrue(router.executed.isEmpty)
+            let reply = "I can’t click buttons. " + BuiltInActionsReply.hint
+            XCTAssertEqual(controller.phase, .finished(reply), "\(missing)")
+            XCTAssertTrue(controller.checklist.lines.isEmpty, "Nothing was done, so nothing is ticked off.")
+            XCTAssertEqual(controller.checklist.replies, [reply])
+        }
+    }
+
+    func testAnEmptyPlannerReplyStillSaysSomething() {
+        XCTAssertEqual(BuiltInActionsReply.text(for: "  \n"), "I couldn’t do that. " + BuiltInActionsReply.hint)
+    }
+
+    final class FakeIntentRouter: IntentRouting {
+        var readings: [String: RoutedIntent] = [:]
+        private(set) var asked: [String] = []
+        private(set) var apps: [String?] = []
+        private(set) var prewarmed = 0
+
+        func route(_ clause: String, currentApp: String?) async -> RoutedIntent? {
+            asked.append(clause)
+            apps.append(currentApp)
+            return readings[clause]
+        }
+
+        func prewarm() { prewarmed += 1 }
+    }
+
+    private func routedController(_ intentRouter: FakeIntentRouter, router: FakeRouter, planner: any ActionPlanning,
+                                  frontmost: String? = "TextEdit") -> AgentSessionController {
+        AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
+                               intentRouterFactory: { intentRouter },
+                               resolveApp: { [self] in fixtureResolver($0) }, isAppRunning: { _ in true },
+                               frontmostApp: { frontmost })
+    }
+
+    func testALooselyWordedCommandRunsAsABuiltInActionWithoutThePlanner() async {
+        let router = FakeRouter(specs: [])
+        router.outputs["open_app"] = "Opened Notes (pid 7, com.apple.Notes). Its window is on screen."
         let planner = FakePlanner(calls: 0)
-        let controller = AgentSessionController(
-            settings: .shared,
-            router: router,
-            plannerFactory: { planner }
-        )
+        let reader = FakeIntentRouter()
+        reader.readings["I need my notes"] = RoutedIntent(kind: .openApp, argument: "notes")
+        let controller = routedController(reader, router: router, planner: planner)
+
+        controller.handleCommand("I need my notes")
+        await waitUntilFinished(controller)
+
+        XCTAssertEqual(reader.asked, ["I need my notes"])
+        XCTAssertEqual(reader.apps, ["TextEdit"], "The router is told which app is in front.")
+        XCTAssertFalse(planner.invoked)
+        XCTAssertEqual(router.executed, ["open_app"])
+        XCTAssertEqual(router.arguments, [#"{"name":"Notes"}"#])
+        XCTAssertEqual(router.dictated, [true], "It runs on the speaker's words, like a native route.")
+        XCTAssertEqual(controller.checklist.lines.map(\.title), ["Opened Notes"])
+    }
+
+    func testTypingARouterDidNotHearGoesToThePlannerInstead() async {
+        let router = FakeRouter(specs: [])
+        router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        let planner = FakePlanner(calls: 0, result: "I’m not sure what to type.")
+        let reader = FakeIntentRouter()
+        reader.readings["give me something fresh"] = RoutedIntent(kind: .typeText, argument: "New Document")
+        let controller = routedController(reader, router: router, planner: planner)
+
+        controller.handleCommand("give me something fresh")
+        await waitUntilFinished(controller)
+
+        XCTAssertTrue(planner.invoked, "Nobody said “New Document”, so nothing is typed on the router's word.")
+        XCTAssertTrue(router.executed.isEmpty)
+    }
+
+    func testARouterThatCannotTellLeavesTheClauseToThePlanner() async {
+        let router = FakeRouter(specs: [makeSpec()])
+        let planner = FakePlanner(calls: 1)
+        let reader = FakeIntentRouter()
+        let controller = routedController(reader, router: router, planner: planner)
 
         controller.handleCommand("do the thing")
         await waitUntilFinished(controller)
 
-        XCTAssertEqual(controller.phase, .failed(ActionExecutionError.noMCPServersEnabled.localizedDescription))
+        XCTAssertEqual(reader.asked, ["do the thing"])
+        XCTAssertTrue(planner.invoked)
+    }
+
+    func testAClauseReadAsNothingRunsNothing() async {
+        let router = FakeRouter(specs: [])
+        let planner = FakePlanner(calls: 0)
+        let reader = FakeIntentRouter()
+        reader.readings["hold on someone is at the door"] = RoutedIntent(kind: .nothing)
+        let controller = routedController(reader, router: router, planner: planner)
+
+        controller.handleCommand("hold on someone is at the door")
+        await waitUntilFinished(controller)
+
         XCTAssertFalse(planner.invoked)
-        XCTAssertTrue(AppSettings.shared.runtimeIssue?.contains("No MCP servers are enabled") == true)
+        XCTAssertTrue(router.executed.isEmpty)
+        XCTAssertEqual(controller.phase, .finished("Nothing to do."))
+        XCTAssertTrue(controller.checklist.lines.isEmpty)
+    }
+
+    func testTheRouterIsNotAskedAboutAClauseANativeRouteRecognises() async {
+        let router = FakeRouter(specs: [])
+        let planner = FakePlanner(calls: 0)
+        let reader = FakeIntentRouter()
+        let controller = routedController(reader, router: router, planner: planner)
+
+        controller.handleCommand("open Notes")
+        await waitUntilFinished(controller)
+
+        XCTAssertTrue(reader.asked.isEmpty)
+        XCTAssertEqual(router.executed, ["open_app"])
+    }
+
+    func testPrewarmLoadsThePlannerAndTheRouterOncePerInterval() {
+        let reader = FakeIntentRouter()
+        let controller = routedController(reader, router: FakeRouter(specs: []), planner: FakePlanner(calls: 0))
+        let start = ContinuousClock.now
+        controller.prewarmPlanner(now: start)
+        controller.prewarmPlanner(now: start + .seconds(10))
+        XCTAssertEqual(reader.prewarmed, 1, "A listening session starts a take for every command.")
+        controller.prewarmPlanner(now: start + AgentSessionController.plannerPrewarmInterval)
+        XCTAssertEqual(reader.prewarmed, 2)
+    }
+
+    func testAnActiveTabRequestStillNeedsItsServer() async {
+        let router = FakeRouter(specs: [])
+        router.preparationFailure = ActionExecutionError.noMCPServersEnabled
+        let planner = FakePlanner(calls: 0)
+        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
+
+        controller.handleCommand("In the current Chrome tab, find the DNS records")
+        await waitUntilFinished(controller)
+
+        XCTAssertFalse(planner.invoked)
+        XCTAssertEqual(controller.phase, .failed(ActionExecutionError.noMCPServersEnabled.localizedDescription))
     }
 
     private func fixtureResolver(_ name: String) -> URL? {
@@ -1234,29 +1380,18 @@ final class AgentSessionControllerTests: XCTestCase {
         for missing in [ActionExecutionError.noMCPServersEnabled, .noTools] {
             let router = FakeRouter(specs: [])
             router.preparationFailure = missing
-            let planner = FakePlanner(calls: 0)
+            let planner = FakePlanner(calls: 1)
             let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner },
                                                     resolveApp: { [self] in fixtureResolver($0) })
             controller.handleCommand("open the notes app and create a new note")
             await waitUntilFinished(controller)
-            XCTAssertEqual(router.executed, ["open_app"], "\(missing)")
+            XCTAssertEqual(router.executed, ["open_app", "open_app"], "\(missing): the open, then the planner's one call")
             XCTAssertTrue(planner.invoked, "\(missing)")
             XCTAssertEqual(planner.tasks, ["create a new note"])
             XCTAssertEqual(planner.offeredTools, NativeOpenAction.tools)
             XCTAssertEqual(router.prepareCount, 1)
             XCTAssertEqual(controller.phase, .finished("tool-output done"))
         }
-    }
-
-    func testRequestsWithoutAnOpenClauseStillReportMissingInventory() async {
-        let router = FakeRouter(specs: [])
-        router.preparationFailure = ActionExecutionError.noTools
-        let planner = FakePlanner(calls: 0)
-        let controller = AgentSessionController(settings: .shared, router: router, plannerFactory: { planner })
-        controller.handleCommand("click Save in Notes and scroll down")
-        await waitUntilFinished(controller)
-        XCTAssertFalse(planner.invoked)
-        XCTAssertEqual(controller.phase, .failed(ActionExecutionError.noTools.localizedDescription))
     }
 
     func testRunDeadlineStopsAStalledCommand() async {

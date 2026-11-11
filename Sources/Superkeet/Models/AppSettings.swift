@@ -77,6 +77,10 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     @AppStorage("actionAuditEnabled") var actionAuditEnabled: Bool = true
     @AppStorage("instantAppLaunchEnabled") var instantAppLaunchEnabled: Bool = true
     @AppStorage("actionListeningSessionEnabled") var actionListeningSessionEnabled: Bool = true
+    /// Show Actions Mode as a one-line pill under the notch; off keeps the full card.
+    @AppStorage("actionHUDCompactPill") var actionHUDCompactPill: Bool = true
+    @AppStorage("actionIntentRouter") var actionIntentRouter: IntentRouterChoice = .onDevice
+    @AppStorage("actionDecisionModel") var actionDecisionModel: String = "clef-flash"
 
     @Published var isRecording: Bool = false
     @Published var isDaemonRunning: Bool = false

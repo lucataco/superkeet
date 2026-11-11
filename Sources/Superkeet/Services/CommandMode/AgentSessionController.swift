@@ -10,7 +10,7 @@ private let agentLog = Logger(subsystem: "com.superkeet.app", category: "AgentSe
 
 @MainActor
 final class AgentSessionController: ObservableObject {
-    static let shared = AgentSessionController()
+    static let shared = AgentSessionController(intentRouterFactory: { AgentSessionController.makeIntentRouter() })
 
     enum Phase: Equatable {
         case idle
@@ -49,6 +49,7 @@ final class AgentSessionController: ObservableObject {
     private let settings: AppSettings
     private let router: any ActionRouting
     private let plannerFactory: @MainActor () -> (any ActionPlanning)?
+    private let intentRouterFactory: @MainActor () -> (any IntentRouting)?
     private let resolveApp: @MainActor (String) -> URL?
     private let isAppRunning: @MainActor (URL) -> Bool
     private let awaitWindow: @MainActor (Int32) async -> Bool
@@ -65,6 +66,10 @@ final class AgentSessionController: ObservableObject {
 
     static let minimumRunDeadlineSeconds = 1
     static let maximumQueuedCommands = 3
+    /// A listening session starts a take per command; loading the model again that often
+    /// would only repeat work the system already did.
+    static let plannerPrewarmInterval: Duration = .seconds(45)
+    private var lastPlannerPrewarm: ContinuousClock.Instant?
 
     @MainActor
     private final class RunContext {
@@ -85,6 +90,9 @@ final class AgentSessionController: ObservableObject {
         var openedApps: [NativeLaunchedApp] = []
         var focusTerms: Set<String> = []
         var windowReadyProcesses: Set<Int32> = []
+        /// Tool calls asked for since the planner last started, including ones answered from an
+        /// earlier result. Zero after a planned step means the model did nothing.
+        var requestedToolCalls = 0
         var observation = ObservationBinding()
         var currentProcessIdentifier: Int32?
         var lastApp: NativeLaunchedApp?
@@ -109,6 +117,7 @@ final class AgentSessionController: ObservableObject {
         settings: AppSettings? = nil,
         router: (any ActionRouting)? = nil,
         plannerFactory: (@MainActor () -> (any ActionPlanning)?)? = nil,
+        intentRouterFactory: (@MainActor () -> (any IntentRouting)?)? = nil,
         resolveApp: (@MainActor (String) -> URL?)? = nil,
         isAppRunning: (@MainActor (URL) -> Bool)? = nil,
         awaitWindow: (@MainActor (Int32) async -> Bool)? = nil,
@@ -124,6 +133,8 @@ final class AgentSessionController: ObservableObject {
         self.isAppRunning = isAppRunning ?? { InstalledAppInventory.shared.isRunning($0) }
         self.awaitWindow = awaitWindow ?? { await NativeActionExecutor.shared.waitForWindow(processIdentifier: $0) }
         self.plannerFactory = plannerFactory ?? { AgentSessionController.makePlanner() }
+        // Only the shared controller reads the setting; one built by hand has no router unless given one.
+        self.intentRouterFactory = intentRouterFactory ?? { nil }
         self.isListeningSessionActive = isListeningSessionActive ?? { ListeningSessionController.shared.isActive }
     }
 
@@ -137,7 +148,44 @@ final class AgentSessionController: ObservableObject {
         return nil
     }
 
+    private static var builtRouter: (choice: IntentRouterChoice, model: String, router: any IntentRouting)?
+
+    /// The router the user chose in Settings, kept between commands so what it loaded stays loaded.
+    @MainActor
+    static func makeIntentRouter(settings: AppSettings = .shared) -> (any IntentRouting)? {
+        let choice = settings.actionIntentRouter
+        let model = settings.actionDecisionModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let built = builtRouter, built.choice == choice, built.model == model { return built.router }
+        var router: (any IntentRouting)?
+        switch choice {
+        case .off:
+            break
+        case .onDevice:
+            #if canImport(FoundationModels)
+            if #available(macOS 26.0, *), AppleIntelligenceAvailability.current.isAvailable {
+                router = FoundationModelIntentRouter()
+            }
+            #endif
+        case .decisionModel:
+            var configuration = OllamaDecisionIntentRouter.Configuration()
+            if !model.isEmpty { configuration.model = model }
+            router = OllamaDecisionIntentRouter(configuration: configuration)
+        }
+        builtRouter = router.map { (choice, model, $0) }
+        return router
+    }
+
     var isRunning: Bool { activeRun != nil || phase.isActive }
+
+    /// Loads the on-device planner while the user is still speaking. Measured on an M2 Pro:
+    /// the first planned step of a session waited 2.3 s before planning began, later ones 0.5 s.
+    func prewarmPlanner(now: ContinuousClock.Instant = .now) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        if let last = lastPlannerPrewarm, now - last < Self.plannerPrewarmInterval { return }
+        lastPlannerPrewarm = now
+        plannerFactory()?.prewarm()
+        intentRouterFactory()?.prewarm()
+    }
 
     func handleCommand(_ text: String, speculative: SpeculativeLaunch? = nil) {
         handleCommand(text, handoff: speculative.map { SpeculativeHandoff(launch: $0) })
@@ -275,6 +323,10 @@ final class AgentSessionController: ObservableObject {
         var planner: (any ActionPlanning)?
         var tools: [ActionToolSpec] = []
         var resolutionFailure: NativeOpenActionError?
+        /// Why no MCP tools are on offer, when planning goes ahead with the built-in ones alone.
+        var missingInventory: ActionExecutionError?
+        /// Clauses the router read as asking for nothing.
+        var nothingToDo = 0
 
         init(plan: CommandPlan) {
             self.plan = plan
@@ -346,6 +398,8 @@ final class AgentSessionController: ObservableObject {
 
             if Task.isCancelled {
                 finish(.cancelled, run: run)
+            } else if execution.outputs.isEmpty, checklist.isEmpty, execution.nothingToDo > 0 {
+                finish(.finished("Nothing to do."), run: run)
             } else {
                 finish(.finished(execution.outputs.isEmpty ? "Done." : execution.outputs.joined(separator: " ")), run: run)
             }
@@ -536,7 +590,11 @@ final class AgentSessionController: ObservableObject {
             return try await performTypeText(target, clause: clause.text, run: run)
 
         case .planned:
-            break
+            switch try await readClause(clause, execution: execution, run: run) {
+            case .ran(let output): return output
+            case .nothingToDo: return nil
+            case .unread: break
+            }
         }
 
         checklist.setOpenLine(ActionLineText.clause(clause.text))
@@ -548,16 +606,62 @@ final class AgentSessionController: ObservableObject {
         }
         apply(.planning, run: run)
         let openedBefore = run.openedApps
+        run.requestedToolCalls = 0
         let output = try await planner.run(
             step: ActionPlanStep(task: clause.text, context: execution.context),
             tools: execution.tools, maxSteps: run.budget.remaining, execute: execute
         ) { [weak self] event in
             Task { @MainActor in self?.apply(event, run: run) }
         }
+        try requireCurrent(run)
         for app in run.openedApps where !openedBefore.contains(app) { execution.context.recordOpened(app) }
+        // With only the built-in actions on offer, a step the model answered without acting did
+        // nothing. It gets no line and no checkmark: the model's words, then what would let
+        // Superkeet do more.
+        if execution.missingInventory != nil, run.requestedToolCalls == 0 {
+            let reply = BuiltInActionsReply.text(for: output)
+            checklist.dropOpenLine()
+            checklist.addReply(reply)
+            return reply
+        }
         checklist.settleOpenLine()
         checklist.addReply(output)
         return output
+    }
+
+    private enum ReadClause {
+        case ran(String)
+        case nothingToDo
+        case unread
+    }
+
+    /// A clause no native route recognised is read once by the router the user chose. When its
+    /// reading resolves to a built-in action, that action runs on the speaker's own words, the
+    /// way a native route's would; otherwise the planner takes the clause as before.
+    private func readClause(_ clause: CommandClause, execution: CommandExecution, run: RunContext) async throws -> ReadClause {
+        guard let intentRouter = intentRouterFactory() else { return .unread }
+        let app = execution.context.currentApp?.name ?? frontmostApp()
+        settings.actionStatusText = "Reading…"
+        let intent = await intentRouter.route(clause.text, currentApp: app)
+        try requireCurrent(run)
+        guard let intent else { return .unread }
+        let context = NativeClauseContext(currentApp: app, resolveApp: resolveApp, isRunning: isAppRunning)
+        switch RoutedIntentResolver.resolve(intent, clause: clause.text, context: context) {
+        case .unresolved:
+            activityLog.append("Read “\(clause.text)” as \(intent.kind.rawValue); planning it")
+            return .unread
+        case .nothing:
+            activityLog.append("Nothing to do for “\(clause.text)”")
+            execution.nothingToDo += 1
+            return .nothingToDo
+        case .action(let action):
+            activityLog.append("Read “\(clause.text)” as \(intent.kind.rawValue)")
+            if action.actsInsideApp { try await settleWindows(execution, run: run) }
+            apply(.planning, run: run)
+            let output = try await performNative(action, clause: clause.text, run: run)
+            if let launched = NativeLaunchedApp(summary: output) { execution.context.recordOpened(launched) }
+            return .ran(output)
+        }
     }
 
     private func performNative(_ action: NativeOpenAction, clause: String, run: RunContext) async throws -> String {
@@ -594,7 +698,7 @@ final class AgentSessionController: ObservableObject {
             if let failure = execution.resolutionFailure { throw failure }
             throw ActionExecutionError.unavailable
         }
-        let prepared = try await prepareExternalTools(for: execution.plan.command, run: run)
+        let prepared = try await prepareExternalTools(for: execution, run: run)
         try requireCurrent(run)
         execution.tools = NativeOpenAction.prependingTools(to: prepared)
         run.tools = execution.tools
@@ -676,13 +780,17 @@ final class AgentSessionController: ObservableObject {
         NativeClauseRouter.shortcutTarget(recipe, context: clauseContext(context))
     }
 
-    private func prepareExternalTools(for task: String, run: RunContext) async throws -> [ActionToolSpec] {
+    /// Without MCP servers the planner still has the built-in actions, which cover what most
+    /// spoken commands ask for ("I need the calculator"). Only a request scoped to a browser tab
+    /// cannot start without its server.
+    private func prepareExternalTools(for execution: CommandExecution, run: RunContext) async throws -> [ActionToolSpec] {
         do {
             return try await ownedOperation(run: run) { [router] in try await router.prepareTools() }
         } catch let error as ActionExecutionError where error == .noMCPServersEnabled || error == .noTools {
             try requireCurrent(run)
-            guard NativeOpenAction.plansWithoutMCP(task) else { throw error }
-            agentLog.info("No MCP inventory; planning with built-in open tools only")
+            guard NativeOpenAction.plansWithBuiltInTools(execution.plan.command) else { throw error }
+            agentLog.info("No MCP inventory; planning with the built-in tools only")
+            execution.missingInventory = error
             return []
         }
     }
@@ -691,6 +799,7 @@ final class AgentSessionController: ObservableObject {
     private func performStep(spec: ActionToolSpec, argumentsJSON: String, dictated: Bool = false, run: RunContext) async throws -> String {
         dispatchPrecondition(condition: .onQueue(.main))
         try requireCurrent(run)
+        run.requestedToolCalls += 1
 
         let argumentsJSON = try await completeArguments(argumentsJSON, for: spec, run: run)
         try requireCurrent(run)

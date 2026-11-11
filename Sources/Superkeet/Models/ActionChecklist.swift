@@ -53,6 +53,12 @@ struct ActionChecklist: Equatable, Sendable {
         open = nil
     }
 
+    /// A step the planner answered in words without doing anything has no action to list.
+    mutating func dropOpenLine() {
+        if let open, lines[open].status == .running { lines.remove(at: open) }
+        open = nil
+    }
+
     mutating func addReply(_ reply: String) {
         let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { replies.append(trimmed) }

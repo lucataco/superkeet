@@ -42,6 +42,29 @@ struct ActionsTabView: View {
                             )
                         }
                         .disabled(listeningSession.isActive)
+                        Picker(selection: $settings.actionIntentRouter) {
+                            ForEach(IntentRouterChoice.allCases) { choice in
+                                Text(choice.title).tag(choice)
+                            }
+                        } label: {
+                            rowLabel("Understand loosely worded commands", settings.actionIntentRouter.subtitle)
+                        }
+                        if settings.actionIntentRouter == .decisionModel {
+                            TextField(text: $settings.actionDecisionModel, prompt: Text("clef-flash")) {
+                                rowLabel(
+                                    "Decision model",
+                                    "The name of a decision model Ollama serves on this Mac. Nothing is sent off the machine. If Ollama is not running, these commands are planned step by step instead."
+                                )
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                        }
+                        Toggle(isOn: $settings.actionHUDCompactPill) {
+                            rowLabel(
+                                "Compact pill under the notch",
+                                "While Actions Mode listens, show one line under the notch with what you are saying and what just happened. Approvals and plans still open the full card, and the … button opens it any time. Off always shows the full card."
+                            )
+                        }
                     }
                 } header: {
                     Text("Actions Mode")
