@@ -177,6 +177,9 @@ struct SpeculativeStepDetector {
     private var trailing: TrailingCandidate?
     private var endsSentence = false
     private var silence: Duration?
+    /// Where the measured silence began, from an engine that says what it has decoded. A
+    /// partial decoded from less audio than this has not heard the words before the silence.
+    private var silenceBegan: Duration?
     private var cachedNames: [String]?
 
     init(environment: Environment, currentApp: String? = nil, stabilityThreshold: Int = 1) {
@@ -195,6 +198,16 @@ struct SpeculativeStepDetector {
 
     private func evidence() -> TrailingEvidence {
         TrailingEvidence(endsSentence: endsSentence, silence: silence)
+    }
+
+    /// The silence only vouches for a partial that heard the speech it followed. A slow decode
+    /// can deliver the text from before the last words after the tick that reported the pause.
+    private func evidence(for partial: PartialTranscript) -> TrailingEvidence {
+        var evidence = evidence()
+        if let heard = partial.audio, let silenceBegan, heard + EngineTick.decodedSlack < silenceBegan {
+            evidence.silence = nil
+        }
+        return evidence
     }
 
     mutating func observe(_ partial: PartialTranscript, launchedApp: SpeculativeApp?, at now: Date = Date()) -> [SpeculativeStep] {
@@ -238,7 +251,7 @@ struct SpeculativeStepDetector {
                 sawTrailing = true
                 let policy = trailingPolicy(for: action)
                 let pending = trailing.flatMap { $0.index == index && $0.action == action ? $0 : nil }
-                var evidence = evidence()
+                var evidence = evidence(for: partial)
                 evidence.confirmed = pending.map { $0.sequence < partial.sequence } ?? false
                 switch policy.decision(evidence) {
                 case .commit:
@@ -260,9 +273,13 @@ struct SpeculativeStepDetector {
     }
 
     /// An engine tick says how long the audio has been silent, which a partial can't, because
-    /// the engine only sends a partial when the text changes.
+    /// the engine only sends a partial when the text changes. A tick whose silence began after
+    /// the newest decode only records the silence: the waiting clause runs on the partial that
+    /// hears the rest, or on the next tick if that decode changed nothing.
     mutating func observe(_ tick: EngineTick) -> [SpeculativeStep] {
         silence = tick.trailingSilence
+        silenceBegan = tick.decoded == nil ? nil : tick.speechEnd
+        guard tick.textIsCurrent else { return [] }
         guard !diverged, let pending = trailing, pending.index == accounted.count,
               case .commit = pending.policy.decision(evidence()) else { return [] }
         trailing = nil

@@ -51,6 +51,18 @@ final class TranscriptProtocolTests: XCTestCase {
         XCTAssertEqual(events[0].tick, EngineTick(sessionID: "one", audio: .milliseconds(6_120), trailingSilence: .milliseconds(740)))
         XCTAssertNil(events[0].interimTranscript, "A tick carries no text.")
         XCTAssertNil(events[1].tick, "Only tick events carry measured silence.")
+        XCTAssertEqual(events[1].interimTranscript?.audio, .milliseconds(6_120), "A partial says how much audio it heard.")
+        try stream.finish()
+    }
+
+    func testTickEventsFromEngine0113SayHowMuchAudioTheTextReflects() throws {
+        var stream = TranscriptEventStream()
+        let wire = #"{"type":"tick","session_id":"one","audio_ms":7530,"trailing_silence_ms":320,"decoded_ms":7140}"# + "\n"
+            + #"{"type":"tick","session_id":"one","audio_ms":7590,"trailing_silence_ms":384,"decoded_ms":7530}"# + "\n"
+        let ticks = try stream.append(Data(wire.utf8)).compactMap(\.tick)
+        XCTAssertEqual(ticks.map(\.decoded), [.milliseconds(7_140), .milliseconds(7_530)])
+        XCTAssertEqual(ticks.map(\.speechEnd), [.milliseconds(7_210), .milliseconds(7_206)])
+        XCTAssertEqual(ticks.map(\.textIsCurrent), [false, true], "The decode taken at the pause catches up one tick later.")
         try stream.finish()
     }
 
