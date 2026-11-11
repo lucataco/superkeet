@@ -226,11 +226,25 @@ def ms(value):
     return "miss" if value is None else f"{value:+d}" if isinstance(value, int) else str(value)
 
 
-def render(results, verdict, scenario, loopback_ms):
+COARSE_CLOCK_NOTE = ("Speech clock: **coarse**. The stimulus came from macOS `say` without forced alignment, so every phrase "
+                     "ends where its whole utterance ends. Latencies are measured from that later point and read low; "
+                     "an action that landed mid-utterance can look early or on time.")
+
+
+def clock_kind(root):
+    meta = Path(root) / "stimulus.json"
+    if not meta.exists():
+        return "aligned"
+    return json.loads(meta.read_text()).get("clock", "aligned")
+
+
+def render(results, verdict, scenario, loopback_ms, clock="aligned"):
     lines = [f"# Live actions report: {scenario['name']}", "",
              f"{verdict['runs']} runs. Verdict: **{'PASS' if verdict['pass'] else 'FAIL'}**."]
     lines += [f"- {reason}" for reason in verdict["reasons"]]
     lines += [f"- WARNING {warning}" for warning in verdict["warnings"]]
+    if clock == "coarse":
+        lines += ["", COARSE_CLOCK_NOTE]
     lines += ["", f"Latency is probe time minus phrase end, in ms, less a loopback delay of {loopback_ms} ms (not calibrated unless set with --loopback-ms). Negative means before the phrase ended.",
               "", "## Expectations", "", "| id | after | budget p50/p90 | p50 | p90 | within budget | missed |", "|---|---|---|---|---|---|---|"]
     for key, v in verdict["expectations"].items():
@@ -264,8 +278,9 @@ def write(root, loopback_ms=0):
     results = [analyze_run(load_run(d), scenario, clock, loopback_ms) for d in sorted(root.glob("run-*"))]
     verdict = summarize(results, scenario)
     verdict["loopback_ms"] = loopback_ms
+    verdict["clock"] = clock_kind(root)
     (root / "verdict.json").write_text(json.dumps({**verdict, "per_run": results}, indent=1))
-    markdown = render(results, verdict, scenario, loopback_ms)
+    markdown = render(results, verdict, scenario, loopback_ms, verdict["clock"])
     (root / "report.md").write_text(markdown)
     print(markdown)
     return verdict

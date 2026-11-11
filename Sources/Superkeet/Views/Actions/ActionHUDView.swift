@@ -6,6 +6,8 @@ struct ActionHUDView: View {
     @ObservedObject private var agent = AgentSessionController.shared
     @ObservedObject private var speculation = SpeculativeLaunchCoordinator.shared
     @ObservedObject private var session = ListeningSessionController.shared
+    @ObservedObject private var pill = ActionPillModel.shared
+    @ObservedObject private var audio = AudioLevelMonitor.shared
 
     @State private var showDetails = false
 
@@ -30,9 +32,38 @@ struct ActionHUDView: View {
     private var hasQuestion: Bool { approvals.pending != nil || approvals.pendingPlan != nil }
 
     var body: some View {
-        ActionHUDCard(header: header, footer: footer, onButton: performControl) {
-            content
+        switch pill.presentation {
+        case .pill(let content):
+            ActionPillView(
+                content: content,
+                levels: audio.isMonitoring ? audio.levels : nil,
+                stopHelp: pillStop?.help ?? "",
+                onStop: pillStop?.action,
+                onMore: { pill.toggleExpanded() }
+            )
+        case .card:
+            ActionHUDCard(
+                header: header, footer: footer, onButton: performControl,
+                onCollapse: collapse
+            ) {
+                content
+            }
         }
+    }
+
+    private var collapse: (() -> Void)? {
+        guard pill.canCollapse else { return nil }
+        return { pill.toggleExpanded() }
+    }
+
+    /// The pill's stop square: stop the run, else stop listening, else put the result away.
+    private var pillStop: (help: String, action: () -> Void)? {
+        if agent.phase.isActive { return ("Stop this command", { agent.cancel() }) }
+        if session.isActive {
+            return ("Stop listening (\(settings.commandHotkeyDisplayName) or Escape)", { session.end(dispatchPending: false) })
+        }
+        if agent.phase.isOutcome { return ("Dismiss", { agent.reset() }) }
+        return nil
     }
 
     private var footer: String? {

@@ -22,12 +22,17 @@ struct ActionHUDCard<Content: View>: View {
     let header: ActionHUDHeader
     let footer: String?
     let onButton: () -> Void
+    let onCollapse: (() -> Void)?
     let content: Content
 
-    init(header: ActionHUDHeader, footer: String? = nil, onButton: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
+    init(
+        header: ActionHUDHeader, footer: String? = nil, onButton: @escaping () -> Void = {},
+        onCollapse: (() -> Void)? = nil, @ViewBuilder content: () -> Content
+    ) {
         self.header = header
         self.footer = footer
         self.onButton = onButton
+        self.onCollapse = onCollapse
         self.content = content()
     }
 
@@ -72,6 +77,18 @@ struct ActionHUDCard<Content: View>: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help(header.buttonHelp ?? "")
+            }
+            if let onCollapse {
+                Button(action: onCollapse) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Back to the compact pill")
+                .accessibilityLabel("Back to the compact pill")
             }
         }
     }

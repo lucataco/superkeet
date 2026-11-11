@@ -30,6 +30,7 @@ Run an Action hotkey (default ⌥⇧Space)
     └── Speech → Parakeet (local, unchanged)
             └── AgentSessionController
                     ├── NativeActionExecutor → simple app/URL opens via NSWorkspace
+                    ├── Intent router      → reads loosely worded clauses (optional)
                     ├── MCPClientManager   → local MCP server processes (stdio)
                     ├── On-device model    → plans tool calls
                     ├── ActionApprovalController → confirmations required by policy
@@ -132,10 +133,15 @@ identifier let later steps target the app without a discovery round-trip, and
 the planner learns whether there is anything to observe yet. Apps that
 legitimately open without a window are reported, not failed.
 
-A compound request whose clauses include an app or URL open, or a keyboard
-shortcut step (below), still runs with the built-in tools when no MCP server is
-enabled or no MCP tools are available. Requests that need neither keep the
-**“No MCP servers are enabled”** setup hint.
+Every request can run with the built-in tools when no MCP server is enabled or
+no MCP tools are available: “I need the calculator” is planned with `open_app`
+on offer instead of stopping at a setup error. When the planner answers such a
+request in words without using a tool, the result shows its answer followed by a
+hint (“On its own Superkeet can open apps and websites, search, press shortcuts
+and type. For anything inside an app, turn on an MCP server in Settings >
+Actions.”) and lists no action, because none ran. Only a request scoped to the
+active browser tab still stops with **“No MCP servers are enabled”**, since it
+cannot start without its server.
 
 ### Built-in keyboard shortcuts
 
@@ -230,7 +236,10 @@ Each step is then carried out in order, trying the cheapest route first:
 2. **Native open.** `open ‹app›` / `go to ‹url›` run through the built-in tools.
    A URL step with no browser uses the browser an earlier step opened.
 3. **Shortcut recipe.** See the table above.
-4. **Planner.** Everything else goes to the on-device model in a **fresh
+4. **Intent router.** A clause no route above recognised is read once by the
+   router chosen in Settings ▸ Actions (see “Loosely worded commands”). If its
+   reading resolves to a built-in action, that action runs like a native route.
+5. **Planner.** Everything else goes to the on-device model in a **fresh
    session per step**, with `ActionPlanContext` appended to its instructions:
    the full command, which step this is, what earlier steps did, and which apps
    are already open (“Notes is already open (pid 1234; its window is on screen).
@@ -243,6 +252,55 @@ native step before any decomposition, so the browser and URL are never split.
 A step that fails (denial, timeout, launch error) stops the command; earlier
 effects stand and the HUD keeps a line for each action that ran, with the failed
 one in orange beside its reason.
+
+### Loosely worded commands
+
+The native routes match phrasings. “Open Notes” is one; “I need the calculator”,
+“jump back over to TextEdit” and “start a fresh document” are not, and used to
+reach the planner, which took 1.5 to 3 s and picked a wrong tool for two of six
+such commands in a live check. **Settings ▸ Actions ▸ Understand loosely worded
+commands** puts a router in front of the planner:
+
+| Choice | What reads the clause | Measured on an M2 Pro |
+|---|---|---|
+| **On-Device Model** (default) | Apple Intelligence, one constrained generation, no tool loop | about 0.9 s a clause |
+| **Local Decision Model (Ollama)** | A decision model such as `clef-flash` served by Ollama on `127.0.0.1` (`POST /v1/systemone`) | about 1.0 s, up to 2.4 s when it also finds the argument; the model takes 12 GB or more of memory |
+| **Off** | Nothing; the planner takes the clause | |
+
+A router only says what kind of request a clause is (`RoutedIntent.Kind`: open
+an app, open a website, search, new item, new tab, type text, save, close, undo,
+redo, select all, quit, something else, or nothing) and which words it is about.
+`RoutedIntentResolver` turns that into a built-in action and decides whether to
+trust it:
+
+- **Typed text, a search and a site must be words the speaker said**, in order.
+  The action then runs on the speaker's own spelling, so it is dictated in the
+  same sense as a native route's and follows the same approval rules. A model
+  that offers to type “New Document” for “start a fresh document” is ignored.
+- **The words the request is about never start where the request starts.** A
+  small model sometimes returns the whole sentence; “Summarize this page” is not
+  a web search for itself.
+- **An app name need not be spoken** (“check my email” is Mail), because opening
+  an installed app already runs without asking. It must be installed.
+- A shortcut kind goes to the current app and keeps its usual approval: ⌘N and
+  ⌘T run, ⌘S, ⌘W, ⌘Z, ⌘A and ⌘Q ask under the default policy.
+- A clause read as nothing is dropped (**Nothing to do.**). Anything unresolved
+  goes to the planner as before.
+
+The router is asked only after the transcript is final, for clauses the native
+routes left, and is loaded when a command starts being spoken. If Apple
+Intelligence is unavailable or Ollama is not running, the clause is planned.
+
+`ParaphraseCoverageTests` scores routing against
+`Tests/Fixtures/paraphrases/commands.json`, 71 single commands of which 48 were
+written as a person would say them before the routes were read. The native
+routes alone pass 51 (all 23 documented phrasings, 28 of the 48 natural ones).
+With either router behind them, 66 pass. Two of the on-device router's readings
+were wrong actions (⌘W for “get out of Spotify”, which asks first, and opening
+Spotify for “play my workout playlist”); two of `clef-flash`'s were (a narrower
+search, and typing the quoted part of a reply request). Re-run with
+`SUPERKEET_FM_LIVE_TESTS=1` or `SUPERKEET_OLLAMA_LIVE_TESTS=1 swift test
+--filter IntentRouterLiveTests`; reports land in `.build/paraphrase-coverage/`.
 
 ### Approving a whole plan
 
@@ -316,6 +374,9 @@ queue in arrival order like any other command. `ListeningSessionController`
 owns the session, and `TakeEndpoint` decides when a pause ends a take. The engine
 sends a `tick` event about every 0.5 s of audio, carrying `trailing_silence_ms`,
 the silence its voice-activity detector measured at the end of the audio so far.
+From parakeet-cli 0.1.13 it also sends one as soon as a pause is 128 ms old and
+then every 64 ms of that pause, so a threshold is noticed within 64 ms of being
+crossed instead of up to 0.5 s later.
 Once the take has words, the first tick that reports at least
 `ListeningSessionPolicy.endpointSilence` (0.9 s) ends it. The pauses between the
 sentences of one command (742 ms in a recorded three-step command) stay inside
@@ -429,6 +490,26 @@ have run, the step is not lost: `ActionProgressSummary` condenses the calls
 made so far (tool, clipped arguments, clipped result, outcome) and the planner
 continues once in a fresh session that is told not to repeat them. Overflow
 before any tool ran still retries with a smaller tool set, as before.
+
+### The compact pill
+
+By default the Actions HUD is a single dark pill centred under the camera notch
+(under the menu bar on displays without one). The left glyph moves while you
+speak; the line shows “Go ahead, I’m listening…” when idle and the latest words
+as you speak, pinned to the end of the sentence with older words fading off the
+left edge. When an action completes the pill shows a check and its name
+(“Opened TextEdit”) for about 1.2 s; while a step runs it shows a spinner and
+the step. A failure during a listening session shows one orange line with the
+reason and clears itself after about 4 s, or as soon as you start speaking
+again. When the planner answers in words, the pill shows the first sentence for
+about 5 s, without a check. Approval requests and plan cards always open the
+full card, which takes keyboard focus, and the pill returns once you answer.
+Click the pill or “…” to open the card with the transcript and checklist, and
+the ⌃ button to go back. The stop square stops the running command, or stops
+listening if nothing is running. Turn off **Settings ▸ Actions ▸ Compact pill
+under the notch** to always use the card. Render the pill states with
+`SUPERKEET_RENDER_HUD=1 swift test --filter ActionPillRenderTests` (writes
+`.build/hud-renders/pill-*.png`). The rest of this section describes the card.
 
 ### Live transcript in the HUD
 
@@ -632,6 +713,20 @@ run, as one function of the clause's kind and what the engine has reported so fa
 | A web search | The same, once the recogniser has punctuated the end of the sentence |
 | Typing | The latest partial ends the sentence and the latest tick reports at least 300 ms of silence. Nothing else releases it, so half-heard words are never typed |
 
+With parakeet-cli 0.1.13 a tick also carries `decoded_ms`, how much of the audio
+the newest finished interim decode had heard. A pause is reported the moment it
+happens, which can be before the words that ended in it are decoded, so a tick
+releases the waiting clause only when the text is current
+(`EngineTick.textIsCurrent`: `decoded_ms` within 64 ms of where the silence
+began). Otherwise the clause runs on the partial that hears the rest, or on a
+later tick when that decode changed nothing. A partial that arrives late from a
+slow decode, and stops before the silence began, cannot borrow the silence
+either. Replaying a three-sentence command at 12 start offsets, with a decode
+counted as taking 150 ms, the last step is released 306 to 336 ms after the last
+word, against 294 to 708 ms (median 469) with 0.1.12, and the take ends 936 to
+966 ms after it, against 900 to 1378 ms. An engine that sends no `decoded_ms` is
+trusted as before.
+
 The engine sends a partial only when the text changes, so after a sentence ends
 no partial may arrive for a while. The tick (about every 0.5 s, with
 `trailing_silence_ms` from the engine's voice-activity detector) is what says the
@@ -710,10 +805,10 @@ Only **enabled** servers contribute tools to a plan. Enabled servers are
 connected when the app launches, when Actions Mode is switched on, and when a
 server's toggle is switched on, so a cold `npx` start is not on the first
 command's critical path. **Test** and **Reconnect** can establish diagnostic
-connections, but a connected server with its toggle off is excluded. If a request needs planning and no MCP servers are enabled, the HUD
-shows **“No MCP servers are enabled”** with a Settings hint. The deterministic
-native app/URL fast path runs before this check, and compound requests that
-contain an open clause plan with the built-in open tools instead of failing.
+connections, but a connected server with its toggle off is excluded. If a request needs planning and no MCP servers are enabled, the planner
+runs with the built-in tools alone, and a request it answers without acting ends
+with a hint to turn a server on (see “Built-in app and URL opening”). Only an
+active-tab request stops with **“No MCP servers are enabled”**.
 
 ### Result reuse and live observations
 
@@ -930,6 +1025,8 @@ Notes:
 | Native clauses while speaking | Apps open early on their first unambiguous sighting under Instant App Launch, and pages once their sentence ends; shortcuts, searches and typing run early once the sentence ends in 300 ms of measured silence, and only when the policy would not ask about them. The command recognises them as done rather than repeating them, and types only what the final transcript adds to early typing |
 | Listening session | Only while the pill is up. One press opens it, the shortcut or Escape closes it, two failed takes or a stopped engine close it, and the microphone is never open outside it |
 | Interaction tools | `click`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `set_value` and similar are “changes state” even when a server annotates them destructive |
+| Loosely worded commands | A router reads clauses the native routes left (on-device model by default; Off and a local Ollama decision model in Settings). Its reading runs only as a built-in action whose typed text, search or site the speaker said; everything else goes to the planner |
+| Planner sampling | Greedy, so the same sentence plans the same way every time. The planner and the router are loaded when a command starts being spoken |
 | Latency | Every action-log entry carries `sinceCommandMs` (from the recording start when live text was flowing, else the run start) and `durationMs` for the call itself |
 | Concurrent approvals | FIFO queue; each request receives its own approve/deny decision |
 | Command queue | Up to three waiting commands, run in arrival order as the active command finishes; **Escape** stops the run and clears the queue |
@@ -1014,6 +1111,10 @@ callbacks can only affect the connection that produced them.
   condensed record. An overflow before any tool ran retries with a smaller tool
   set. If it still cannot fit, it explains the overflow and suggests a narrower
   request or fewer enabled servers.
+- **The router is a small model.** It reads about nine in ten held-out commands
+  correctly and is sometimes wrong. The resolver keeps a wrong reading from
+  typing, searching for or opening words nobody said, but it cannot stop a
+  wrong kind: a clause misread as “new item” presses ⌘N.
 - **macOS 26 only.** Actions Mode is unavailable on earlier macOS versions.
 - **User-installed tooling.** Superkeet does not bundle Node, Python, or MCP
   servers.
@@ -1032,4 +1133,6 @@ callbacks can only affect the connection that produced them.
 | “Could not find 'cua-driver'” | Run the Cua Driver installer above, or set the command to `~/.local/bin/cua-driver` |
 | Action says it needs macOS 26 | Update macOS and enable Apple Intelligence |
 | “No MCP tools are available” | Add and enable a server, then **Reconnect All** |
+| A result ends with “On its own Superkeet can open apps and websites…” | The request needed more than a built-in action; enable an MCP server for it |
+| A loosely worded command is slow or asks for approval | Settings ▸ Actions ▸ Understand loosely worded commands is Off, or its model is unavailable, so the planner took it |
 | Tool call is denied | Approve the HUD, or change the approval policy |

@@ -3,6 +3,21 @@ import XCTest
 @testable import Superkeet
 
 final class NativeClauseRouterTests: XCTestCase {
+    func testAnAppNameThatIsAWebAddressOpensThatAddress() throws {
+        let nothingInstalled = NativeClauseContext(currentApp: nil, resolveApp: { _ in nil }, isRunning: { _ in false })
+        let github = try XCTUnwrap(URL(string: "https://github.com"))
+        XCTAssertEqual(NativeClauseRouter.resolvingOpen(.openApp(name: "github dot com"), context: nothingInstalled),
+                       .openURL(url: github, browser: nil), "It used to open a Google search for “github.com”.")
+        XCTAssertEqual(NativeClauseRouter.resolvingOpen(.openApp(name: "github.com?"), context: nothingInstalled),
+                       .openURL(url: github, browser: nil))
+        let inSafari = NativeClauseContext(currentApp: "Safari", resolveApp: { _ in nil }, isRunning: { _ in true })
+        XCTAssertEqual(NativeClauseRouter.resolvingOpen(.openApp(name: "github.com"), context: inSafari),
+                       .openURL(url: github, browser: "Safari"), "An address is clear even with an app in front.")
+        XCTAssertNil(NativeClauseRouter.webAddress("Saved Messages"))
+        XCTAssertNil(NativeClauseRouter.webAddress("Dr. Smith"))
+        XCTAssertNil(NativeClauseRouter.webAddress("version 3.5"))
+    }
+
     private let directory = URL(fileURLWithPath: "/fixture/Applications")
     private var notes: URL { directory.appendingPathComponent("Notes.app") }
     private var helium: URL { directory.appendingPathComponent("Helium.app") }
@@ -286,6 +301,53 @@ final class SpeculativeStepDetectorTests: XCTestCase {
         XCTAssertEqual(ran, [SpeculativeStep(index: 1, clause: "create a new note", action: .pressShortcut(app: "Notes", shortcut: commandN), sequence: 1)])
         XCTAssertEqual(detector.observe(tick(silence: 900)), [], "Runs once.")
         XCTAssertNil(detector.trailingDeadline)
+    }
+
+    func testAPauseTickWaitsUntilTheTextHasHeardTheWordsBeforeThePause() throws {
+        // parakeet-cli 0.1.13 reports a pause as it happens, which can be before the last words
+        // are decoded: "…and type hello." is on screen, "world" was said, the pause began.
+        var detector = notesDetector()
+        let heard = PartialTranscript(text: "Open Notes and type hello.", isFinal: false, sequence: 1, audio: .milliseconds(3_000))
+        XCTAssertEqual(detector.observe(heard, launchedApp: notesApp), [])
+        let early = EngineTick(sessionID: "s", audio: .milliseconds(3_800), trailingSilence: .milliseconds(320), decoded: .milliseconds(3_000))
+        XCTAssertFalse(early.textIsCurrent, "The speech ended at 3 480 ms; the text stops at 3 000.")
+        XCTAssertEqual(detector.observe(early), [], "Typing “hello” now would lose “world”.")
+
+        let whole = PartialTranscript(text: "Open Notes and type hello world.", isFinal: false, sequence: 2, audio: .milliseconds(3_800))
+        let ran = detector.observe(whole, launchedApp: notesApp)
+        XCTAssertEqual(ran.map(\.action), [.typeText(app: "Notes", text: "hello world")], "The decode taken at the pause releases it.")
+    }
+
+    func testAPauseTickRunsTheClauseOnceADecodeThatChangedNothingCatchesUp() throws {
+        var detector = notesDetector()
+        let heard = PartialTranscript(text: "Open Notes and type hello.", isFinal: false, sequence: 1, audio: .milliseconds(3_000))
+        XCTAssertEqual(detector.observe(heard, launchedApp: notesApp), [])
+        let early = EngineTick(sessionID: "s", audio: .milliseconds(3_520), trailingSilence: .milliseconds(320), decoded: .milliseconds(3_000))
+        XCTAssertEqual(detector.observe(early), [], "200 ms of speech is still undecoded.")
+        // The engine sends no partial for a decode with the same text; the next tick says it ran.
+        let caughtUp = EngineTick(sessionID: "s", audio: .milliseconds(3_584), trailingSilence: .milliseconds(384), decoded: .milliseconds(3_520))
+        XCTAssertEqual(detector.observe(caughtUp).map(\.action), [.typeText(app: "Notes", text: "hello")])
+    }
+
+    func testTextDecodedWithinTwoChunksOfTheEndOfSpeechIsCurrent() {
+        let tick = EngineTick(sessionID: "s", audio: .milliseconds(5_000), trailingSilence: .milliseconds(320), decoded: .milliseconds(4_620))
+        XCTAssertTrue(tick.textIsCurrent, "The end of speech is rounded up to a 32 ms chunk.")
+        let behind = EngineTick(sessionID: "s", audio: .milliseconds(5_000), trailingSilence: .milliseconds(320), decoded: .milliseconds(4_600))
+        XCTAssertFalse(behind.textIsCurrent)
+        XCTAssertTrue(EngineTick(sessionID: "s", audio: .seconds(5), trailingSilence: .milliseconds(320)).textIsCurrent,
+                      "An engine that does not report its decodes is trusted, as before 0.1.13.")
+    }
+
+    func testASlowDecodeDeliveredAfterThePauseTickDoesNotBorrowItsSilence() throws {
+        // The pause tick arrives first; the decode still running when it was sent finishes
+        // after it and carries the text from before the last word.
+        var detector = notesDetector()
+        let pause = EngineTick(sessionID: "s", audio: .milliseconds(3_800), trailingSilence: .milliseconds(320), decoded: .milliseconds(2_500))
+        XCTAssertEqual(detector.observe(pause), [])
+        let late = PartialTranscript(text: "Open Notes and type hello.", isFinal: false, sequence: 1, audio: .milliseconds(3_000))
+        XCTAssertEqual(detector.observe(late, launchedApp: notesApp), [], "This text stops 480 ms before the pause began.")
+        let whole = PartialTranscript(text: "Open Notes and type hello world.", isFinal: false, sequence: 2, audio: .milliseconds(3_800))
+        XCTAssertEqual(detector.observe(whole, launchedApp: notesApp).map(\.action), [.typeText(app: "Notes", text: "hello world")])
     }
 
     func testTheSilenceBeforeThePartialAlreadyCountsWhenThePartialEndsTheSentence() {

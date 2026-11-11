@@ -54,8 +54,8 @@ final class NativeTypeTextTests: XCTestCase {
         XCTAssertThrowsError(try NativeOpenAction.decode(toolName: "type_text", argumentsJSON: #"{"text":"hello"}"#))
         XCTAssertEqual(ActionIntentFormatter.summary(toolName: "type_text", argumentsJSON: json), "Type “hello” in Notes")
         XCTAssertEqual(NativeOpenAction.tools.map(\.toolName), ["open_app", "open_url", "press_shortcut", "type_text"])
-        XCTAssertTrue(NativeOpenAction.plansWithoutMCP("open Notes and make the title say hello"))
-        XCTAssertTrue(NativeOpenAction.plansWithoutMCP("type hello"))
+        XCTAssertTrue(NativeOpenAction.plansWithBuiltInTools("open Notes and make the title say hello"))
+        XCTAssertTrue(NativeOpenAction.plansWithBuiltInTools("type hello"))
     }
 
     func testExecutorTypesInTheResolvedApp() async throws {

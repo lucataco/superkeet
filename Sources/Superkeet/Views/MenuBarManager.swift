@@ -123,10 +123,12 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             menu.addItem(NSMenuItem.separator())
         }
 
+        let recordingShortcut = MenuKeyEquivalent(keyCode: settings.toggleHotkeyKeyCode, modifierFlags: settings.toggleHotkeyModifierFlags)
         if settings.isRecording {
             let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecording), keyEquivalent: "")
             stopItem.target = self
             stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: "Stop")
+            recordingShortcut?.apply(to: stopItem)
             menu.addItem(stopItem)
         } else if recordingRequested {
             let cancelItem = NSMenuItem(title: "Cancel Starting Recording", action: #selector(cancelRecording), keyEquivalent: "")
@@ -137,6 +139,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             startItem.target = self
             startItem.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Record")
             startItem.isEnabled = !recordingRequested && parakeetService.daemonState != .transcribing
+            recordingShortcut?.apply(to: startItem)
             menu.addItem(startItem)
         }
 
@@ -150,6 +153,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             let commandItem = NSMenuItem(title: commandTitle, action: #selector(askSuperkeet), keyEquivalent: "")
             commandItem.target = self
             commandItem.image = NSImage(systemSymbolName: sessionActive ? "ear.trianglebadge.exclamationmark" : "wand.and.stars", accessibilityDescription: commandTitle)
+            MenuKeyEquivalent(keyCode: settings.commandHotkeyKeyCode, modifierFlags: settings.commandHotkeyModifierFlags)?.apply(to: commandItem)
             menu.addItem(commandItem)
 
             let autoApproveItem = NSMenuItem(title: "Auto-Approve Actions", action: #selector(toggleAutoApproveActions), keyEquivalent: "")
@@ -599,6 +603,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         parakeetService.armCommandMode()
         pttSessionActive = false
         startRecording()
+        AgentSessionController.shared.prewarmPlanner()
     }
 
     @MainActor

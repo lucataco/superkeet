@@ -1,0 +1,767 @@
+{
+  "_comment": "Single-instruction spoken commands scored by Tests/SuperkeetTests/ParaphraseCoverageTests.swift. source=natural rows were written as a person would say them before reading the routing regexes and must not be edited to pass or fail; source=docs rows are phrasings docs/actions-mode.md lists as supported. expect.arg: resolved app name (open_app), URL host (open_url), decoded search query (open_url with search=true), key chord (press_shortcut), exact typed text (type_text). expect.lucky: also accept a Google I'm Feeling Lucky URL for this query. Every installed app is treated as running.",
+  "installed_apps": [
+    "Notes",
+    "Safari",
+    "Google Chrome",
+    "Arc",
+    "Slack",
+    "Spotify",
+    "Terminal",
+    "Calendar",
+    "Mail",
+    "Messages",
+    "Finder",
+    "Photo Booth",
+    "TextEdit",
+    "Xcode",
+    "Calculator",
+    "Music",
+    "System Settings",
+    "Preview",
+    "Reminders",
+    "Maps"
+  ],
+  "commands": [
+    {
+      "text": "I need the calculator.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Calculator",
+        "live_failure": true
+      }
+    },
+    {
+      "text": "Jump back over to TextEdit.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": "Safari",
+      "expect": {
+        "tool": "open_app",
+        "arg": "TextEdit",
+        "live_failure": true
+      }
+    },
+    {
+      "text": "Can you bring up Spotify for me?",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Spotify"
+      }
+    },
+    {
+      "text": "Um, let's get Slack open.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Slack"
+      }
+    },
+    {
+      "text": "Launch Xcode, please.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Xcode"
+      }
+    },
+    {
+      "text": "Go back to my email.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": "Safari",
+      "expect": {
+        "tool": "open_app",
+        "arg": "Mail"
+      }
+    },
+    {
+      "text": "Hop over to Messages.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "open_app",
+        "arg": "Messages"
+      }
+    },
+    {
+      "text": "Show me my calendar.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Calendar"
+      }
+    },
+    {
+      "text": "Get Terminal up.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Terminal"
+      }
+    },
+    {
+      "text": "Open up the Finder.",
+      "category": "open_app",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Finder"
+      }
+    },
+    {
+      "text": "Open Notes.",
+      "category": "open_app",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Notes"
+      }
+    },
+    {
+      "text": "Switch to Safari.",
+      "category": "open_app",
+      "source": "docs",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "open_app",
+        "arg": "Safari"
+      }
+    },
+    {
+      "text": "Let's open Arc browser.",
+      "category": "open_app",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Arc"
+      }
+    },
+    {
+      "text": "Pull up System Settings.",
+      "category": "open_app",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "System Settings"
+      }
+    },
+    {
+      "text": "Open the camera.",
+      "category": "open_app",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Photo Booth"
+      }
+    },
+    {
+      "text": "Fire up Chrome.",
+      "category": "open_app",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_app",
+        "arg": "Google Chrome"
+      }
+    },
+    {
+      "text": "Get me to Hacker News.",
+      "category": "open_url",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "news.ycombinator.com",
+        "lucky": "hacker news",
+        "live_failure": true
+      }
+    },
+    {
+      "text": "Take me to youtube.com.",
+      "category": "open_url",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "youtube.com"
+      }
+    },
+    {
+      "text": "Can you pull up github dot com?",
+      "category": "open_url",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "github.com"
+      }
+    },
+    {
+      "text": "Head over to wikipedia.org, please.",
+      "category": "open_url",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "wikipedia.org"
+      }
+    },
+    {
+      "text": "Go to Reddit.",
+      "category": "open_url",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "reddit.com",
+        "lucky": "reddit"
+      }
+    },
+    {
+      "text": "Open youtube.com.",
+      "category": "open_url",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "youtube.com"
+      }
+    },
+    {
+      "text": "Go to apple.com in Safari.",
+      "category": "open_url",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "apple.com"
+      }
+    },
+    {
+      "text": "Open the Hacker News website.",
+      "category": "open_url",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "news.ycombinator.com",
+        "lucky": "hacker news"
+      }
+    },
+    {
+      "text": "Can you look up flights to Denver for me?",
+      "category": "web_search",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "flights to denver",
+        "search": true
+      }
+    },
+    {
+      "text": "Search the web for banana bread recipes.",
+      "category": "web_search",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "banana bread recipes",
+        "search": true
+      }
+    },
+    {
+      "text": "Find me reviews of the Framework laptop.",
+      "category": "web_search",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "reviews of the framework laptop",
+        "search": true
+      }
+    },
+    {
+      "text": "Um, google how tall is Mount Everest.",
+      "category": "web_search",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "how tall is mount everest",
+        "search": true
+      }
+    },
+    {
+      "text": "Do a search for cheap hotels in Lisbon.",
+      "category": "web_search",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "cheap hotels in lisbon",
+        "search": true
+      }
+    },
+    {
+      "text": "Search for Morgan Freeman.",
+      "category": "web_search",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "morgan freeman",
+        "search": true
+      }
+    },
+    {
+      "text": "Google Morgan Freeman.",
+      "category": "web_search",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "morgan freeman",
+        "search": true
+      }
+    },
+    {
+      "text": "Look up the population of Canada.",
+      "category": "web_search",
+      "source": "docs",
+      "current_app": null,
+      "expect": {
+        "tool": "open_url",
+        "arg": "the population of canada",
+        "search": true
+      }
+    },
+    {
+      "text": "Start a fresh document.",
+      "category": "new_item",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+n",
+        "app": "TextEdit",
+        "live_failure": true
+      }
+    },
+    {
+      "text": "I need a new note.",
+      "category": "new_item",
+      "source": "natural",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+n",
+        "app": "Notes"
+      }
+    },
+    {
+      "text": "Give me a blank window.",
+      "category": "new_item",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+n",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Can you open a new tab for me?",
+      "category": "new_item",
+      "source": "natural",
+      "current_app": "Safari",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+t",
+        "app": "Safari"
+      }
+    },
+    {
+      "text": "Let's start a new email.",
+      "category": "new_item",
+      "source": "natural",
+      "current_app": "Mail",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+n",
+        "app": "Mail"
+      }
+    },
+    {
+      "text": "Create a new note.",
+      "category": "new_item",
+      "source": "docs",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+n",
+        "app": "Notes"
+      }
+    },
+    {
+      "text": "Open a new tab.",
+      "category": "new_item",
+      "source": "docs",
+      "current_app": "Google Chrome",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+t",
+        "app": "Google Chrome"
+      }
+    },
+    {
+      "text": "Make a new document in TextEdit.",
+      "category": "new_item",
+      "source": "docs",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+n",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "The heading should be quarterly review.",
+      "category": "type_text",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "type_text",
+        "arg": "quarterly review",
+        "app": "TextEdit",
+        "live_failure": true
+      }
+    },
+    {
+      "text": "Write down buy milk and eggs.",
+      "category": "type_text",
+      "source": "natural",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "type_text",
+        "arg": "buy milk and eggs",
+        "app": "Notes"
+      }
+    },
+    {
+      "text": "Put hello world in there.",
+      "category": "type_text",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "type_text",
+        "arg": "hello world",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Can you type thanks for the update, see you Monday.",
+      "category": "type_text",
+      "source": "natural",
+      "current_app": "Mail",
+      "expect": {
+        "tool": "type_text",
+        "arg": "thanks for the update, see you Monday",
+        "app": "Mail"
+      }
+    },
+    {
+      "text": "Title this one grocery list.",
+      "category": "type_text",
+      "source": "natural",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "type_text",
+        "arg": "grocery list",
+        "app": "Notes"
+      }
+    },
+    {
+      "text": "Change the title to Trip Plans.",
+      "category": "type_text",
+      "source": "natural",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "type_text",
+        "arg": "Trip Plans",
+        "app": "Notes"
+      }
+    },
+    {
+      "text": "Um, type meeting notes for Tuesday, please.",
+      "category": "type_text",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "type_text",
+        "arg": "meeting notes for Tuesday",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Type hello.",
+      "category": "type_text",
+      "source": "docs",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "type_text",
+        "arg": "hello",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Make the title say Weekly Sync.",
+      "category": "type_text",
+      "source": "docs",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "type_text",
+        "arg": "Weekly Sync",
+        "app": "Notes"
+      }
+    },
+    {
+      "text": "Name it Budget 2027.",
+      "category": "type_text",
+      "source": "docs",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "type_text",
+        "arg": "Budget 2027",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Save this.",
+      "category": "shortcut",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+s",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Close that window.",
+      "category": "shortcut",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+w",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Oops, undo that.",
+      "category": "shortcut",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+z",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Highlight everything.",
+      "category": "shortcut",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+a",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Get out of Spotify.",
+      "category": "shortcut",
+      "source": "natural",
+      "current_app": "Spotify",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+q",
+        "app": "Spotify"
+      }
+    },
+    {
+      "text": "Save the document.",
+      "category": "shortcut",
+      "source": "docs",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+s",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Redo.",
+      "category": "shortcut",
+      "source": "docs",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+shift+z",
+        "app": "TextEdit"
+      }
+    },
+    {
+      "text": "Quit Safari.",
+      "category": "shortcut",
+      "source": "docs",
+      "current_app": "Safari",
+      "expect": {
+        "tool": "press_shortcut",
+        "arg": "cmd+q",
+        "app": "Safari"
+      }
+    },
+    {
+      "text": "Okay, thanks.",
+      "category": "filler",
+      "source": "natural",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "none"
+      }
+    },
+    {
+      "text": "Hmm, never mind.",
+      "category": "filler",
+      "source": "natural",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "none"
+      }
+    },
+    {
+      "text": "Perfect, that's great.",
+      "category": "filler",
+      "source": "natural",
+      "current_app": "TextEdit",
+      "expect": {
+        "tool": "none"
+      }
+    },
+    {
+      "text": "Uh, hold on.",
+      "category": "filler",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "none"
+      }
+    },
+    {
+      "text": "Cool. Awesome. Thank you.",
+      "category": "filler",
+      "source": "docs",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "none"
+      }
+    },
+    {
+      "text": "In the Notes app.",
+      "category": "filler",
+      "source": "docs",
+      "current_app": "Notes",
+      "expect": {
+        "tool": "none"
+      }
+    },
+    {
+      "text": "What time is it in Tokyo?",
+      "category": "planner",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "planner",
+        "live_failure": true
+      }
+    },
+    {
+      "text": "Click the send button.",
+      "category": "planner",
+      "source": "natural",
+      "current_app": "Mail",
+      "expect": {
+        "tool": "planner"
+      }
+    },
+    {
+      "text": "Reply to the last message from Sarah saying I'm running late.",
+      "category": "planner",
+      "source": "natural",
+      "current_app": "Messages",
+      "expect": {
+        "tool": "planner"
+      }
+    },
+    {
+      "text": "Scroll down a bit.",
+      "category": "planner",
+      "source": "natural",
+      "current_app": "Safari",
+      "expect": {
+        "tool": "planner"
+      }
+    },
+    {
+      "text": "Summarize this page.",
+      "category": "planner",
+      "source": "natural",
+      "current_app": "Safari",
+      "expect": {
+        "tool": "planner"
+      }
+    },
+    {
+      "text": "Play my workout playlist.",
+      "category": "planner",
+      "source": "natural",
+      "current_app": "Spotify",
+      "expect": {
+        "tool": "planner"
+      }
+    },
+    {
+      "text": "Turn on dark mode.",
+      "category": "planner",
+      "source": "natural",
+      "current_app": null,
+      "expect": {
+        "tool": "planner"
+      }
+    }
+  ]
+}

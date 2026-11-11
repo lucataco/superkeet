@@ -226,14 +226,10 @@ enum NativeOpenAction: Equatable, Sendable {
         return Self.tools + tools.filter { $0.serverID != serverID && !names.contains($0.toolName) }
     }
 
-    static func plansWithoutMCP(_ goal: String) -> Bool {
-        guard HeuristicIntentExtractor.intent(for: goal).scope != .activeTab else { return false }
-        return CommandClauses.split(goal).contains { clause in
-            let intent = HeuristicIntentExtractor.intent(for: clause)
-            return (intent.scope == nil && [.openApp, .switchApp, .openURL, .webSearch].contains(intent.action))
-                || NativeAppRecipe.recipe(for: clause) != nil
-                || NativeTypeRecipe.recipe(for: clause) != nil
-        }
+    /// Whether a command may be planned with the built-in actions alone when no MCP tools are
+    /// available. A request scoped to the active browser tab needs its server and says so.
+    static func plansWithBuiltInTools(_ goal: String) -> Bool {
+        HeuristicIntentExtractor.intent(for: goal).scope != .activeTab
     }
 
     static func spokenURLToken(_ token: String) -> String {

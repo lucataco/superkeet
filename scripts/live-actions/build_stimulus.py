@@ -29,6 +29,9 @@ LIVE_SLACK_MS = 1000
 TTS_URL = "https://api.replicate.com/v1/models/google/gemini-3.8-flash-tts/predictions"
 WHISPERX_VERSION = "655845d6190ef70573c669245f245892cd039df4b880a1e3a65852c09252f5cc"
 TRIM = "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.02"
+SAY_VOICE = "Samantha"
+CLOCK_ALIGNED = "aligned"
+CLOCK_COARSE = "coarse"
 
 
 class GateError(RuntimeError):
@@ -87,6 +90,38 @@ def read_pcm(path):
         return w.readframes(w.getnframes())
 
 
+def tts_engine(env=None):
+    """Replicate when a token is set; otherwise macOS `say`, which needs no network."""
+    env = os.environ if env is None else env
+    return "replicate" if env.get("REPLICATE_API_TOKEN") else "say"
+
+
+def trim_to_wav(source, dest):
+    trim = f"{TRIM},areverse,{TRIM},areverse"
+    run(["ffmpeg", "-v", "error", "-y", "-i", source, "-af", trim, "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_s16le", dest])
+
+
+def synthesize_say(text, out_path, voice=SAY_VOICE):
+    with tempfile.TemporaryDirectory() as tmp:
+        script, aiff = Path(tmp, "text.txt"), Path(tmp, "speech.aiff")
+        script.write_text(text)
+        run(["say", "-v", voice, "-o", aiff, "-f", script])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        trim_to_wav(aiff, out_path)
+
+
+def coarse_clock(utterances, windows):
+    """One row per spoken word, spanning the whole utterance that holds it.
+
+    Without forced alignment the only timing known is where each clip sits, so a phrase ends
+    when the utterance containing it ends. Latencies measured against it are upper bounds on
+    how late the action was, and can hide an action that landed mid-utterance."""
+    rows = []
+    for utterance, (start, end) in zip(utterances, windows):
+        rows += [(start, end, word) for word in utterance["text"].split()]
+    return rows
+
+
 def synthesize(text, voice, style, out_path):
     output = replicate(TTS_URL, {"input": {"text": text, "voice": voice, "style": style, "output_format": "wav"}})
     urls = output if isinstance(output, list) else [output]
@@ -95,8 +130,7 @@ def synthesize(text, voice, style, out_path):
         for i, url in enumerate(urls):
             raw, fixed = Path(tmp, f"raw{i}.wav"), Path(tmp, f"fixed{i}.wav")
             urllib.request.urlretrieve(url, raw)
-            trim = f"{TRIM},areverse,{TRIM},areverse"
-            run(["ffmpeg", "-v", "error", "-y", "-i", raw, "-af", trim, "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_s16le", fixed])
+            trim_to_wav(raw, fixed)
             pcm += read_pcm(fixed)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_pcm(out_path, pcm)
@@ -182,9 +216,17 @@ def carrying(scenario, problems):
             if any(common.phrase_in_text(u["text"], p.phrase) for p in problems)]
 
 
-def clip_path(scenario, utterance, take):
-    key = hashlib.sha256(json.dumps([scenario["voice"], scenario.get("style", ""), utterance["text"], take]).encode()).hexdigest()[:16]
+def clip_path(scenario, utterance, take, engine="replicate"):
+    parts = [scenario["voice"], scenario.get("style", ""), utterance["text"], take]
+    if engine == "say":
+        parts = ["say", SAY_VOICE, utterance["text"]]
+    key = hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
     return common.BUILD / "cache" / "clips" / f"{key}.wav"
+
+
+def stimulus_dir(scenario, engine):
+    suffix = "-say" if engine == "say" else ""
+    return common.BUILD / "cache" / f"{scenario['name']}-{common.audio_key(scenario)}{suffix}"
 
 
 def assemble(scenario, clips, paths):
@@ -202,9 +244,10 @@ def assemble(scenario, clips, paths):
     return placed, total, gain_db, loudness
 
 
-def build(scenario_path, fresh=False):
+def build(scenario_path, fresh=False, engine=None):
     scenario = common.load_scenario(scenario_path)
-    out = common.BUILD / "cache" / f"{scenario['name']}-{common.audio_key(scenario)}"
+    engine = engine or tts_engine()
+    out = stimulus_dir(scenario, engine)
     paths = {"dir": out, "wav48": out / "stimulus-48k.wav", "wav16": out / "stimulus-16k.wav",
              "clock": out / "speech-clock.tsv", "meta": out / "stimulus.json", "takes": out / "takes.json"}
     if not fresh and all(paths[k].exists() for k in ("wav48", "wav16", "clock", "meta")):
@@ -215,6 +258,8 @@ def build(scenario_path, fresh=False):
         return paths
 
     out.mkdir(parents=True, exist_ok=True)
+    if engine == "say":
+        return build_with_say(scenario, paths)
     count = len(scenario["utterances"])
     takes = [int(time.time())] * count if fresh else (json.loads(paths["takes"].read_text()) if paths["takes"].exists() else [0] * count)
     for attempt in range(MAX_ATTEMPTS):
@@ -242,7 +287,29 @@ def build(scenario_path, fresh=False):
     paths["meta"].write_text(json.dumps({
         "name": scenario["name"], "duration_ms": round(total * 1000 / RATE), "windows_ms": wins,
         "gain_db": round(gain_db, 2), "input_lufs": round(loudness, 2), "takes": takes,
-        "transcript": transcript, "partials": partials,
+        "transcript": transcript, "partials": partials, "tts": "replicate", "clock": CLOCK_ALIGNED,
+    }, indent=1))
+    return paths
+
+
+def build_with_say(scenario, paths):
+    """The offline path: macOS `say`, one take (the voice is deterministic), and a coarse clock."""
+    clips = [clip_path(scenario, u, 0, "say") for u in scenario["utterances"]]
+    for utterance, clip in zip(scenario["utterances"], clips):
+        if not clip.exists():
+            synthesize_say(utterance["text"], clip)
+    placed, total, gain_db, loudness = assemble(scenario, clips, paths)
+    wins = windows_ms(placed)
+    clock = coarse_clock(scenario["utterances"], wins)
+    common.write_clock(paths["clock"], clock)
+    transcript, partials = replay(paths["wav16"])
+    problems = check_phrases(scenario, transcript, partials, clock, wins)
+    if problems:
+        raise GateError("say stimulus failed its gates (a different voice will not help on retry): " + "; ".join(m for _, m in problems))
+    paths["meta"].write_text(json.dumps({
+        "name": scenario["name"], "duration_ms": round(total * 1000 / RATE), "windows_ms": wins,
+        "gain_db": round(gain_db, 2), "input_lufs": round(loudness, 2), "takes": [0] * len(clips),
+        "transcript": transcript, "partials": partials, "tts": f"say -v {SAY_VOICE}", "clock": CLOCK_COARSE,
     }, indent=1))
     return paths
 
@@ -255,7 +322,8 @@ def main():
     paths = build(args.scenario, args.fresh)
     meta = json.loads(paths["meta"].read_text())
     clock = common.read_clock(paths["clock"])
-    print(f"{paths['wav48']} ({meta['duration_ms']} ms, gain {meta['gain_db']} dB from {meta['input_lufs']} LUFS)")
+    print(f"{paths['wav48']} ({meta['duration_ms']} ms, gain {meta['gain_db']} dB from {meta['input_lufs']} LUFS, "
+          f"voice {meta.get('tts', 'replicate')}, {meta.get('clock', CLOCK_ALIGNED)} clock)")
     for item in common.load_scenario(args.scenario)["expect"]:
         print(f"  {item['id']}: {item['after']!r} ends at {common.phrase_end_ms(clock, item['after'])} ms")
 

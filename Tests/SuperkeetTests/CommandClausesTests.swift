@@ -20,14 +20,13 @@ final class CommandClausesTests: XCTestCase {
         XCTAssertEqual(CommandClauses.split("open Anthem"), ["open Anthem"])
     }
 
-    func testOpenPolicyRequiresAnOpenOrURLClause() {
-        for goal in ["open the notes app and create a new note", "launch Discord then click Friends",
-                     "create a note and open Notes", "go to youtube.com and search for cats", "Open Notes",
-                     "switch to Notes and type hello", "search for cats", "Lets open Chrome and search for Morgan Freeman"] {
-            XCTAssertTrue(NativeOpenAction.plansWithoutMCP(goal), goal)
+    func testOnlyAnActiveTabRequestCannotBePlannedWithTheBuiltInTools() {
+        for goal in ["open the notes app and create a new note", "do the thing", "click Save in Notes",
+                     "I need the calculator", "What time is it in Tokyo?", "search for cats"] {
+            XCTAssertTrue(NativeOpenAction.plansWithBuiltInTools(goal), goal)
         }
-        for goal in ["do the thing", "click Save in Notes", "In the current Chrome tab, go to youtube.com and open Notes"] {
-            XCTAssertFalse(NativeOpenAction.plansWithoutMCP(goal), goal)
+        for goal in ["In the current Chrome tab, go to youtube.com and open Notes", "Find the DNS records in the active tab"] {
+            XCTAssertFalse(NativeOpenAction.plansWithBuiltInTools(goal), goal)
         }
     }
 

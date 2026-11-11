@@ -87,6 +87,18 @@ enum ActionExecutionError: LocalizedError, Equatable {
     }
 }
 
+/// What Superkeet says when the planner had only the built-in actions and used none of them.
+/// The model's own words come first; the hint says what would let it do more.
+enum BuiltInActionsReply {
+    static let hint = "On its own Superkeet can open apps and websites, search, press shortcuts and type. "
+        + "For anything inside an app, turn on an MCP server in Settings > Actions."
+
+    static func text(for reply: String) -> String {
+        let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed.isEmpty ? "I couldn’t do that." : trimmed) + " " + hint
+    }
+}
+
 enum ActionLimits {
     static let maximumToolsPerAction = 40
     static let maximumArgumentsBytes = 64 * 1_024
@@ -358,6 +370,14 @@ protocol ActionPlanning: AnyObject {
         execute: @escaping @Sendable (ActionToolSpec, String) async throws -> String,
         onEvent: @escaping @Sendable (ActionPlanEvent) -> Void
     ) async throws -> String
+
+    /// Called when a command starts being spoken, so the model is in memory by the time a
+    /// step needs it. Planners with nothing to load do nothing.
+    func prewarm()
+}
+
+extension ActionPlanning {
+    func prewarm() {}
 }
 
 struct ActionPlanStep: Equatable, Sendable {

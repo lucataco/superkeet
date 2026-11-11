@@ -5,6 +5,15 @@ struct PartialTranscript: Equatable, Sendable {
     let text: String
     let isFinal: Bool
     let sequence: Int
+    /// How much of the take's audio this text was decoded from, when the recogniser says.
+    let audio: Duration?
+
+    init(text: String, isFinal: Bool, sequence: Int, audio: Duration? = nil) {
+        self.text = text
+        self.isFinal = isFinal
+        self.sequence = sequence
+        self.audio = audio
+    }
 }
 
 struct RecognizedPhrase: Equatable, Sendable {
