@@ -29,6 +29,8 @@ This repo is still in active development. The app now favors a simpler setup-fir
 - Setup diagnostics for microphone access, engine presence, runtime directory, and daemon state
 - Optional **Actions Mode** that turns a spoken command into tool calls on local MCP servers, planned on-device and approved by you, or auto-approved if you choose
 - **Instant app launch** in Actions Mode: “let's open Chrome and…” opens Chrome while you are still speaking, spotting the app name in the engine's own interim text (parakeet-cli 0.1.7) or, on older engines, Apple's on-device recogniser
+- **Loosely worded commands**: “I need the calculator” and “start a fresh document” are read by an on-device model (or a local Ollama decision model) and run as built-in actions, only on words you said
+- **Compact pill**: while Actions Mode listens, one line under the notch shows what you are saying and what just happened
 - **Native web search**: “search for Morgan Freeman” opens a search in the browser you named or just opened, with no model call
 - 100% local transcription via `parakeet`
 
@@ -144,7 +146,7 @@ After the model is present, Superkeet starts the bundled Parakeet daemon in the 
 
 Click the menu bar icon to:
 
-- Start or stop recording
+- Start or stop recording (the menu shows the shortcut beside it)
 - Run an Action or toggle **Auto-Approve Actions** when Actions Mode is enabled
 - Copy the last transcript, copy the original, or undo text changes and copy
 - Open History
@@ -198,6 +200,7 @@ cannot run it):
   - Actions Mode enablement and on-device model availability
   - MCP server management (add, edit, test, reconnect)
   - approval policy (including **Just Do It (YOLO)**) and the local action log
+  - which model reads loosely worded commands, and the compact pill
 - Advanced
   - audio device selection (the engine restarts automatically on change)
   - app-scoped phrase replacements
