@@ -83,8 +83,7 @@ final class DemoActionsLiveTests: XCTestCase {
         defer { Task { await service.stopDaemonAndWait() } }
         XCTAssertEqual(service.daemonProtocolVersion, 2)
 
-        service.armCommandMode()
-        let started = await service.startRecording()
+        let started = await service.startRecording(kind: .command)
         XCTAssertTrue(started)
 
         let play = Process()

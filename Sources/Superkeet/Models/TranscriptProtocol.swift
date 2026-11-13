@@ -151,17 +151,3 @@ enum TranscriptProtocolError: LocalizedError {
         }
     }
 }
-
-struct TranscriptSessionGate {
-    private(set) var sessionID: String?
-
-    mutating func begin(_ id: String) -> Bool {
-        guard sessionID == nil else { return false }
-        sessionID = id
-        return true
-    }
-
-    func accepts(_ event: TranscriptEvent) -> Bool { event.sessionID == sessionID }
-
-    mutating func close() { sessionID = nil }
-}
