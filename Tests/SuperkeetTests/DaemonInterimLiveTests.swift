@@ -43,8 +43,7 @@ final class DaemonInterimLiveTests: XCTestCase {
         try say.run()
         say.waitUntilExit()
 
-        service.armCommandMode()
-        let started = await service.startRecording()
+        let started = await service.startRecording(kind: .command)
         XCTAssertTrue(started)
         let sessionID = try XCTUnwrap(launching.begun.first, "Command Mode recording must notify the coordinator.")
         let partials = service.interimTranscripts(sessionID: sessionID)

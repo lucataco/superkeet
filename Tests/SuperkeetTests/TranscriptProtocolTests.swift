@@ -123,18 +123,6 @@ final class TranscriptProtocolTests: XCTestCase {
         }
     }
 
-    func testSessionCannotBeOverwrittenAndRejectsLateOrDuplicateOutput() {
-        var gate = TranscriptSessionGate()
-        let event = TranscriptEvent(type: "complete", sessionID: "one", text: "first", status: "ok")
-        XCTAssertTrue(gate.begin("one"))
-        XCTAssertFalse(gate.begin("two"))
-        XCTAssertTrue(gate.accepts(event))
-        gate.close()
-        XCTAssertFalse(gate.accepts(event))
-        XCTAssertTrue(gate.begin("two"))
-        XCTAssertFalse(gate.accepts(event))
-    }
-
     func testLossAndFailureCannotBeMistakenForCompleteSuccess() {
         XCTAssertEqual(TranscriptEvent(type: "session_started", sessionID: "one").kind, .sessionStarted)
         XCTAssertEqual(TranscriptEvent(type: "transcribing", sessionID: "one").kind, .transcribing)

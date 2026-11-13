@@ -17,11 +17,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private let listeningSession = ListeningSessionController.shared
     private var settingsWindowController: NSWindowController?
     private var historyWindowController: NSWindowController?
-    private let recordingStart = RecordingStartCoordinator()
     private var didShowMicrophoneDeniedAlert = false
-    private var recordingRequested: Bool { recordingStart.requestID != nil }
-    private var isWaitingForEngine: Bool { recordingRequested && !settings.isRecording && !settings.isDaemonRunning }
-    private var pttSessionActive: Bool = false
+    /// A take the user can still stop or cancel: asked for, starting, or recording.
+    private var recordingRequested: Bool { parakeetService.take?.isOpen == true }
+    private var isTakePending: Bool { parakeetService.take?.isPending == true }
+    private var isWaitingForEngine: Bool { isTakePending && !settings.isDaemonRunning }
     private var recordingStateCancellable: AnyCancellable?
     private var sessionStatusCancellable: AnyCancellable?
     private var actionStateCancellable: AnyCancellable?
@@ -42,12 +42,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         recordingStateCancellable = settings.$isRecording
             .scan((false, false)) { ($0.1, $1) }
             .filter { $0.0 && !$0.1 }
-            .map { [weak self] _ in self?.recordingStart.requestID }
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] requestID in
-                guard let self, self.recordingStart.requestID == requestID else { return }
-                self.recordingStart.cancel()
-                self.pttSessionActive = false
+            .sink { [weak self] _ in
+                // A newer take may already be recording by the time this arrives.
+                guard let self, !self.settings.isRecording else { return }
                 self.updateMenuBarIcon(recording: false)
                 AudioLevelMonitor.shared.stopMonitoring()
             }
@@ -61,7 +59,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 settings.$isActionSessionActive,
                 speculation.$listening.map { $0 != nil }.removeDuplicates(),
                 settings.$isRecording,
-                parakeetService.$daemonState.map { $0 == .transcribing }.removeDuplicates()
+                parakeetService.$take.map { $0?.phase }.removeDuplicates()
             ),
             listeningSession.$isActive
         )
@@ -82,7 +80,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             statusText = EngineStatusText.whileStopped(daemonState: .starting, model: ModelProvisioning.shared.state, runtimeIssue: nil)
         } else if speculation.listening != nil || listeningSession.isActive {
             statusText = "Listening…"
-        } else if parakeetService.daemonState == .transcribing {
+        } else if parakeetService.take?.phase == .transcribing {
             statusText = "Transcribing…"
         } else if settings.isRecording {
             statusText = "Recording…"
@@ -138,7 +136,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             let startItem = NSMenuItem(title: "Start Recording", action: #selector(startRecording), keyEquivalent: "")
             startItem.target = self
             startItem.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Record")
-            startItem.isEnabled = !recordingRequested && parakeetService.daemonState != .transcribing
+            startItem.isEnabled = parakeetService.take == nil
             recordingShortcut?.apply(to: startItem)
             menu.addItem(startItem)
         }
@@ -251,13 +249,19 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     @objc private func startRecording() {
-        guard parakeetService.daemonState != .transcribing else {
-            menuBarLog.info("Recording requested while the previous take is still transcribing")
-            NSSound.beep()
-            parakeetService.sessionStatus = "Still transcribing the last recording…"
+        beginTake(kind: .dictation, trigger: .toggle)
+    }
+
+    @MainActor
+    private func beginTake(kind: Take.Kind, trigger: Take.Trigger) {
+        guard let take = parakeetService.requestTake(kind: kind, trigger: trigger) else {
+            if parakeetService.take?.phase == .transcribing {
+                menuBarLog.info("Recording requested while the previous take is still transcribing")
+                NSSound.beep()
+                parakeetService.sessionStatus = "Still transcribing the last recording…"
+            }
             return
         }
-        guard let requestID = recordingStart.begin() else { return }
         updateMenuBarIcon(recording: false)
         if isWaitingForEngine {
             // Starting the engine can take seconds (a model load, or the download on first use).
@@ -266,35 +270,31 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         Task { @MainActor in
-            await self.startRecordingFlow(requestID: requestID)
+            await self.startRecordingFlow(take)
         }
     }
 
     @MainActor
-    private func startRecordingFlow(requestID: UUID) async {
+    private func startRecordingFlow(_ take: Take) async {
+        // False once this take was cancelled or replaced while the flow was waiting.
+        let isCurrent = { self.parakeetService.take?.id == take.id }
+
         guard await MicrophoneAccess.ensureAccess() else {
             menuBarLog.error("Recording blocked: microphone access denied")
-            parakeetService.disarmCommandMode()
-            guard recordingStart.isCurrent(requestID) else { return }
+            guard isCurrent() else { return }
             startFailed(.microphoneDenied)
             reportMicrophoneDenied()
             return
         }
-        guard recordingStart.isCurrent(requestID) else { return }
+        guard isCurrent() else { return }
 
-        let started: Bool
         do {
-            started = try await recordingStart.run(requestID, prepare: {
-                if !self.settings.isDaemonRunning {
-                    try await self.parakeetService.startDaemon()
-                }
-            }, start: {
-                await self.parakeetService.startRecording()
-            })
+            if !settings.isDaemonRunning {
+                try await parakeetService.startDaemon()
+            }
         } catch {
             menuBarLog.error("Failed to restart daemon for recording: \(error.localizedDescription, privacy: .public)")
-            parakeetService.disarmCommandMode()
-            guard recordingStart.isCurrent(requestID) else { return }
+            guard isCurrent() else { return }
             if error is CancellationError {
                 teardownRecordingUI(hideOverlay: true)
             } else {
@@ -302,14 +302,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             }
             return
         }
+        guard isCurrent() else { return }
 
-        guard recordingStart.isCurrent(requestID) else {
-            parakeetService.disarmCommandMode()
-            if started { parakeetService.cancelRecording() }
+        switch await parakeetService.startRecording(take.id) {
+        case .started:
+            break
+        case .superseded:
             return
-        }
-        guard started else {
-            parakeetService.disarmCommandMode()
+        case .failed:
             startFailed(.notStarted)
             return
         }
@@ -358,8 +358,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     private func teardownRecordingUI(hideOverlay: Bool = false) {
-        recordingStart.cancel()
-        pttSessionActive = false
+        // A take that never reached recording has nothing to transcribe; drop it.
+        if isTakePending { parakeetService.cancelRecording() }
         updateMenuBarIcon(recording: false)
         AudioLevelMonitor.shared.stopMonitoring()
         if hideOverlay {
@@ -378,7 +378,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         if !listeningSession.isActive { CaptureSoundPlayer.play(.stop) }
         // If the engine did not actually enter transcribing (nothing was recording), there is no
         // completion coming to dismiss the overlay, so hide it now.
-        teardownRecordingUI(hideOverlay: parakeetService.daemonState != .transcribing)
+        teardownRecordingUI(hideOverlay: parakeetService.take?.phase != .transcribing)
     }
 
     @MainActor
@@ -388,8 +388,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     private func cancelTake(statusIfPending: String) {
-        let wasPending = recordingRequested && !settings.isRecording
-        recordingStart.cancel()
+        let wasPending = isTakePending
         parakeetService.cancelRecording()
         if wasPending { parakeetService.sessionStatus = statusIfPending }
         if !listeningSession.isActive { CaptureSoundPlayer.play(.stop) }
@@ -517,7 +516,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             setStatusImage("hourglass", tint: .systemOrange, description: "Superkeet - Getting ready")
         } else if listening {
             setStatusImage("waveform", tint: .systemBlue, description: "Superkeet - Listening")
-        } else if parakeetService.daemonState == .transcribing {
+        } else if parakeetService.take?.phase == .transcribing {
             setStatusImage("waveform", tint: .systemOrange, description: "Superkeet - Transcribing")
         } else {
             let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Superkeet")
@@ -550,7 +549,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         } else if recordingRequested {
             cancelRecording()
         } else {
-            pttSessionActive = false
             startRecording()
         }
     }
@@ -558,15 +556,13 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @MainActor
     func startRecordingOnly() {
         guard !settings.isRecording && !recordingRequested else { return }
-        pttSessionActive = true
-        startRecording()
+        beginTake(kind: .dictation, trigger: .pushToTalk)
     }
 
     @MainActor
     func stopPushToTalk() {
-        guard pttSessionActive else { return }
-        pttSessionActive = false
-        if recordingRequested, !settings.isRecording {
+        guard let take = parakeetService.take, take.trigger == .pushToTalk, take.isOpen else { return }
+        if take.isPending {
             cancelTake(statusIfPending: RecordingStartFeedback.releasedEarly.status)
             RecordingOverlayWindowController.shared.showNotice(.releasedEarly)
             return
@@ -582,27 +578,22 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     @MainActor
     func cancelRecordingOnly() {
-        guard settings.isRecording || recordingRequested || parakeetService.daemonState == .transcribing else { return }
+        guard let take = parakeetService.take, take.phase != .cancelling else { return }
         cancelRecording()
     }
 
     @MainActor
     func startCommandPushToTalk() {
         guard settings.actionsEnabled, !settings.isRecording, !recordingRequested else { return }
-        parakeetService.armCommandMode()
-        pttSessionActive = true
-        startRecording()
+        beginTake(kind: .command, trigger: .pushToTalk)
     }
 
     var isRecordingStartPending: Bool { recordingRequested }
 
     @MainActor
     func startCommandRecording() {
-        guard settings.actionsEnabled, !settings.isRecording, !recordingRequested,
-              parakeetService.daemonState != .transcribing else { return }
-        parakeetService.armCommandMode()
-        pttSessionActive = false
-        startRecording()
+        guard settings.actionsEnabled, parakeetService.take == nil else { return }
+        beginTake(kind: .command, trigger: .toggle)
         AgentSessionController.shared.prewarmPlanner()
     }
 
@@ -626,9 +617,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 cancelRecording()
             }
         case .start:
-            parakeetService.armCommandMode()
-            pttSessionActive = false
-            startRecording()
+            beginTake(kind: .command, trigger: .toggle)
         }
     }
 }

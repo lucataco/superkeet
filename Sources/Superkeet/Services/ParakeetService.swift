@@ -27,6 +27,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @Published var startupStatusDetail: String?
     @Published private(set) var daemonProtocolVersion: Int?
     @Published private(set) var lastOutcome: TranscriptOutcomeEvent?
+    /// The one recording in progress, if any. Main-thread only.
+    @Published private(set) var take: Take?
     let ticks = PassthroughSubject<EngineTick, Never>()
 
     static let supportedProtocolVersions: Set<Int> = [1, 2]
@@ -52,13 +54,10 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private var stderrBuffer: String = ""
     private var recordingStartTime: Date?
     private var activeAppAtRecordingStart: (name: String, bundleId: String, processIdentifier: pid_t?)?
-    private var outputGate = TranscriptSessionGate()
     private var recordingDuration: TimeInterval = 0
     private var completionTimeout: DispatchWorkItem?
     static let maxRecordingDuration: TimeInterval = 15 * 60
     private var maxDurationStop: DispatchWorkItem?
-    private var startRequestPending = false
-    private var commandModeArmed = false
     private var idleShutdownTask: DispatchWorkItem?
     private let lifecycleLock = NSLock()
     private var startTask: Task<Void, Error>?
@@ -80,8 +79,22 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
 
     @MainActor
     private func endSpeculation() {
-        guard let sessionID = outputGate.sessionID else { return }
+        guard let sessionID = liveSessionID else { return }
         speculation.end(sessionID: sessionID)
+    }
+
+    /// The engine session whose output is still wanted.
+    @MainActor
+    private var liveSessionID: String? { take?.liveSessionID }
+
+    /// The engine is gone or going; a take it was still working on ends with it.
+    @MainActor
+    private func endTakeWithEngine() {
+        if liveSessionID != nil {
+            failSession("Dictation stopped before the transcript was ready. Try again.")
+        } else if take?.phase == .cancelling {
+            take = nil
+        }
     }
 
     @MainActor
@@ -300,9 +313,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 }
                 self.settings.isDaemonRunning = false
                 self.settings.isRecording = false
-                if self.outputGate.sessionID != nil {
-                    self.failSession("Dictation stopped before the transcript was ready. Try again.")
-                }
+                self.endTakeWithEngine()
 
                 if previousState == .idle || previousState == .recording || previousState == .transcribing {
                     self.scheduleAutoRestart(afterUnexpectedExitOf: proc)
@@ -397,9 +408,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             self.idleShutdownTask = nil
             self.autoRestartTask?.cancel()
             self.autoRestartTask = nil
-            if self.outputGate.sessionID != nil {
-                self.failSession("Dictation stopped before the transcript was ready. Try again.")
-            }
+            self.endTakeWithEngine()
             self.daemonState = .stopping
             self.outputStream = TranscriptEventStream()
             self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
@@ -536,25 +545,32 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Opens a take if none is in progress. Its kind and trigger never change afterwards.
     @MainActor
-    func armCommandMode() {
+    func requestTake(kind: Take.Kind, trigger: Take.Trigger) -> Take? {
         dispatchPrecondition(condition: .onQueue(.main))
-        commandModeArmed = true
+        guard take == nil else { return nil }
+        let requested = Take(kind: kind, trigger: trigger)
+        take = requested
+        return requested
+    }
+
+    /// Requests a take and starts it at once, for callers with nothing to prepare in between.
+    @MainActor
+    func startRecording(kind: Take.Kind, trigger: Take.Trigger = .toggle) async -> Bool {
+        guard let requested = requestTake(kind: kind, trigger: trigger) else { return false }
+        let result = await startRecording(requested.id)
+        if result == .failed { cancelRecording() }
+        return result == .started
     }
 
     @MainActor
-    func disarmCommandMode() {
-        dispatchPrecondition(condition: .onQueue(.main))
-        commandModeArmed = false
-    }
-
-    @MainActor
-    func startRecording() async -> Bool {
-        guard daemonState == .idle, outputGate.sessionID == nil, !startRequestPending else { return false }
-        startRequestPending = true
-        defer { startRequestPending = false }
-        let sessionID = UUID().uuidString
-        guard outputGate.begin(sessionID) else { return false }
+    func startRecording(_ id: UUID) async -> TakeStartResult {
+        guard let requested = take, requested.id == id, requested.phase == .requested else { return .superseded }
+        guard daemonState == .idle else { return .failed }
+        take?.advance(to: .starting)
+        let sessionID = requested.sessionID
+        let isCommand = requested.kind == .command
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
 
@@ -569,29 +585,30 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         recordingDuration = 0
         sessionStatus = "Starting recording…"
 
-        let wantsInterim = commandModeArmed && daemonStreamsInterimText && speculation.wantsInterimTranscripts()
+        let wantsInterim = isCommand && daemonStreamsInterimText && speculation.wantsInterimTranscripts()
         let response = await sendSocketCommandAsync("start", sessionID: sessionID, partials: wantsInterim)
-        guard outputGate.sessionID == sessionID else { return false }
+        guard take?.id == id, take?.phase == .starting else { return .superseded }
         let reply = EngineReply(decoding: response)
         guard let reply, reply.isOK, reply.state == "recording", reply.sessionID == sessionID else {
             parakeetLog.error("start command failed: \(response ?? "nil", privacy: .public)")
             if let reason = reply?.rejection {
                 failSession("Couldn't start recording: \(reason)")
-                return false
+                return .failed
             }
             failSession("Couldn't start recording. Try again.")
             stopUnresponsiveEngine()
-            return false
+            return .failed
         }
 
+        take?.advance(to: .recording)
         daemonState = .recording
         sessionStatus = "Recording…"
         settings.isRecording = true
         lastUserFacingError = nil
         settings.runtimeIssue = nil
-        if commandModeArmed { speculation.begin(sessionID: sessionID) }
+        if isCommand { speculation.begin(sessionID: sessionID) }
         armMaxDurationStop(sessionID: sessionID)
-        return true
+        return .started
     }
 
     @MainActor
@@ -599,7 +616,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         maxDurationStop?.cancel()
         let limit = Self.maxRecordingDuration
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.daemonState == .recording, self.outputGate.sessionID == sessionID else { return }
+            guard let self, self.daemonState == .recording, self.liveSessionID == sessionID else { return }
             let minutes = Int(limit / 60)
             parakeetLog.warning("Recording reached the \(minutes)-minute limit; stopping automatically")
             self.stopRecording()
@@ -614,7 +631,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     func stopRecording(keepMicWarm: Bool = false) {
         maxDurationStop?.cancel()
         maxDurationStop = nil
-        guard daemonState == .recording, let sessionID = outputGate.sessionID else { return }
+        guard daemonState == .recording, let sessionID = liveSessionID else { return }
+        take?.advance(to: .transcribing)
         recordingDuration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         daemonState = .transcribing
         sessionStatus = "Transcribing…"
@@ -622,7 +640,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         armCompletionTimeout(sessionID: sessionID)
         sendSocketCommand("stop", sessionID: sessionID, keepWarm: keepMicWarm) { [weak self] response in
             DispatchQueue.main.async {
-                guard let self, self.outputGate.sessionID == sessionID else { return }
+                guard let self, self.liveSessionID == sessionID else { return }
                 let reply = EngineReply(decoding: response)
                 if let reply, reply.isOK, reply.sessionID == sessionID { return }
                 if let reason = reply?.rejection {
@@ -640,11 +658,15 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     func cancelRecording() {
         maxDurationStop?.cancel()
         maxDurationStop = nil
-        guard let sessionID = outputGate.sessionID else { return }
-        commandModeArmed = false
+        guard let cancelled = take, cancelled.phase != .cancelling else { return }
+        guard let sessionID = cancelled.liveSessionID else {
+            // Nothing reached the engine yet, so there is nothing to tell it.
+            take = nil
+            return
+        }
         speculation.end(sessionID: sessionID)
         endInterimTranscripts(sessionID: sessionID)
-        outputGate.close()
+        take?.advance(to: .cancelling)
         completionTimeout?.cancel()
         recordingStartTime = nil
         activeAppAtRecordingStart = nil
@@ -667,13 +689,14 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             var polls = 0
             while case .poll(let delay) = EngineCancelPolicy.nextStep(engineState: engineState, polls: polls) {
                 if let delay { try? await Task.sleep(for: delay) }
-                guard self.daemonState == .transcribing, self.outputGate.sessionID == nil else { return }
+                guard self.isCancelling(cancelled) else { return }
                 let statusResponse = await self.sendSocketCommandAsync("status")
                 engineState = EngineReply(decoding: statusResponse)?.state
                 polls += 1
             }
-            guard self.daemonState == .transcribing, self.outputGate.sessionID == nil else { return }
+            guard self.isCancelling(cancelled) else { return }
             if engineState == "idle" {
+                self.take = nil
                 self.daemonState = .idle
                 self.resetIdleTimer()
             } else {
@@ -688,6 +711,11 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func isCancelling(_ cancelled: Take) -> Bool {
+        take?.id == cancelled.id && take?.phase == .cancelling
     }
 
     @MainActor
@@ -866,7 +894,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(.main))
         if data.isEmpty { return engineOutputEnded() }
         do {
-            for event in try outputStream.append(data) where outputGate.accepts(event) {
+            for event in try outputStream.append(data) where take?.accepts(event) == true {
                 switch event.kind {
                 case .sessionStarted: break
                 case .transcribing:
@@ -874,6 +902,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
                         recordingDuration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
                         armCompletionTimeout(sessionID: event.sessionID)
                     }
+                    take?.advance(to: .transcribing)
                     daemonState = .transcribing
                     settings.isRecording = false
                     sessionStatus = "Transcribing…"
@@ -903,7 +932,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         } catch {
             parakeetLog.error("Speech engine output ended mid-message: \(error.localizedDescription, privacy: .public)")
         }
-        if outputGate.sessionID != nil { failSession("Dictation stopped before the transcript was ready. Try again.") }
+        if liveSessionID != nil { failSession("Dictation stopped before the transcript was ready. Try again.") }
         stopUnresponsiveEngine()
     }
 
@@ -927,10 +956,9 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(.main))
         let raw = event.text ?? ""
         let delivery = CommandTranscriptDelivery.decide(
-            event: event, commandMode: commandModeArmed,
+            event: event, commandMode: take?.kind == .command,
             replacements: PhraseReplacementStore.shared.rules, bundleID: activeAppAtRecordingStart?.bundleId ?? ""
         )
-        commandModeArmed = false
         switch delivery {
         case .command(let corrected):
             lastRawTranscription = raw
@@ -1038,8 +1066,10 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         completionTimeout?.cancel()
         completionTimeout = nil
         endSpeculation()
-        if let sessionID = outputGate.sessionID { endInterimTranscripts(sessionID: sessionID) }
-        outputGate.close()
+        if let sessionID = liveSessionID {
+            endInterimTranscripts(sessionID: sessionID)
+            take = nil
+        }
         recordingStartTime = nil
         activeAppAtRecordingStart = nil
         settings.isRecording = false
@@ -1050,10 +1080,9 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     @MainActor
     private func failSession(_ message: String) {
         dispatchPrecondition(condition: .onQueue(.main))
-        commandModeArmed = false
         sessionStatus = "Transcription failed"
         lastUserFacingError = message
-        if outputGate.sessionID != nil { publishOutcome(.failed) }
+        if liveSessionID != nil { publishOutcome(.failed) }
         finishSession()
     }
 
@@ -1065,7 +1094,7 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     private func armCompletionTimeout(sessionID: String) {
         completionTimeout?.cancel()
         let task = DispatchWorkItem { [weak self] in
-            guard let self, self.outputGate.sessionID == sessionID else { return }
+            guard let self, self.liveSessionID == sessionID else { return }
             self.failSession("Transcription took too long. Try again.")
             self.stopDaemon()
         }
