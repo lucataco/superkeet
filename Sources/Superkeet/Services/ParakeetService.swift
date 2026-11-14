@@ -17,6 +17,8 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
     /// Set when a setting that the engine reads at launch (e.g. the input device) changed while a
     /// take was in progress. Applied on the next transition to idle. Main-thread only.
     private var pendingEngineRestart = false
+    /// The microphone the running engine was started with; empty means the default input.
+    private(set) var engineInputDevice = ""
     var hasPendingEngineRestart: Bool { pendingEngineRestart }
     @Published var lastTranscription: String = ""
     @Published var lastRawTranscription: String = ""
@@ -238,9 +240,11 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
             "--pid-file", settings.pidFilePath,
         ]
 
-        if !settings.audioInputDevice.isEmpty {
-            args.append(contentsOf: ["--device", settings.audioInputDevice])
+        let inputDevice = AudioInputDeviceResolver.preferredDeviceName(selected: settings.audioInputDevice)
+        if !inputDevice.isEmpty {
+            args.append(contentsOf: ["--device", inputDevice])
         }
+        await MainActor.run { engineInputDevice = inputDevice }
 
         args.append(contentsOf: ["--model-dir", settings.effectiveModelDirectory])
 
@@ -480,6 +484,17 @@ final class ParakeetService: ObservableObject, @unchecked Sendable {
         pendingEngineRestart = false
         performSettingsRestart()
         return .restarting
+    }
+
+    /// The Mac's audio devices changed (headphones connected, default input switched). Restarts
+    /// the engine if it should now record from a different microphone.
+    @MainActor
+    func inputDevicesChanged() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let preferred = AudioInputDeviceResolver.preferredDeviceName(selected: settings.audioInputDevice)
+        guard settings.isDaemonRunning, preferred != engineInputDevice else { return }
+        parakeetLog.info("Input devices changed; engine will switch microphone")
+        requestEngineRestartForSettingsChange()
     }
 
     private func applyPendingEngineRestartIfIdle() {
