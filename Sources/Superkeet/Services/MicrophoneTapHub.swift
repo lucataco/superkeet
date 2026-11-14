@@ -69,7 +69,9 @@ final class MicrophoneTapHub: ObservableObject {
     ) {
         self.capture = capture ?? AVAudioEngineMicrophone()
         self.authorization = authorization ?? { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
-        self.requestedDeviceName = requestedDeviceName ?? { AppSettings.shared.audioInputDevice }
+        self.requestedDeviceName = requestedDeviceName ?? {
+            AudioInputDeviceResolver.preferredDeviceName(selected: AppSettings.shared.audioInputDevice)
+        }
     }
 
     var subscriberCount: Int { fanout.count }
@@ -142,14 +144,15 @@ final class BufferFanout: Sendable {
 @MainActor
 final class AVAudioEngineMicrophone: MicrophoneCapturing {
     private var engine: AVAudioEngine?
-    private var engineDeviceName: String?
+    private var engineTarget: AudioInputDeviceResolver.CaptureTarget?
     private var engineWarning: String?
     private var isTapInstalled = false
 
     func prewarm(deviceName: String) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard engine == nil || engineDeviceName != deviceName else { return }
-        _ = prepareEngine(deviceName: deviceName)
+        let target = AudioInputDeviceResolver.captureTarget(forName: deviceName)
+        guard engine == nil || engineTarget != target else { return }
+        _ = prepareEngine(target: target)
     }
 
     func start(
@@ -160,7 +163,8 @@ final class AVAudioEngineMicrophone: MicrophoneCapturing {
         dispatchPrecondition(condition: .onQueue(.main))
         removeTap()
 
-        var (engine, warning) = reusableEngine(for: deviceName) ?? prepareEngine(deviceName: deviceName)
+        let target = AudioInputDeviceResolver.captureTarget(forName: deviceName)
+        var (engine, warning) = reusableEngine(for: target) ?? prepareEngine(target: target)
         var format = engine.inputNode.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             discardEngine()
@@ -174,7 +178,7 @@ final class AVAudioEngineMicrophone: MicrophoneCapturing {
             // Rebuild once before giving up.
             microphoneLog.info("Reused audio engine failed to start; rebuilding: \(error.localizedDescription, privacy: .public)")
             discardEngine()
-            (engine, warning) = prepareEngine(deviceName: deviceName)
+            (engine, warning) = prepareEngine(target: target)
             format = engine.inputNode.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
                 discardEngine()
@@ -207,35 +211,34 @@ final class AVAudioEngineMicrophone: MicrophoneCapturing {
         isTapInstalled = false
     }
 
-    private func reusableEngine(for deviceName: String) -> (AVAudioEngine, String?)? {
-        guard let engine, engineDeviceName == deviceName else {
+    private func reusableEngine(for target: AudioInputDeviceResolver.CaptureTarget) -> (AVAudioEngine, String?)? {
+        guard let engine, engineTarget == target else {
             discardEngine()
             return nil
         }
         return (engine, engineWarning)
     }
 
-    private func prepareEngine(deviceName: String) -> (AVAudioEngine, String?) {
+    private func prepareEngine(target: AudioInputDeviceResolver.CaptureTarget) -> (AVAudioEngine, String?) {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
-        var warning: String?
+        var warning = target.isFallback ? Self.deviceFallbackWarning : nil
 
-        if !deviceName.isEmpty {
-            if let deviceID = AudioInputDeviceResolver.deviceID(forName: deviceName) {
-                do {
-                    try inputNode.auAudioUnit.setDeviceID(deviceID)
-                } catch {
-                    microphoneLog.error("Failed to set input device \(deviceName, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                    warning = Self.deviceFallbackWarning
-                }
-            } else {
-                warning = Self.deviceFallbackWarning
+        // Left alone, the input node captures through a private device that joins the microphone
+        // to the current output device and runs both whenever it records. Naming the microphone
+        // keeps the output device, and whatever is playing on it, out of the capture.
+        if let deviceID = target.deviceID {
+            do {
+                try inputNode.auAudioUnit.setDeviceID(deviceID)
+            } catch {
+                microphoneLog.error("Failed to set input device \(deviceID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                if target.isSelected { warning = Self.deviceFallbackWarning }
             }
         }
 
         engine.prepare()
         self.engine = engine
-        self.engineDeviceName = deviceName
+        self.engineTarget = target
         self.engineWarning = warning
         return (engine, warning)
     }
@@ -244,7 +247,7 @@ final class AVAudioEngineMicrophone: MicrophoneCapturing {
         removeTap()
         engine?.stop()
         engine = nil
-        engineDeviceName = nil
+        engineTarget = nil
         engineWarning = nil
     }
 

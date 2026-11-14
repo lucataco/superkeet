@@ -118,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Task { await SpeculativeLaunchCoordinator.shared.prepare() }
         Task { await MCPClientManager.shared.connectEnabledServersIfNeeded() }
+        InputDeviceObserver.shared.start()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             MicrophoneTapHub.shared.prewarm()
         }

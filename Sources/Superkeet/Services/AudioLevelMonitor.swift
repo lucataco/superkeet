@@ -116,6 +116,93 @@ enum AudioInputDeviceResolver {
         return devices.first(where: { namesMatch(name, $0.name) })?.id
     }
 
+    /// The one device a capture should open.
+    struct CaptureTarget: Equatable {
+        /// `nil` only when the Mac reports no input device at all.
+        let deviceID: AudioDeviceID?
+        /// The user's chosen microphone was found.
+        let isSelected: Bool
+        /// A microphone was chosen but is missing, so the default input stands in for it.
+        let isFallback: Bool
+    }
+
+    static func captureTarget(forName name: String) -> CaptureTarget {
+        captureTarget(forName: name, in: allInputDevices(), defaultInput: defaultInputDeviceID())
+    }
+
+    static func captureTarget(
+        forName name: String,
+        in devices: [(id: AudioDeviceID, name: String)],
+        defaultInput: AudioDeviceID?
+    ) -> CaptureTarget {
+        if let selected = selectDevice(forName: name, in: devices) {
+            return CaptureTarget(deviceID: selected, isSelected: true, isFallback: false)
+        }
+        return CaptureTarget(deviceID: defaultInput, isSelected: false, isFallback: !name.isEmpty)
+    }
+
+    enum Transport: Equatable {
+        case builtIn
+        case bluetooth
+        case other
+    }
+
+    struct InputDevice: Equatable {
+        let id: AudioDeviceID
+        let name: String
+        let transport: Transport
+    }
+
+    /// The microphone to record from, as a device name; empty means the Mac's default input.
+    ///
+    /// Opening a Bluetooth headset's microphone makes macOS switch the headset to its call
+    /// profile, which plays everything else quieter and at lower quality. So when no microphone
+    /// has been chosen and the default input is a Bluetooth one, the built-in microphone is
+    /// used instead. A microphone the user picked is always honoured.
+    static func preferredDeviceName(selected: String) -> String {
+        let devices = allInputDevices().map {
+            InputDevice(id: $0.id, name: $0.name, transport: transport(of: $0.id))
+        }
+        return preferredDeviceName(selected: selected, devices: devices, defaultInput: defaultInputDeviceID())
+    }
+
+    static func preferredDeviceName(selected: String, devices: [InputDevice], defaultInput: AudioDeviceID?) -> String {
+        guard selected.isEmpty else { return selected }
+        guard let current = devices.first(where: { $0.id == defaultInput }), current.transport == .bluetooth,
+              let builtIn = devices.first(where: { $0.transport == .builtIn }) else { return "" }
+        return builtIn.name
+    }
+
+    private static func transport(of deviceID: AudioDeviceID) -> Transport {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &value) == noErr else { return .other }
+        switch value {
+        case kAudioDeviceTransportTypeBuiltIn: return .builtIn
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: return .bluetooth
+        default: return .other
+        }
+    }
+
+    static func defaultInputDeviceID() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &deviceID
+        ) == noErr, deviceID != kAudioObjectUnknown else { return nil }
+        return deviceID
+    }
+
     private static func allInputDevices() -> [(id: AudioDeviceID, name: String)] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,

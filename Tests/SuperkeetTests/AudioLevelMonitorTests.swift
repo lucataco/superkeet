@@ -104,4 +104,62 @@ final class AudioLevelMonitorTests: XCTestCase {
         }
         return buffer
     }
+
+    func testCaptureOpensTheChosenMicrophone() {
+        let devices: [(id: AudioDeviceID, name: String)] = [(1, "Built-in"), (2, "USB Microphone")]
+        let target = AudioInputDeviceResolver.captureTarget(forName: "USB Microphone", in: devices, defaultInput: 1)
+        XCTAssertEqual(target, .init(deviceID: 2, isSelected: true, isFallback: false))
+    }
+
+    func testCaptureNamesTheDefaultInputWhenNoMicrophoneIsChosen() {
+        let devices: [(id: AudioDeviceID, name: String)] = [(1, "Built-in"), (2, "USB Microphone")]
+        let target = AudioInputDeviceResolver.captureTarget(forName: "", in: devices, defaultInput: 1)
+        XCTAssertEqual(target, .init(deviceID: 1, isSelected: false, isFallback: false))
+    }
+
+    func testCaptureFallsBackToTheDefaultInputWhenTheChosenMicrophoneIsMissing() {
+        let devices: [(id: AudioDeviceID, name: String)] = [(1, "Built-in")]
+        let target = AudioInputDeviceResolver.captureTarget(forName: "USB Microphone", in: devices, defaultInput: 1)
+        XCTAssertEqual(target, .init(deviceID: 1, isSelected: false, isFallback: true))
+    }
+
+    func testCaptureHasNoDeviceWhenTheMacHasNoInput() {
+        let target = AudioInputDeviceResolver.captureTarget(forName: "", in: [], defaultInput: nil)
+        XCTAssertNil(target.deviceID)
+        XCTAssertFalse(target.isFallback)
+    }
+
+    func testCaptureTargetChangesWhenTheDefaultInputChanges() {
+        let devices: [(id: AudioDeviceID, name: String)] = [(1, "Built-in"), (2, "USB Microphone")]
+        XCTAssertNotEqual(
+            AudioInputDeviceResolver.captureTarget(forName: "", in: devices, defaultInput: 1),
+            AudioInputDeviceResolver.captureTarget(forName: "", in: devices, defaultInput: 2)
+        )
+    }
+
+    private let airPods = AudioInputDeviceResolver.InputDevice(id: 7, name: "AirPods Pro", transport: .bluetooth)
+    private let builtIn = AudioInputDeviceResolver.InputDevice(id: 1, name: "MacBook Pro Microphone", transport: .builtIn)
+    private let usb = AudioInputDeviceResolver.InputDevice(id: 2, name: "USB Microphone", transport: .other)
+
+    func testBluetoothDefaultInputIsReplacedByTheBuiltInMicrophone() {
+        let name = AudioInputDeviceResolver.preferredDeviceName(selected: "", devices: [builtIn, airPods], defaultInput: 7)
+        XCTAssertEqual(name, "MacBook Pro Microphone")
+    }
+
+    func testAChosenBluetoothMicrophoneIsHonoured() {
+        let name = AudioInputDeviceResolver.preferredDeviceName(
+            selected: "AirPods Pro", devices: [builtIn, airPods], defaultInput: 7
+        )
+        XCTAssertEqual(name, "AirPods Pro")
+    }
+
+    func testNonBluetoothDefaultInputIsLeftAsTheSystemDefault() {
+        XCTAssertEqual(AudioInputDeviceResolver.preferredDeviceName(selected: "", devices: [builtIn, usb], defaultInput: 2), "")
+        XCTAssertEqual(AudioInputDeviceResolver.preferredDeviceName(selected: "", devices: [builtIn, airPods], defaultInput: 1), "")
+    }
+
+    func testBluetoothDefaultInputStaysWhenThereIsNoBuiltInMicrophone() {
+        XCTAssertEqual(AudioInputDeviceResolver.preferredDeviceName(selected: "", devices: [usb, airPods], defaultInput: 7), "")
+        XCTAssertEqual(AudioInputDeviceResolver.preferredDeviceName(selected: "", devices: [], defaultInput: nil), "")
+    }
 }

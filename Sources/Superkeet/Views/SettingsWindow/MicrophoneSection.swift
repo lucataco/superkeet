@@ -29,7 +29,7 @@ struct MicrophoneSection: View {
             if let deviceChangeStatus {
                 Text(deviceChangeStatus).foregroundStyle(.secondary)
             } else {
-                Text("Leave as System Default to use your Mac's default input device. Changes apply to your next recording.")
+                Text("System Default uses your Mac's default input, except with Bluetooth headphones, where the built-in microphone is used so your audio keeps its volume and quality. Pick the headphones here to use their microphone. Changes apply to your next recording.")
             }
         }
         .onAppear {
